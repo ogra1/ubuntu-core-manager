@@ -1,0 +1,50 @@
+name: ubuntu-core-manager
+base: core22
+version: '1.0.0'
+summary: Network setup, snap install, and interface connection manager
+description: |
+  A web-based management tool for Ubuntu Core / Ubuntu systems.
+  Provides three functions accessible via a browser on port 7990:
+    - Network Setup: configure interfaces and apply netplan config via the
+      netplan D-Bus API (io.netplan.Netplan)
+    - Snap Install: search and install snaps from the store via snapd
+    - Interface Connections: connect and disconnect snap interfaces
+
+grade: stable
+confinement: strict
+
+apps:
+  ubuntu-core-manager:
+    command: bin/start-server
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - network-bind
+      - snapd-control
+      - network-setup-control
+      - netplan-dbus
+
+parts:
+  ubuntu-core-manager:
+    plugin: npm
+    npm-include-node: true
+    npm-node-version: "18.20.4"
+    source: .
+    override-build: |
+      craftctl default
+      npm ci --omit=dev --prefix $CRAFT_PART_INSTALL || true
+
+  wrapper:
+    plugin: dump
+    source: snap/local
+    organize:
+      start-server: bin/start-server
+    stage:
+      - bin/start-server
+
+plugs:
+  netplan-dbus:
+    interface: dbus
+    bus: system
+    name: io.netplan.Netplan

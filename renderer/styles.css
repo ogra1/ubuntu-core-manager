@@ -1,0 +1,180 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', Roboto, sans-serif;
+  color: #e6e6e6;
+  background: #1e1e2e;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app { display: flex; height: 100vh; }
+
+.sidebar {
+  width: 230px;
+  background: #181825;
+  border-right: 1px solid #313244;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.logo {
+  padding: 20px;
+  font-size: 20px;
+  font-weight: bold;
+  color: #89b4fa;
+  border-bottom: 1px solid #313244;
+}
+.sidebar ul { list-style: none; margin-top: 10px; }
+.sidebar li {
+  padding: 14px 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border-left: 3px solid transparent;
+}
+.sidebar li:hover { background: #313244; }
+.sidebar li.active {
+  background: #313244;
+  border-left: 3px solid #89b4fa;
+  color: #89b4fa;
+}
+
+.content { flex: 1; padding: 30px; overflow-y: auto; }
+.page { display: none; }
+.page.active { display: block; }
+
+h1 { margin-bottom: 20px; color: #cdd6f4; }
+h3 { margin: 20px 0 10px; color: #a6adc8; }
+
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+
+button {
+  background: #45475a;
+  color: #cdd6f4;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+button:hover { background: #585b70; }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+button.primary { background: #89b4fa; color: #1e1e2e; font-weight: bold; }
+button.primary:hover { background: #74a0e8; }
+button.danger { background: #f38ba8; color: #1e1e2e; }
+button.danger:hover { background: #eb6f92; }
+
+input, select {
+  background: #313244;
+  border: 1px solid #45475a;
+  color: #cdd6f4;
+  padding: 8px 12px;
+  border-radius: 6px;
+  outline: none;
+}
+input:focus, select:focus { border-color: #89b4fa; }
+
+.iface-card {
+  background: #262637;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.iface-card .row { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.iface-card label { display: flex; flex-direction: column; font-size: 12px; color: #a6adc8; gap: 4px; }
+.iface-card input[type="text"] { min-width: 180px; }
+.iface-card .remove-iface { margin-left: auto; }
+
+.checkbox-row { display: flex; align-items: center; gap: 6px; }
+.checkbox-row input[type="checkbox"] { width: auto; }
+
+.actions { display: flex; gap: 10px; margin: 20px 0; }
+
+.yaml-output {
+  background: #11111b;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 16px;
+  white-space: pre;
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+  color: #a6e3a1;
+  min-height: 80px;
+  overflow-x: auto;
+}
+
+.status {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  white-space: pre-wrap;
+  display: none;
+}
+.status.show { display: block; }
+.status.ok { background: #2c4a34; color: #a6e3a1; }
+.status.err { background: #4a2c34; color: #f38ba8; }
+
+.snap-search-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  position: sticky;
+  top: 0;
+  background: #1e1e2e;
+  padding-bottom: 10px;
+  z-index: 10;
+}
+.snap-search-bar input { flex: 1; font-size: 15px; }
+
+.snap-columns { display: flex; gap: 20px; }
+.snap-results-col, .snap-tracked-col { flex: 1; }
+
+.snap-item {
+  background: #262637;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.snap-item .snap-title { font-weight: bold; color: #cdd6f4; font-size: 15px; }
+.snap-item .snap-publisher { font-size: 12px; color: #a6adc8; margin: 4px 0; }
+.snap-item .snap-summary { font-size: 13px; color: #bac2de; margin-bottom: 10px; }
+.snap-item .snap-actions { display: flex; gap: 8px; }
+
+.conn-card {
+  background: #262637;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.conn-card .conn-info { flex: 1; font-size: 13px; }
+.conn-card .conn-info b { color: #89b4fa; }
+.spinner { color: #f9e2af; }
+
+.progress-wrap { margin-top: 10px; }
+.progress-bar {
+  width: 100%;
+  height: 10px;
+  background: #11111b;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #313244;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #89b4fa, #a6e3a1);
+  transition: width 0.4s ease;
+}
+.progress-label {
+  font-size: 11px;
+  color: #a6adc8;
+  margin-top: 4px;
+}

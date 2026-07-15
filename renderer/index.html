@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ubuntu Core Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar">
+      <div class="logo">⚙ Core Manager</div>
+      <ul>
+        <li data-page="network" class="active">Network Setup</li>
+        <li data-page="snap">Snap Install</li>
+        <li data-page="connections">Interface Connections</li>
+      </ul>
+    </nav>
+
+    <main class="content">
+      <section id="page-network" class="page active">
+        <h1>Network Setup</h1>
+        <div class="toolbar">
+          <button id="btn-add-iface">+ Add Interface</button>
+          <button id="btn-refresh-iface">Detect Interfaces</button>
+        </div>
+        <div id="iface-list"></div>
+        <div class="actions">
+          <button id="btn-preview">Preview YAML</button>
+          <button id="btn-try">Try (auto-rollback 120s)</button>
+          <button id="btn-apply" class="primary">Generate &amp; Apply</button>
+        </div>
+        <h3>Generated netplan.yaml</h3>
+        <pre id="netplan-output" class="yaml-output"></pre>
+        <div id="net-status" class="status"></div>
+      </section>
+
+      <section id="page-snap" class="page">
+        <div class="snap-search-bar">
+          <input type="text" id="snap-search-input" placeholder="Search the Snap Store..." />
+          <button id="snap-search-btn">Search</button>
+        </div>
+        <h1>Snap Install</h1>
+        <div class="snap-columns">
+          <div class="snap-results-col">
+            <h3>Search Results</h3>
+            <div id="snap-results" class="snap-results"></div>
+          </div>
+          <div class="snap-tracked-col">
+            <h3>Installed via this tool</h3>
+            <div id="snap-tracked" class="snap-tracked"></div>
+          </div>
+        </div>
+        <div id="snap-status" class="status"></div>
+      </section>
+
+      <section id="page-connections" class="page">
+        <h1>Interface Connections</h1>
+        <div class="toolbar">
+          <button id="btn-refresh-connections">Refresh</button>
+        </div>
+        <h3>Established Connections</h3>
+        <div id="connections-established"></div>
+        <h3>Available Plugs / Slots</h3>
+        <div id="connections-available"></div>
+        <div id="conn-status" class="status"></div>
+      </section>
+    </main>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
