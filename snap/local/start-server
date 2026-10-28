@@ -1,5 +1,0 @@
-#!/bin/bash
-export NODE_ENV=production
-export PORT=7990
-export SNAP_MANAGER_DATA="$SNAP_DATA"
-exec "$SNAP/bin/node" "$SNAP/lib/node_modules/ubuntu-core-manager/server.js"
