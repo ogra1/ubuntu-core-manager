@@ -277,6 +277,23 @@ function mockFactoryJs() {
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '9-snaps-search.png'), fullPage: true });
 
+    // ---- 5b. installed-snaps table + remove-confirm card (verify alignment) ----
+    // htop is a non-system snap -> shows Refresh/Remove row actions.
+    const removeBtn = page.$$('tr', { hidden: false });
+    // find the Remove button in the htop row by its text
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.textContent.includes('htop'));
+        if (htop) htop.querySelector('button:last-of-type, .ucm-rowbtn:last-of-type')?.click();
+    });
+    await wait(500);
+    await page.screenshot({ path: path.join(SHOTS, '9b-remove-confirm.png'), fullPage: true });
+    // dismiss the confirm card so it does not affect later shots
+    await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        if (box) box.remove();
+    });
+
     // ---- 6. interfaces view ----
     await page.click('.ucm-side a[data-view="interfaces"]');
     await wait(700);

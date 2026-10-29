@@ -252,21 +252,28 @@ html, body {
 
 /* row action buttons */
 .ucm-rowbtn { margin: 0 .2rem; }
-/* Dark-rail icons: the offline Vanilla bundle ships every p-icon as a data-URI
-   SVG with a FIXED #000 fill (not currentColor), so `color` alone can never
-   whiten them — brightness(0) invert(1) is required. This covers the Lock
-   button's X (white icon + label) and the user glyph before "Administrator".
-   (p-icon--lock does not exist in the bundled set — do not use it.) */
+/* Dark-surface icons: the offline Vanilla bundle ships every p-icon as a
+   data-URI SVG with a FIXED #000 fill (NOT currentColor), so `color` can never
+   whiten it — `filter: brightness(0) invert(1)` is required. The <i> elements
+   carry only `p-icon--<name>` (never a bare `.p-icon`), so we target the
+   ELEMENT: this whiten covers the Lock button's X + the user glyph before
+   "Administrator" (both in .ucm-rail-user) and the login/setup card-head user
+   icon (.ucm-login__head). The filter hits the background-image glyph only,
+   which is what we want. (p-icon--lock is not in the bundle — do not use it.) */
 .ucm-lockbtn { color: #fff; }
-.ucm-lockbtn .p-icon,
-.ucm-rail-user .p-icon--user,
-.ucm-login__head .p-icon {
+.ucm-rail-user i,
+.ucm-login__head i {
     filter: brightness(0) invert(1);
 }
-.ucm-lockbtn .p-icon { color: #fff; }
+/* remove-confirm row: single centred line (question icon + message + buttons) */
+.ucm-confirm__ic { flex: 0 0 auto; align-self: center; }
+.ucm-confirm__msg { margin: 0; flex: 1 1 auto; }
+
 /* search field icon (light content area — keep the bundle's black fill); explicit
-   16px box so it matches the input height (base .p-icon size comes from font-size) */
+   1rem box so it matches the input height */
 .ucm-search-ic { align-self: center; flex: 0 0 auto; width: 1rem; height: 1rem; }
+/* "Search store" button: never wrap its label (keeps input + button one line) */
+#snapSearchBtn { white-space: nowrap; flex: 0 0 auto; }
 
 /* ---- chips ---------------------------------------------------------------- */
 .p-chip { border: 1px solid var(--ucm-grey-90); background: #fff; }

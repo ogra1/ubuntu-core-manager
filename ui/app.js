@@ -594,7 +594,7 @@ async function loadSnaps() {
     } catch (e) {
         toastErr(e);
         body.innerHTML = '';
-        body.append(el('tr', {}, el('td', { colspan: '7', class: 'ucm-muted', text: 'Could not load snaps: ' + e.message })));
+        body.append(el('tr', {}, el('td', { colspan: '6', class: 'ucm-muted', text: 'Could not load snaps: ' + e.message })));
     }
 }
 
@@ -602,7 +602,7 @@ function renderSnaps() {
     const body = $('#snapsBody');
     body.innerHTML = '';
     if (!state.snaps.length) {
-        body.append(el('tr', {}, el('td', { colspan: '7', class: 'ucm-muted', text: 'No snaps installed.' })));
+        body.append(el('tr', {}, el('td', { colspan: '6', class: 'ucm-muted', text: 'No snaps installed.' })));
         return;
     }
     state.snaps.forEach((s) => {
@@ -629,7 +629,6 @@ function renderSnaps() {
             el('td', { class: 'ucm-mono', text: `${s.version || '—'} · r${s.revision || '—'}` }),
             el('td', { text: s.channel || '—' }),
             el('td', { text: s.type || 'app' }),
-            el('td', { text: s.confinement || '—' }),
             actions,
         ));
     });
@@ -641,7 +640,16 @@ function rowBtn(label, icon, onClick) {
 }
 
 function confirmRemove(name) {
-    const b = el('button', { class: 'p-button--negative p-button', type: 'button' }, `Remove ${name}?`);
+    // Box is built before its buttons reference it (avoids the TDZ throw the
+    // old cancel handler had). One baseline-centred flex row: question icon,
+    // message, action buttons — align-items:center, no stray margins.
+    const box = el('div', {
+        class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
+    });
+    const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
+    const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Permanently remove snap “${name}”?` });
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: `Remove ${name}?` });
     b.onclick = async () => {
         b.classList.add('is-disabled');
         try {
@@ -649,12 +657,12 @@ function confirmRemove(name) {
             toast('positive', 'Removal started', `${name} is being removed by snapd.`);
             loadSnaps();
         } catch (e) { toastErr(e); }
-        finally { b.remove(); }
+        finally { box.remove(); }
     };
-    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', onclick: () => confirmBox.remove() }, 'Cancel');
-    const confirmBox = el('div', { class: 'p-notification p-notification--negative', style: 'margin-top:1rem; display:flex; gap:.6rem; align-items:center;' },
-        el('p', { class: 'p-notification__message', style: 'margin:0;', text: `Permanently remove snap “${name}”?` }), b, cancel);
-    $('#snapsBody').closest('.ucm-table-wrap').after(confirmBox);
+    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancel.onclick = () => box.remove();
+    box.append(icon, msg, b, cancel);
+    $('#snapsBody').closest('.ucm-table-wrap').after(box);
     b.focus();
 }
 
@@ -669,8 +677,8 @@ async function snapOp(name, action) {
 /* Install a specific store result row. The channel pulldown and its options
    live on the row (channels are store-defined, possibly versioned e.g.
    stable/22.04) — never hardcoded. */
-async function installFromRow(name, channel) {
-    const btn = this;
+async function installFromRow(name, channel, btn) {
+    if (!btn) return;
     btn.classList.add('is-disabled');
     btn.textContent = 'Installing…';
     try {
@@ -700,6 +708,11 @@ function channelSelect(r) {
     return sel;
 }
 
+function clearStoreResults() {
+    $('#snapSearchBody').innerHTML = '';
+    $('#snapSearchResults').classList.add('ucm-hidden');
+}
+
 async function searchStore() {
     const nameEl = $('#snapSearchName');
     const q = nameEl.value.trim();
@@ -720,7 +733,8 @@ async function searchStore() {
             const chSel = channelSelect(r);
             const installBtn = el('button', {
                 class: 'p-button--brand p-button ucm-rowbtn',
-                onclick: (e) => installFromRow(r.name, chSel.value),
+                type: 'button',
+                onclick: () => installFromRow(r.name, chSel.value, installBtn),
             }, 'Install');
             $('#snapSearchBody').append(el('tr', {},
                 el('td', { text: r.name, class: 'ucm-mono' }),
@@ -900,6 +914,7 @@ function wire() {
     // installs. Per-row Install buttons (in the results card) do the install.
     $('#snapSearchBtn').addEventListener('click', searchStore);
     $('#snapSearchName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchStore(); } });
+    $('#snapSearchClear').addEventListener('click', clearStoreResults);
 
     // interfaces
     $('#ifacesRefresh').addEventListener('click', loadInterfaces);

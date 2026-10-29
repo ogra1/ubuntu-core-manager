@@ -323,7 +323,7 @@
             <div class="ucm-deploy">
                 <div class="p-form__group">
                     <label class="p-form__label" for="snapSearchName">Search store</label>
-                    <div style="display:flex; gap:.6rem; max-width:34rem;">
+                    <div style="display:flex; gap:.6rem; align-items:center; width:100%;">
                         <i class="p-icon--search ucm-search-ic" aria-hidden="true"></i>
                         <input class="ucm-mono" type="text" id="snapSearchName"
                                placeholder="e.g. htop, mosquitto, firefox — Enter runs the search" spellcheck="false">
@@ -334,7 +334,7 @@
 
             <div id="snapSearchResults" class="ucm-hidden" style="margin-bottom:1.5rem;">
                 <div class="p-card">
-                    <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Store results</p></div>
+                    <div class="p-card__header" style="display:flex; align-items:center; justify-content:space-between;"><p class="p-heading--5" style="margin:0;">Store results</p><button class="p-button--base p-button ucm-rowbtn" id="snapSearchClear" type="button"><i class="p-icon--close"></i> Clear</button></div>
                     <table class="p-table" style="margin:0;">
                         <thead><tr><th>Name</th><th>Summary</th><th>Publisher</th><th>Channel</th><th style="text-align:right;">Install</th></tr></thead>
                         <tbody id="snapSearchBody"></tbody>
@@ -351,12 +351,11 @@
                             <th>Version / Rev</th>
                             <th>Channel</th>
                             <th>Type</th>
-                            <th>Confinement</th>
                             <th style="text-align:right;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="snapsBody">
-                        <tr><td colspan="7" class="ucm-muted">Loading snaps…</td></tr>
+                        <tr><td colspan="6" class="ucm-muted">Loading snaps…</td></tr>
                     </tbody>
                 </table>
             </div>
