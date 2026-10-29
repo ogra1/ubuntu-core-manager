@@ -1,0 +1,19 @@
+{
+  "name": "ubuntu-core-manager",
+  "version": "1.0.0",
+  "description": "Hardened Electron kiosk for managing Ubuntu Core systems over the snapd Unix Domain Socket",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/run-integration.js",
+    "test:ui": "node test/ui-screenshot.js"
+  },
+  "author": "Canonical Systems",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "electron": "^31.0.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^22.15.0"
+  }
+}

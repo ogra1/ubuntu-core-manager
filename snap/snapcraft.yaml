@@ -1,0 +1,78 @@
+# USER-VERIFIED PACKAGING (2026-10-29): built and run by the user on the
+# Ubuntu Core VM under ubuntu-frame (pure Wayland, no X11). Do not revert to
+# the first-draft version (x11/desktop plugs + ~71 explicit stage-packages ≈
+# 120MB of unused X/krb5/avahi stack) — kept at /root/snapcraft.yaml.old-bloaty.bak.
+name: ubuntu-core-manager
+base: core24
+version: '1.0.0'
+summary: Hardened kiosk console for managing Ubuntu Core systems
+description: |
+  Electron kiosk (frameless, always-on-top, input-trapped) for managing an
+  Ubuntu Core device: snap lifecycle, network configuration via snapd's
+  netplan external config, plug/slot interface control, and system
+  monitoring. All privileged I/O goes through the snapd Unix Domain Socket
+  (/run/snapd.socket, exposed by the connected `snapd-control` interface).
+  No shell-outs, no direct /etc writes; every renderer payload is validated
+  by regex allow-lists in the main process before it reaches the socket.
+
+confinement: strict
+grade: stable
+
+apps:
+  manager:
+    command: bin/launcher
+    daemon: simple
+    extensions: [ gnome ]
+    plugs:
+      - opengl
+      - network
+      - network-bind
+      - snapd-control
+
+parts:
+  app:
+    plugin: dump
+    source: .
+    override-build: |
+      set -ex
+      # Drop build-only cruft so it never reaches stage/prime.
+      rm -rf node_modules test snap package-lock.json build/css/*.css.map
+      mkdir -p "$CRAFT_PART_INSTALL/app" "$CRAFT_PART_INSTALL/bin"
+      cp -r main.js preload.js package.json ui build "$CRAFT_PART_INSTALL/app/"
+      cat > "$CRAFT_PART_INSTALL/bin/launcher" <<'LAUNCHER'
+      #!/bin/sh
+      # Launch the Electron main process from the read-only snap home.
+      # --no-sandbox is required under strict confinement (no user namespaces).
+      # --user-data-dir keeps Chromium's writable profile in the writable
+      # $SNAP_COMMON (the snap home is read-only).
+      exec "$SNAP"/electron/electron \
+           --enable-features=UseOzonePlatform \
+           --ozone-platform=wayland \
+           --disable-dev-shm-usage \
+           --no-sandbox \
+           --user-data-dir="$SNAP_COMMON/electron" \
+           "$SNAP"/app/main.js
+      LAUNCHER
+      chmod +x "$CRAFT_PART_INSTALL/bin/launcher"
+
+  electron:
+    plugin: nil
+    build-packages:
+      - nodejs
+      - npm
+    override-build: |
+      set -ex
+      EL_VER=31.7.7
+      SCRATCH=$(mktemp -d)
+      cd "$SCRATCH"
+      npm init -y >/dev/null
+      # Postinstall fetches the official prebuilt binary for this platform.
+      # (If your build env blocks GitHub, pre-stage node_modules/electron/dist
+      #  here or point @electron/get at a mirror via ELECTRON_MIRROR.)
+      npm install --no-audit --no-fund "electron@${EL_VER}"
+      mkdir -p "$CRAFT_PART_INSTALL/electron"
+      cp -a node_modules/electron/dist/. "$CRAFT_PART_INSTALL/electron/"
+      rm -rf "$SCRATCH"
+    stage-packages:
+      - libnspr4
+      - libnss3

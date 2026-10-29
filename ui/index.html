@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ubuntu Core Manager</title>
+    <!--
+        CSP mirrors the main-process onHeadersReceived injection (belt & braces
+        for file:// pages, where response-header injection can be bypassed).
+        Fully self-contained: Vanilla CSS, icons (data-URI) and the Ubuntu font
+        family are all bundled under build/, so the UI renders identically on
+        first boot with no network.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+    <link rel="stylesheet" href="../build/css/vanilla-framework.css">
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ==========================================================================
+     FIRST-BOOT SETUP VIEW — create the local administrator password.
+     Fully offline: verified against a local scrypt hash, no snapd store
+     round-trip, so it works before the device has any connectivity.
+     ========================================================================== -->
+<section id="setupView" class="ucm-login ucm-hidden" aria-label="Initial setup">
+    <div class="ucm-login__card">
+        <div class="ucm-login__head">
+            <i class="p-icon--user"></i>
+            <div>
+                <p class="p-heading--4" style="color:#fff; margin:0;">Welcome to Ubuntu Core</p>
+                <p style="margin:0; font-size:.8rem; color:rgba(255,255,255,.7);">Initial administrator setup</p>
+            </div>
+        </div>
+        <form id="setupForm" class="ucm-login__body" novalidate>
+            <p class="ucm-lockscreen-note">
+                <i class="p-icon--information"></i>
+                Set a local administrator password for this console. It is stored
+                on this device only and verified offline — no network required.
+            </p>
+            <div class="p-form__group" id="setupPasswordGroup">
+                <label class="p-form__label" for="setupPassword">Administrator password</label>
+                <input class="p-form-validation__input" type="password" id="setupPassword"
+                       name="newpassword" autocomplete="new-password" required minlength="8" spellcheck="false">
+                <p class="p-form-help-text">Minimum 8 characters.</p>
+                <p class="p-form-validation__message" id="setupPasswordMsg"></p>
+            </div>
+            <div class="p-form__group" id="setupConfirmGroup">
+                <label class="p-form__label" for="setupConfirm">Confirm password</label>
+                <input class="p-form-validation__input" type="password" id="setupConfirm"
+                       name="confirm" autocomplete="new-password" required spellcheck="false">
+                <p class="p-form-validation__message" id="setupConfirmMsg"></p>
+            </div>
+            <button class="p-button--brand" type="submit" id="setupBtn">Create password &amp; continue</button>
+        </form>
+        <div class="ucm-login__foot">
+            This step only appears on first boot, before any password exists.
+            It completes with or without network connectivity.
+        </div>
+    </div>
+</section>
+
+<!-- ==========================================================================
+     LOGIN VIEW — local sign-in (offline). The store is a separate, optional
+     concern (see the top bar in the app shell), not the gate to the console.
+     ========================================================================== -->
+<section id="loginView" class="ucm-login ucm-hidden" aria-label="Administrator sign-in">
+    <div class="ucm-login__card">
+        <div class="ucm-login__head">
+            <i class="p-icon--user"></i>
+            <div>
+                <p class="p-heading--4" style="color:#fff; margin:0;">Ubuntu Core Manager</p>
+                <p style="margin:0; font-size:.8rem; color:rgba(255,255,255,.7);">Administrator console</p>
+            </div>
+        </div>
+        <form id="loginForm" class="ucm-login__body" novalidate>
+            <p class="ucm-lockscreen-note">
+                <i class="p-icon--information"></i>
+                Enter the local administrator password for this device.
+            </p>
+            <div class="p-form__group" id="loginPasswordGroup">
+                <label class="p-form__label" for="loginPassword">Password</label>
+                <input class="p-form-validation__input" type="password" id="loginPassword"
+                       name="password" autocomplete="current-password" required spellcheck="false">
+                <p class="p-form-validation__message" id="loginPasswordMsg"></p>
+            </div>
+            <button class="p-button--brand" type="submit" id="loginBtn">Unlock console</button>
+        </form>
+        <div class="ucm-login__foot">
+            Verified offline on this device. Sessions lock after 15 minutes
+            of inactivity. Store access is optional and configured separately.
+        </div>
+    </div>
+</section>
+
+<!-- ==========================================================================
+     APP SHELL — sticky left navigation + main pane (hidden until auth)
+     ========================================================================== -->
+<div id="appShell" class="ucm-shell ucm-hidden">
+
+    <!-- ---- sticky left navigation -------------------------------------- -->
+    <aside class="ucm-side">
+        <div class="ucm-brand">
+            <span class="ucm-brand__logo"><i class="p-icon--user"></i></span>
+            <div>
+                <div class="ucm-brand__name">Ubuntu Core<br>Manager</div>
+                <div class="ucm-brand__sub" id="brandHost">—</div>
+            </div>
+        </div>
+
+        <nav class="p-side-navigation" aria-label="Primary">
+            <ul class="p-side-navigation__list">
+                <li class="p-side-navigation__item">
+                    <a class="p-side-navigation__link" href="#dashboard" data-view="dashboard">
+                        <span class="ucm-nav-label">Dashboard</span>
+                    </a>
+                </li>
+                <li class="p-side-navigation__item">
+                    <a class="p-side-navigation__link" href="#network" data-view="network">
+                        <span class="ucm-nav-label">Network</span>
+                    </a>
+                </li>
+                <li class="p-side-navigation__item">
+                    <a class="p-side-navigation__link" href="#snaps" data-view="snaps">
+                        <span class="ucm-nav-label">Snaps</span>
+                    </a>
+                </li>
+                <li class="p-side-navigation__item">
+                    <a class="p-side-navigation__link" href="#interfaces" data-view="interfaces">
+                        <span class="ucm-nav-label">Interfaces</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+
+        <div class="ucm-rail-user">
+            <i class="p-icon--user"></i>
+            <div>
+                <div class="ucm-name">Administrator</div>
+                <div class="ucm-role" id="railRole">local session</div>
+            </div>
+            <button class="p-button--base p-button" id="lockBtn" type="button" title="Lock console">
+                <i class="p-icon--close"></i> Lock
+            </button>
+        </div>
+    </aside>
+
+    <!-- ---- main content pane ------------------------------------------- -->
+    <main class="ucm-main">
+        <div class="ucm-topbar">
+            <p class="p-heading--4" id="topbarTitle">Dashboard</p>
+            <span class="ucm-session-chip" id="sessionChip" title="Console locks after 15 minutes without activity">
+                <i class="p-icon--spinner"></i><span id="sessionChipText">active</span>
+            </span>
+            <!-- optional store connection (needs network) -->
+            <span class="ucm-store" id="storeChip">
+                <span class="p-status-label p-status-label--caution" id="storeStatus">store offline</span>
+                <button class="p-button--base p-button ucm-rowbtn" id="storeBtn" type="button">Connect to store</button>
+            </span>
+        </div>
+
+        <!-- ================= DASHBOARD VIEW ================= -->
+        <section class="ucm-view" id="view-dashboard" data-view="dashboard">
+            <div class="row">
+                <div class="col-12">
+                    <div class="ucm-stats" id="dashStats">
+                        <div class="ucm-stat">
+                            <div class="ucm-stat__label">Memory</div>
+                            <div class="ucm-stat__value" id="statMem">—</div>
+                            <div class="ucm-bar" id="barMem"><div class="ucm-bar__fill" style="width:0%"></div></div>
+                            <div class="ucm-stat__hint" id="statMemHint"></div>
+                        </div>
+                        <div class="ucm-stat">
+                            <div class="ucm-stat__label">System load</div>
+                            <div class="ucm-stat__value" id="statLoad">—</div>
+                            <div class="ucm-stat__hint" id="statLoadHint"></div>
+                        </div>
+                        <div class="ucm-stat">
+                            <div class="ucm-stat__label">Uptime</div>
+                            <div class="ucm-stat__value" id="statUptime">—</div>
+                            <div class="ucm-stat__hint" id="statUptimeHint"></div>
+                        </div>
+                        <div class="ucm-stat">
+                            <div class="ucm-stat__label">Snapd</div>
+                            <div class="ucm-stat__value" id="statSnapd">—</div>
+                            <div class="ucm-stat__hint" id="statSnapdHint"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-6">
+                    <div class="p-card">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">System</p></div>
+                        <dl class="ucm-kv" id="dashSystem"><span class="ucm-skel" style="width:80%"></span></dl>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="p-card">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Storage</p></div>
+                        <dl class="ucm-kv" id="dashStorage"><span class="ucm-skel" style="width:60%"></span></dl>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row" style="margin-top:1.2rem;">
+                <div class="col-8">
+                    <div class="p-card">
+                        <div class="p-card__header">
+                            <div style="display:flex; align-items:center;">
+                                <p class="p-heading--5" style="margin:0;">Recent changes</p>
+                                <button class="p-button--base p-button ucm-rowbtn" id="dashChangesRefresh" type="button">Refresh</button>
+                            </div>
+                        </div>
+                        <table class="p-table" style="margin:0;" id="dashChangesTable">
+                            <thead><tr><th>Change</th><th>Status</th><th>Spawned</th><th>Summary</th></tr></thead>
+                            <tbody id="dashChangesBody"><tr><td colspan="4" class="ucm-muted">Loading…</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="p-card">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Warnings</p></div>
+                        <div id="dashWarnings"><span class="ucm-skel" style="width:50%"></span></div>
+                    </div>
+                    <div class="p-card" style="margin-top:1.2rem;">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Network activity</p></div>
+                        <dl class="ucm-kv" id="dashNetdev"><span class="ucm-skel" style="width:70%"></span></dl>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= NETWORK VIEW ================= -->
+        <section class="ucm-view ucm-hidden" id="view-network" data-view="network">
+            <div class="row">
+                <div class="col-8">
+                    <div class="ucm-net">
+                        <div class="p-form__group">
+                            <label class="p-form__label" for="netIface">Interface</label>
+                            <select id="netIface" style="max-width:24rem;">
+                                <option value="">— select —</option>
+                            </select>
+                            <p class="p-form-help-text">Configured through snapd's netplan service (core snap external config); applied atomically, no file writes.</p>
+                        </div>
+
+                        <div class="p-form__group">
+                            <label class="p-form__label">Addressing mode</label>
+                            <label class="p-radio">
+                                <input class="p-radio__input" type="radio" name="netMode" value="dhcp4" id="netModeDhcp" checked>
+                                <span class="p-radio__label">DHCP (v4)</span>
+                            </label>
+                            <label class="p-radio">
+                                <input class="p-radio__input" type="radio" name="netMode" value="static" id="netModeStatic">
+                                <span class="p-radio__label">Static IP</span>
+                            </label>
+                        </div>
+
+                        <div id="netStaticFields" class="ucm-net__grid ucm-hidden">
+                            <div class="p-form__group" id="netIpv4Group">
+                                <label class="p-form__label" for="netIpv4">IPv4 address / prefix</label>
+                                <input class="p-form-validation__input ucm-mono" type="text" id="netIpv4"
+                                       placeholder="192.168.1.50/24" spellcheck="false">
+                                <p class="p-form-validation__message" id="netIpv4Msg"></p>
+                            </div>
+                            <div class="p-form__group" id="netGw4Group">
+                                <label class="p-form__label" for="netGw4">IPv4 gateway</label>
+                                <input class="p-form-validation__input ucm-mono" type="text" id="netGw4"
+                                       placeholder="192.168.1.1" spellcheck="false">
+                                <p class="p-form-validation__message" id="netGw4Msg"></p>
+                            </div>
+                            <div class="p-form__group" id="netIpv6Group">
+                                <label class="p-form__label" for="netIpv6">IPv6 address / prefix <span class="ucm-muted">(optional)</span></label>
+                                <input class="p-form-validation__input ucm-mono" type="text" id="netIpv6"
+                                       placeholder="fd00::1/64" spellcheck="false">
+                                <p class="p-form-validation__message" id="netIpv6Msg"></p>
+                            </div>
+                            <div class="p-form__group" id="netGw6Group">
+                                <label class="p-form__label" for="netGw6">IPv6 gateway <span class="ucm-muted">(optional)</span></label>
+                                <input class="p-form-validation__input ucm-mono" type="text" id="netGw6"
+                                       placeholder="fd00::1" spellcheck="false">
+                                <p class="p-form-validation__message" id="netGw6Msg"></p>
+                            </div>
+                            <div class="p-form__group ucm-net__grid--full p-form__group--full" id="netDnsGroup">
+                                <label class="p-form__label" for="netDns">DNS servers <span class="ucm-muted">(comma-separated, optional)</span></label>
+                                <input class="p-form-validation__input ucm-mono" type="text" id="netDns"
+                                       placeholder="1.1.1.1, 8.8.8.8" spellcheck="false">
+                                <p class="p-form-validation__message" id="netDnsMsg"></p>
+                            </div>
+                        </div>
+
+                        <div class="p-form__group" style="margin-top:1.4rem; display:flex; gap:.8rem; align-items:center;">
+                            <button class="p-button--brand" id="netApply" type="button"><i class="p-icon--success"></i> Apply configuration</button>
+                            <button class="p-button--base p-button" id="netReset" type="button">Reset form</button>
+                            <span class="ucm-muted" id="netStatus" style="font-size:.85rem;"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="p-card">
+                        <div class="p-card__header">
+                            <div style="display:flex; align-items:center;">
+                                <p class="p-heading--5" style="margin:0;">Active netplan</p>
+                                <button class="p-button--base p-button ucm-rowbtn" id="netplanRefresh" type="button">Refresh</button>
+                            </div>
+                        </div>
+                        <pre id="netplanPre" class="ucm-code" style="margin:0; font-size:.78rem; overflow:auto; max-height:52vh; white-space:pre;"></pre>
+                        <p class="p-form-help-text" style="margin-top:.6rem;">Read from snapd (system.network.netplan). Editing is done through the form — the document is rebuilt and applied by snapd.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= SNAPS VIEW ================= -->
+        <section class="ucm-view ucm-hidden" id="view-snaps" data-view="snaps">
+            <div class="p-notification p-notification--caution" id="snapsStoreNotice" style="margin-bottom:1.2rem;">
+                <h5 class="p-notification__title">Store not connected</h5>
+                <p class="p-notification__message">Installing new snaps and store search require a snapd store login. Use “Connect to store” in the top bar — this needs network connectivity and an Ubuntu One account.</p>
+            </div>
+
+            <!-- deployment / install panel -->
+            <div class="ucm-deploy">
+                <div class="p-form__group">
+                    <label class="p-form__label" for="snapInstallName">Deploy snap</label>
+                    <input class="ucm-mono" type="text" id="snapInstallName" placeholder="e.g. htop, mosquitto, firefox" spellcheck="false">
+                    <select id="snapInstallChannel" style="max-width:12rem;">
+                        <option value="stable" selected>stable</option>
+                        <option value="candidate">candidate</option>
+                        <option value="beta">beta</option>
+                        <option value="edge">edge</option>
+                    </select>
+                    <button class="p-button--brand" id="snapInstallBtn" type="button"><i class="p-icon--plus"></i> Install</button>
+                    <button class="p-button--base p-button" id="snapSearchBtn" type="button" style="max-width:12rem;">Search store</button>
+                </div>
+            </div>
+
+            <div id="snapSearchResults" class="ucm-hidden" style="margin-bottom:1.5rem;">
+                <div class="p-card">
+                    <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Store results</p></div>
+                    <table class="p-table" style="margin:0;">
+                        <thead><tr><th>Name</th><th>Summary</th><th>Publisher</th><th>Channel</th><th></th></tr></thead>
+                        <tbody id="snapSearchBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="ucm-table-wrap">
+                <table class="p-table">
+                    <thead>
+                        <tr>
+                            <th>Snap</th>
+                            <th>Status</th>
+                            <th>Version / Rev</th>
+                            <th>Channel</th>
+                            <th>Type</th>
+                            <th>Confinement</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="snapsBody">
+                        <tr><td colspan="7" class="ucm-muted">Loading snaps…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ================= INTERFACES VIEW ================= -->
+        <section class="ucm-view ucm-hidden" id="view-interfaces" data-view="interfaces">
+            <div class="row">
+                <div class="col-12">
+                    <div style="display:flex; gap:.8rem; align-items:center; margin-bottom:1.2rem; flex-wrap:wrap;">
+                        <button class="p-button--base p-button" id="ifacesFilterBtn" type="button">Show: actionable (not connected)</button>
+                        <span class="ucm-muted" id="ifacesSummary"></span>
+                        <button class="p-button--base p-button" id="ifacesRefresh" type="button" style="margin-left:auto;">Refresh</button>
+                    </div>
+                </div>
+            </div>
+            <div class="ucm-table-wrap">
+                <table class="p-table">
+                    <thead>
+                        <tr>
+                            <th>Interface</th>
+                            <th>Provider (slot)</th>
+                            <th>Consumer (plug)</th>
+                            <th>Status</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ifacesBody">
+                        <tr><td colspan="5" class="ucm-muted">Loading connections…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+</div>
+
+<!-- ==========================================================================
+     STORE CONNECT MODAL — optional; snapd /v2/login (Ubuntu One). Requires
+     network connectivity. Fails gracefully offline; the console itself is
+     unaffected.
+     ========================================================================== -->
+<div id="storeModal" class="ucm-modal ucm-hidden" role="dialog" aria-modal="true" aria-labelledby="storeModalTitle">
+    <div class="ucm-modal__backdrop" data-close="store"></div>
+    <div class="ucm-modal__card">
+        <div class="ucm-modal__head">
+            <p class="p-heading--5" id="storeModalTitle" style="margin:0;">Connect to the snap store</p>
+            <button class="p-button--base p-button" id="storeModalClose" type="button" aria-label="Close"><i class="p-icon--close"></i></button>
+        </div>
+        <form id="storeForm" class="ucm-modal__body" novalidate>
+            <p class="ucm-lockscreen-note">
+                <i class="p-icon--information"></i>
+                Optional. Enables snap installation and store search. Needs
+                network connectivity and a valid Ubuntu One account.
+            </p>
+            <div class="p-form__group" id="storeEmailGroup">
+                <label class="p-form__label" for="storeEmail">Ubuntu One email</label>
+                <input class="p-form-validation__input" type="email" id="storeEmail"
+                       name="store-email" autocomplete="username" spellcheck="false" placeholder="admin@example.com">
+                <p class="p-form-validation__message" id="storeEmailMsg"></p>
+            </div>
+            <div class="p-form__group" id="storePasswordGroup">
+                <label class="p-form__label" for="storePassword">Password</label>
+                <input class="p-form-validation__input" type="password" id="storePassword"
+                       name="store-password" autocomplete="current-password" spellcheck="false">
+                <p class="p-form-validation__message" id="storePasswordMsg"></p>
+            </div>
+            <div style="display:flex; gap:.8rem; align-items:center;">
+                <button class="p-button--brand" type="submit" id="storeConnectBtn">Connect</button>
+                <button class="p-button--base p-button" type="button" id="storeDisconnectBtn">Disconnect</button>
+                <span class="ucm-muted" id="storeFormStatus" style="font-size:.85rem;"></span>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- toast notifications -->
+<div class="ucm-toasts" id="toasts" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

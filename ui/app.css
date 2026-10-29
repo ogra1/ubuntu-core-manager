@@ -1,0 +1,361 @@
+/* ============================================================================
+ *  ubuntu-core-manager — ui/app.css
+ *  Kiosk layout + Yaru dark-grey base with Ubuntu-orange accents, layered
+ *  on top of the local
+ *  Vanilla Framework build (build/css/vanilla-framework.css, loaded first).
+ *  Everything is 'self'-served and offline-complete: Vanilla CSS, inlined
+ *  data-URI icons and the bundled Ubuntu font family (build/fonts/) — no
+ *  remote asset of any kind, so first-boot rendering works without network.
+ * ==========================================================================*/
+
+:root {
+    --ucm-aubergine: #262626;   /* Yaru dark base (renamed for stability; aubergine dropped 2026-10) */
+    --ucm-aubergine-deep: #111111;
+    --ucm-orange: #e95420;
+    --ucm-grey-dark: #111111;
+    --ucm-grey-50: #f7f7f7;
+    --ucm-grey-90: #cdcdcd;
+    --ucm-sidebar-w: 15.5rem;
+    --vf-color-brand: var(--ucm-aubergine);
+    --vf-color-positive: #0e8420;
+    --vf-color-negative: #c7162b;
+    --vf-color-caution: #f99b11;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--ucm-grey-50);
+    color: var(--ucm-grey-dark);
+    overflow: hidden;              /* kiosk: the SPA owns scrolling */
+    -webkit-user-select: none;
+    user-select: none;
+}
+/* allow selection of read-only diagnostic values / code */
+.mono, .p-notification code, .ucm-code { -webkit-user-select: text; user-select: text; }
+
+/* ---- app shell ---------------------------------------------------------- */
+.ucm-shell {
+    display: grid;
+    grid-template-columns: var(--ucm-sidebar-w) 1fr;
+    grid-template-rows: 100vh;
+    height: 100vh;
+}
+
+/* sticky left navigation (p-side-navigation, Yaru dark) */
+.ucm-side {
+    background: var(--ucm-aubergine);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    z-index: 5;
+}
+.ucm-side .p-side-navigation { flex: 1 1 auto; }
+.ucm-side .p-side-navigation__link {
+    color: rgba(255, 255, 255, .72);
+    text-decoration: none;
+    padding: .6rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    border-left: .25rem solid transparent;
+    transition: background .12s, color .12s, border-color .12s;
+}
+.ucm-side .p-side-navigation__link .p-icon { color: rgba(255,255,255,.72); }
+.ucm-side .p-side-navigation__link:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, .08);
+}
+.ucm-side .p-side-navigation__link.is-active {
+    color: #fff;
+    background: rgba(255, 255, 255, .12);
+    border-left-color: var(--ucm-orange);
+}
+.ucm-side .p-side-navigation__link.is-active .p-icon { color: #fff; }
+.ucm-side .p-side-navigation__label {
+    color: rgba(255, 255, 255, .55);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-size: .7rem;
+    padding: 1rem 1rem .35rem;
+}
+.ucm-side .p-side-navigation__status {
+    background: var(--ucm-orange);
+    color: #fff;
+    font-size: .7rem;
+    padding: .1rem .5rem;
+    border-radius: .8rem;
+    margin-left: auto;
+}
+
+/* brand block at top of the rail */
+.ucm-brand {
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    padding: 1.2rem 1.1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, .14);
+}
+.ucm-brand__logo {
+    width: 2.4rem; height: 2.4rem;
+    display: grid; place-items: center;
+    background: #fff;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+.ucm-brand__logo .p-icon { color: var(--ucm-aubergine); }
+.ucm-brand__name { font-weight: 400; font-size: 1rem; line-height: 1.15; }
+.ucm-brand__sub { font-size: .72rem; color: rgba(255,255,255,.6); }
+
+/* user/session footer of the rail */
+.ucm-rail-user {
+    display: flex; align-items: center; gap: .6rem;
+    padding: .9rem 1.1rem;
+    border-top: 1px solid rgba(255,255,255,.14);
+    font-size: .85rem;
+}
+.ucm-rail-user .p-icon { color: rgba(255,255,255,.7); }
+.ucm-rail-user .ucm-name { color: #fff; }
+.ucm-rail-user .ucm-role { color: rgba(255,255,255,.6); font-size: .72rem; }
+.ucm-rail-user .p-button--base { margin-left: auto; }
+
+/* main content pane */
+.ucm-main {
+    overflow-y: auto;
+    height: 100vh;
+    padding: 0;
+    background: var(--ucm-grey-50);
+}
+.ucm-topbar {
+    position: sticky; top: 0; z-index: 4;
+    background: #fff;
+    border-bottom: 1px solid var(--ucm-grey-90);
+    padding: 0 2rem;
+    min-height: 3.2rem;
+    display: flex; align-items: center; gap: 1rem;
+}
+.ucm-topbar .p-heading--4 { margin: 0; }
+.ucm-topbar .ucm-session-chip { margin-left: auto; }
+.ucm-view { padding: 2rem 2rem 4rem; }
+
+/* ---- login (centered card) --------------------------------------------- */
+.ucm-login {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 2rem;
+    background:
+        radial-gradient(1200px 500px at 80% -10%, rgba(233,84,32,.10), transparent 60%),
+        linear-gradient(160deg, #0c0c0c, var(--ucm-aubergine-deep) 55%, var(--ucm-aubergine));
+}
+.ucm-login__card {
+    width: 100%; max-width: 24rem;
+    background: #fff;
+    border-radius: .35rem;
+    box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    overflow: hidden;
+}
+.ucm-login__head {
+    background: var(--ucm-aubergine);
+    color: #fff;
+    padding: 1.6rem 2rem;
+    display: flex; align-items: center; gap: 1rem;
+}
+.ucm-login__head .p-icon { color: #fff; }
+.ucm-login__body { padding: 1.8rem 2rem 2rem; }
+.ucm-login .p-form__group { margin-bottom: 1.1rem; }
+.ucm-login .p-button--brand { width: 100%; justify-content: center; }
+.ucm-login__foot {
+    padding: .8rem 2rem 1.2rem;
+    font-size: .75rem; color: #666;
+    text-align: center;
+}
+.ucm-lockscreen-note {
+    margin: 0 0 1.2rem;
+    font-size: .85rem; color: #444;
+    display: flex; gap: .5rem; align-items: center;
+}
+.ucm-lockscreen-note .p-icon { color: var(--ucm-aubergine); }
+
+/* ---- diagnostic value lists --------------------------------------------- */
+.ucm-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.ucm-stat {
+    background: #fff;
+    border: 1px solid var(--ucm-grey-90);
+    border-top: .25rem solid var(--ucm-aubergine);
+    border-radius: .35rem;
+    padding: 1rem 1.1rem;
+}
+.ucm-stat__label {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
+    color: #777; display: flex; align-items: center; gap: .4rem;
+}
+.ucm-stat__value {
+    font-size: 1.6rem; font-weight: 300; margin-top: .3rem; line-height: 1;
+}
+.ucm-stat__hint { font-size: .72rem; color: #999; margin-top: .35rem; }
+@media (max-width: 1200px) { .ucm-stats { grid-template-columns: repeat(2, 1fr); } }
+
+.ucm-kv { margin: 0; }
+.ucm-kv > div {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    gap: 1rem;
+    padding: .55rem 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.ucm-kv > div:last-child { border-bottom: 0; }
+.ucm-kv dt { margin: 0; color: #555; font-size: .9rem; }
+.ucm-kv dd { margin: 0; font-size: .95rem; word-break: break-word; }
+.ucm-kv .mono { font-family: "Ubuntu Mono variable", monospace; font-size: .85rem; }
+
+/* custom thin progress bar (vanilla build has none) */
+.ucm-bar {
+    height: .5rem; border-radius: 1rem; background: #eee; overflow: hidden;
+    margin-top: .5rem;
+}
+.ucm-bar__fill {
+    height: 100%; background: var(--ucm-aubergine);
+    transition: width .4s ease; border-radius: 1rem;
+}
+.ucm-bar.is-positive .ucm-bar__fill { background: var(--vf-color-positive); }
+.ucm-bar.is-caution .ucm-bar__fill { background: var(--vf-color-caution); }
+.ucm-bar.is-negative .ucm-bar__fill { background: var(--vf-color-negative); }
+
+/* ---- tables ------------------------------------------------------------- */
+.ucm-table-wrap {
+    background: #fff;
+    border: 1px solid var(--ucm-grey-90);
+    border-radius: .35rem;
+    overflow: auto;
+    max-height: calc(100vh - 14rem);
+}
+.ucm-table-wrap .p-table { margin: 0; }
+.ucm-table-wrap .p-table th,
+.ucm-table-wrap .p-table td { white-space: nowrap; }
+.ucm-table-wrap .p-table td.ucm-wrap,
+.ucm-table-wrap .p-table th.ucm-wrap { white-space: normal; min-width: 14rem; }
+.ucm-table-wrap .p-table thead th {
+    position: sticky; top: 0; background: var(--ucm-grey-50); z-index: 1;
+}
+
+/* row action buttons */
+.ucm-rowbtn { margin: 0 .2rem; }
+
+/* ---- chips ---------------------------------------------------------------- */
+.p-chip { border: 1px solid var(--ucm-grey-90); background: #fff; }
+.p-chip--positive { border-color: rgba(14,132,32,.4); background: rgba(14,132,32,.06); }
+.p-chip--negative { border-color: rgba(199,22,43,.4); background: rgba(199,22,43,.06); }
+.p-chip--caution  { border-color: rgba(249,155,17,.5); background: rgba(249,155,17,.08); }
+.p-chip--aubergine{ border-color: rgba(38,38,38,.35); background: rgba(38,38,38,.06); }
+.p-chip__value { color: var(--ucm-grey-dark); }
+
+/* ---- network form ---------------------------------------------------------- */
+.ucm-net {
+    background: #fff; border: 1px solid var(--ucm-grey-90);
+    border-radius: .35rem; padding: 1.6rem;
+}
+.ucm-net__grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.6rem;
+}
+.ucm-net__grid .p-form__group--full { grid-column: 1 / -1; }
+@media (max-width: 900px) { .ucm-net__grid { grid-template-columns: 1fr; } }
+.ucm-net .p-form__control { max-width: 24rem; }
+.ucm-dns-list { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+
+/* deploy (install) panel */
+.ucm-deploy {
+    background: #fff; border: 1px solid var(--ucm-grey-90);
+    border-radius: .35rem; padding: 1.4rem 1.6rem; margin-bottom: 1.5rem;
+    border-left: .3rem solid var(--ucm-orange);
+}
+.ucm-deploy .p-form__group { margin-bottom: 0; display: flex; align-items: end; gap: 1rem; flex-wrap: wrap; }
+.ucm-deploy .p-form__group .p-form__label { margin-bottom: .35rem; width: 100%; }
+.ucm-deploy input[type="text"] { flex: 1 1 18rem; min-width: 12rem; }
+
+/* accordion (vanilla) spacing */
+.p-accordion { border: 1px solid var(--ucm-grey-90); border-radius: .35rem; overflow: hidden; }
+.p-accordion .p-accordion__panel { padding: 1rem 1.4rem; }
+
+/* ---- toasts / notifications container ----------------------------------- */
+.ucm-toasts {
+    position: fixed; right: 1.2rem; bottom: 1.2rem;
+    display: flex; flex-direction: column; gap: .6rem;
+    width: 24rem; max-width: calc(100vw - 2.4rem);
+    z-index: 50;
+}
+.ucm-toasts .p-notification { box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+
+/* skeleton loaders */
+.ucm-skel {
+    display: block; height: 1rem; border-radius: .2rem;
+    background: linear-gradient(90deg, #eee 25%, #f7f7f7 37%, #eee 63%);
+    background-size: 400% 100%;
+    animation: ucm-shimmer 1.3s ease infinite;
+    margin: .4rem 0;
+}
+@keyframes ucm-shimmer { 0% {background-position: 100% 0;} 100% {background-position: -100% 0;} }
+
+/* utility */
+.ucm-mono { font-family: "Ubuntu Mono variable", monospace; }
+.ucm-muted { color: #888; }
+.ucm-hidden { display: none !important; }
+.ucm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* top-bar store indicator */
+.ucm-store {
+    display: inline-flex; align-items: center; gap: .5rem;
+    margin-left: 1rem;
+}
+.ucm-store .p-button--base { padding: 0; }
+
+/* ---- store connect modal --------------------------------------------- */
+.ucm-modal {
+    position: fixed; inset: 0; z-index: 60;
+    display: grid; place-items: center;
+}
+.ucm-modal__backdrop {
+    position: absolute; inset: 0;
+    background: rgba(17, 17, 17, .55);
+}
+.ucm-modal__card {
+    position: relative;
+    width: 100%; max-width: 26rem;
+    background: #fff; border-radius: .35rem;
+    box-shadow: 0 24px 70px rgba(0,0,0,.4);
+    overflow: hidden;
+    z-index: 1;
+}
+.ucm-modal__head {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--ucm-aubergine); color: #fff;
+    padding: 1rem 1.4rem;
+}
+.ucm-modal__head .p-button--base { color: #fff; }
+.ucm-modal__head .p-icon { color: #fff; }
+.ucm-modal__body { padding: 1.4rem 1.6rem 1.6rem; }
+.ucm-modal__body .p-form__group { margin-bottom: 1rem; }
+.ucm-modal__body .p-button--brand { min-width: 8rem; }
+
+/* session countdown chip */
+.ucm-session-chip {
+    display: inline-flex; align-items: center; gap: .45rem;
+    font-size: .8rem; color: #555;
+    padding: .25rem .7rem; border-radius: 1rem;
+    background: var(--ucm-grey-50); border: 1px solid var(--ucm-grey-90);
+}
+.ucm-session-chip.is-warning { background: rgba(249,155,17,.1); border-color: rgba(249,155,17,.5); color: #8a5a00; }
+
+/* disabled buttons: match real kiosk behavior (no pointer pass-through) */
+button.is-disabled { pointer-events: none; opacity: .6; }
