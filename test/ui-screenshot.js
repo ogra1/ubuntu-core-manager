@@ -79,7 +79,8 @@ const NETPLAN = {
 function mockFactoryJs() {
     return `
     window.__mockCore = (function () {
-        const SNAPS = ${JSON.stringify(SNAPS)};
+        let SNAPS = ${JSON.stringify(SNAPS)};
+        const CHANGES = {};
         const CONNECTIONS = ${JSON.stringify(CONNECTIONS)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
         window.__storeOnline = false; // flip per-scenario from the test
@@ -147,6 +148,11 @@ function mockFactoryJs() {
                     };
                 },
                 async disk() { return { total: 4194304000000, used: 1288490188000, used_percent: 31 }; },
+                async change(id) {
+                    const c = CHANGES[id];
+                    if (!c) throw new Error('unknown change ' + id);
+                    return c;
+                },
                 async changes() {
                     return [
                         { id: '14', kind: 'install-snap', summary: { message: 'Install snap "mosquitto"' }, status: 'Done', spawn_time: '2026-10-28T08:12:00Z' },
@@ -168,11 +174,25 @@ function mockFactoryJs() {
                 },
                 async install(n, ch) {
                     if (!window.__storeOnline) throw new Error('cannot reach the store backend: network unreachable');
-                    return { id: '17' };
+                    const id = '17';
+                    CHANGES[id] = { id, status: 'Doing' };
+                    setTimeout(() => {
+                        if (!SNAPS.some((x) => x.name === n)) {
+                            SNAPS = SNAPS.concat([{ name: n, version: '9.9.9', revision: 1, channel: ch || 'latest/stable', status: 'active', type: 'app', confinement: 'strict' }]);
+                        }
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 250);
+                    return { id };
                 },
                 async action(n, a) {
                     if (a === 'remove' && n === 'core24') throw new Error('cannot remove snap "core24": system snap');
-                    return { id: '18' };
+                    const id = '18';
+                    CHANGES[id] = { id, status: 'Doing' };
+                    setTimeout(() => {
+                        if (a === 'remove') SNAPS = SNAPS.filter((x) => x.name !== n);
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 1200); // slow settle: keeps the confirm card visible for the shot
+                    return { id };
                 },
                 async confGet() { return {}; },
                 async confSet() { return { id: '19' }; },
@@ -286,8 +306,24 @@ function mockFactoryJs() {
         const htop = rows.find((r) => r.textContent.includes('htop'));
         if (htop) htop.querySelector('button:last-of-type, .ucm-rowbtn:last-of-type')?.click();
     });
-    await wait(500);
+    await wait(800); // still inside the 1.2s settle window -> card is up
     await page.screenshot({ path: path.join(SHOTS, '9b-remove-confirm.png'), fullPage: true });
+    // Regression guard: every item in the remove-confirm row must share the same
+    // vertical centre (bundle's .p-button margin-bottom used to shift the buttons
+    // above centre, making the text look bottom-aligned).
+    const align = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        const msg = document.querySelector('.ucm-confirm__msg');
+        const btn = document.querySelector('.ucm-confirm button');
+        if (!box || !msg || !btn) return { error: 'confirm row not found' };
+        const c = (n) => { const r = n.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+        return { msg: c(msg), btn: c(btn), delta: Math.abs(c(msg) - c(btn)) };
+    });
+    if (!align.error) {
+        if (align.delta > 3) console.log(`PAGE ERROR: confirm row misaligned (delta=${align.delta.toFixed(1)}px)`);
+    } else {
+        console.log('PAGE ERROR: ' + align.error);
+    }
     // dismiss the confirm card so it does not affect later shots
     await page.evaluate(() => {
         const box = document.querySelector('.ucm-confirm');

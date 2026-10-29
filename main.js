@@ -516,6 +516,13 @@ async function listChanges(select = 'all') {
     return snapdRequest('GET', '/v2/changes?select=' + s, { auth: A() });
 }
 
+/** GET /v2/changes/{id} — one change. The id is a numeric change ID from a
+    snapd 2xx write response (validated here; snapd itself 400s anything else). */
+async function getChange(id) {
+    if (!/^[0-9]{1,10}$/.test(String(id))) throw new Error('invalid change id');
+    return snapdRequest('GET', '/v2/changes/' + String(id), { auth: A() });
+}
+
 async function getWarnings() {
     return snapdRequest('GET', '/v2/warnings', { auth: A() });
 }
@@ -788,7 +795,7 @@ const api = {
     storeLogin, storeLogout,
 
     getSystemInfo, getDisk, listChanges, getWarnings,
-    listSnaps, getSnapInfo, searchSnaps,
+    listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapConfig, getNetplan, listInterfaces,
 
     installSnap, snapAction,
@@ -1031,6 +1038,7 @@ function initElectron() {
     })));
     ipcMain.handle('sys:disk', guard(() => getDisk()));
     ipcMain.handle('sys:changes', guard((select) => listChanges(select)));
+    ipcMain.handle('sys:change', guard((id) => getChange(id)));
     ipcMain.handle('sys:netplan', guard(() => getNetplan()));
 
     ipcMain.handle('snaps:list', guard(() => listSnaps()));

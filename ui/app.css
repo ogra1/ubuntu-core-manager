@@ -265,9 +265,18 @@ html, body {
 .ucm-login__head i {
     filter: brightness(0) invert(1);
 }
-/* remove-confirm row: single centred line (question icon + message + buttons) */
+/* remove-confirm row: single centred line (question icon + message + buttons).
+   NOTE: the bundle's .p-notification__message is display:inline — an inline box
+   inside a flex row is NOT a flex item, so it baseline-anchors and looks
+   bottom-aligned next to the buttons. Overriding to a flex item fixes it. */
 .ucm-confirm__ic { flex: 0 0 auto; align-self: center; }
-.ucm-confirm__msg { margin: 0; flex: 1 1 auto; }
+.ucm-confirm__msg { display: flex; align-items: center; margin: 0; padding: 0; flex: 1 1 auto; }
+    /* padding:0 counters the bundle's .p-notification__message padding-top (6.56px)
+       which otherwise pushes the text below the row centre */
+    /* the bundle's .p-button carries margin-bottom: 18.88px — inside this flex row
+       that inflates the cross-axis box and shifts the buttons ABOVE centre, so the
+       centred text looks bottom-aligned next to them. Zero it here. */
+.ucm-confirm button { margin: 0; }
 
 /* search field icon (light content area — keep the bundle's black fill); explicit
    1rem box so it matches the input height */

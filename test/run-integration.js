@@ -32,7 +32,7 @@ function ok(name, cond, extra = '') {
 }
 
 (async () => {
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0,
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, changes: [],
         netplanYaml: 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n' };
     await makeServer(SOCK, state);
     console.log('stub snapd up on ' + SOCK);
@@ -155,6 +155,24 @@ function ok(name, cond, extra = '') {
     ok('reject malformed CIDR (999.x)', !!cidrErr && /ipv4 must be/.test(cidrErr.message), cidrErr && cidrErr.message);
 
     console.log('\n[7] host diagnostics (read-only)');
+    // install a brand-new snap: the write returns a change id; the stub settles
+    // it ~300ms later and THEN the snap appears in the list (the UI must poll the
+    // change and reload after settle — the "list did not refresh" regression).
+    const ch = await m.installSnap('mosquitto', 'latest/stable');
+    ok('install returns a snapd change id', ch && /^[0-9]+$/.test(String(ch.id)), JSON.stringify(ch));
+    let pollCh = null;
+    for (let i = 0; i < 40 && (!pollCh || pollCh.status === 'Doing'); i++) {
+        pollCh = await m.getChange(ch.id);
+        if (pollCh && pollCh.status === 'Doing') await new Promise((r) => setTimeout(r, 50));
+    }
+    ok('change reached terminal state (Done)', pollCh && pollCh.status === 'Done', JSON.stringify(pollCh));
+    const afterList = await m.listSnaps();
+    ok('snap list refreshed after settle includes new snap', afterList.some((x) => x.name === 'mosquitto'),
+        afterList.map((x) => x.name).join(','));
+    let againErr = null;
+    try { await m.installSnap('mosquitto', 'stable'); } catch (e) { againErr = e; }
+    ok('second install rejected (already installed — stub list mutated)', !!againErr, againErr && againErr.message);
+
     const hs = m.readHostStats();
     ok('host stats have hostname+mem', typeof hs.hostname === 'string' && hs.mem && hs.mem.total > 0, JSON.stringify(hs).slice(0, 80));
     const nd = m.readProcNetDev();

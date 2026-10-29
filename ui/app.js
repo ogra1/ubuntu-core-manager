@@ -586,6 +586,34 @@ async function applyNetwork() {
 
 /* -------------------------------- snaps ---------------------------------- */
 
+/* Poll a snapd change (returned id from an install/remove/etc. write) until it
+   reaches a terminal state, so the snap list can be reloaded AFTER the change
+   actually settled — the old fire-and-forget reload raced the change and showed
+   a stale list until the view was switched away and back. */
+async function waitChangeSettled(change, timeoutMs = 10 * 60 * 1000) {
+    const id = change && change.id;
+    if (id == null) return null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+        let c;
+        try { c = await core.system.change(id); }
+        catch { return null; } // tracking failed — do NOT block the refresh
+        if (c && c.status && c.status !== 'Doing') return c;
+        await new Promise((r) => setTimeout(r, 250));
+    }
+    return null;
+}
+
+/* snapd's channel is track/risk; a bare "stable" means the latest track. The
+   table column shows "Track / Channel" with both halves always present. */
+function fmtTrackChannel(ch) {
+    const c = String(ch || '');
+    const [track, risk] = c.split('/');
+    if (track && risk) return `${track} / ${risk}`;
+    if (track && !risk) return `${track} / stable`;
+    return c || '—';
+}
+
 async function loadSnaps() {
     const body = $('#snapsBody');
     try {
@@ -627,7 +655,7 @@ function renderSnaps() {
             el('td', { text: s.name, class: 'ucm-mono' }),
             el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
             el('td', { class: 'ucm-mono', text: `${s.version || '—'} · r${s.revision || '—'}` }),
-            el('td', { text: s.channel || '—' }),
+            el('td', { class: 'ucm-mono', text: fmtTrackChannel(s.channel), title: s.channel || '' }),
             el('td', { text: s.type || 'app' }),
             actions,
         ));
@@ -653,9 +681,13 @@ function confirmRemove(name) {
     b.onclick = async () => {
         b.classList.add('is-disabled');
         try {
-            await core.snaps.action(name, 'remove');
+            const change = await core.snaps.action(name, 'remove');
             toast('positive', 'Removal started', `${name} is being removed by snapd.`);
+            const done = await waitChangeSettled(change);
             loadSnaps();
+            if (done && done.status && done.status.toLowerCase() !== 'done') {
+                toast('negative', 'Removal finished with an error', `${name}: ${done.err || done.status}`);
+            }
         } catch (e) { toastErr(e); }
         finally { box.remove(); }
     };
@@ -668,8 +700,9 @@ function confirmRemove(name) {
 
 async function snapOp(name, action) {
     try {
-        await core.snaps.action(name, action);
+        const change = await core.snaps.action(name, action);
         toast('positive', 'Change started', `${action} on ${name} is running in snapd.`);
+        await waitChangeSettled(change);
         loadSnaps();
     } catch (e) { toastErr(e); }
 }
@@ -682,9 +715,13 @@ async function installFromRow(name, channel, btn) {
     btn.classList.add('is-disabled');
     btn.textContent = 'Installing…';
     try {
-        await core.snaps.install(name, channel);
+        const change = await core.snaps.install(name, channel);
         toast('positive', 'Install started', `${name} is being installed from channel ${channel}.`);
+        const done = await waitChangeSettled(change);
         loadSnaps();
+        if (done && done.status && done.status.toLowerCase() !== 'done') {
+            toast('negative', 'Install finished with an error', `${name}: ${done.err || done.status}`);
+        }
     } catch (e) {
         toastErr(e);
     } finally {

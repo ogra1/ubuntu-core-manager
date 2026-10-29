@@ -96,6 +96,7 @@ const api = Object.freeze({
         info: invoke('sys:info'),               // { snapd, host, netdev, warnings }
         disk: invoke('sys:disk'),               // storage/volumes
         changes: invoke('sys:changes'),         // (select?) => change list
+        change: invoke('sys:change'),           // (id) => one change (status poll for write ops)
         netplan: invoke('sys:netplan'),         // active netplan doc (parsed)
     }),
 

@@ -142,10 +142,18 @@ function makeServer(socketPath, state) {
                 return json(res, 200, [{ warn: 'some warning', last: '2026-10-28T00:00:00Z' }]);
             }
             if (p === '/v2/changes' && req.method === 'GET') {
-                return json(res, 200, [
-                    { id: '1', kind: 'install-snap', summary: { message: 'Install snap "htop"' }, status: 'Done', spawn_time: '2026-10-28T09:00:00Z' },
-                    { id: '2', kind: 'configure-snap', summary: { message: 'Configure snap "core24"' }, status: 'Ready', spawn_time: '2026-10-28T10:00:00Z' },
-                ]);
+                const sel = url.searchParams.get('select') || 'all';
+                const list = sel === 'in-progress' ? state.changes.filter((c) => c.status === 'Doing')
+                    : sel === 'ready' ? state.changes.filter((c) => c.status !== 'Doing')
+                    : state.changes;
+                return json(res, 200, list);
+            }
+            // single change (status polling after a write returns { id })
+            const chRe = p.match(/^\/v2\/changes\/(\d+)$/);
+            if (chRe && req.method === 'GET') {
+                const c = state.changes.find((x) => x.id === chRe[1]);
+                if (!c) return json(res, 404, { kind: 'not-found', message: `cannot find change ${chRe[1]}` });
+                return json(res, 200, c);
             }
 
             // ---- snaps --------------------------------------------------------
@@ -173,7 +181,28 @@ function makeServer(socketPath, state) {
                     if (data.action === 'install' && SNAPS.find((s) => s.name === name)) {
                         return json(res, 400, { kind: 'snap-already-installed', message: `snap "${name}" is already installed` });
                     }
-                    return json(res, 202, { id: String(state.changeSeq += 1) });
+                    // Real snapd semantics: the write returns a change id; the snap
+                    // list only reflects the result once the change settles. The
+                    // UI must poll /v2/changes/{id} and reload AFTER that.
+                    const id = String(state.changeSeq += 1);
+                    const change = {
+                        id,
+                        kind: data.action + '-snap',
+                        summary: { message: `${data.action[0].toUpperCase() + data.action.slice(1)} snap "${name}"` },
+                        status: 'Doing',
+                        spawn_time: new Date().toISOString(),
+                    };
+                    state.changes.push(change);
+                    setTimeout(() => {
+                        if (data.action === 'install') {
+                            SNAPS.push({ name, version: '9.9.9', revision: 1, channel: data.channel || 'latest/stable', status: 'active', type: 'app', confinement: 'strict' });
+                        } else if (data.action === 'remove') {
+                            const i = SNAPS.findIndex((x) => x.name === name);
+                            if (i >= 0) SNAPS.splice(i, 1);
+                        }
+                        change.status = 'Done';
+                    }, 300);
+                    return json(res, 202, { id });
                 }
             }
 
@@ -235,7 +264,10 @@ module.exports = { makeServer };
 
 if (require.main === module) {
     const sock = process.argv[2] || '/tmp/stub-snapd.socket';
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, netplanYaml: NETPLAN_YAML };
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, netplanYaml: NETPLAN_YAML, changes: [
+        { id: '1', kind: 'install-snap', summary: { message: 'Install snap "htop"' }, status: 'Done', spawn_time: '2026-10-28T09:00:00Z' },
+        { id: '2', kind: 'configure-snap', summary: { message: 'Configure snap "core24"' }, status: 'Ready', spawn_time: '2026-10-28T10:00:00Z' },
+    ] };
     makeServer(sock, state).then(() => {
         console.log('stub snapd listening on ' + sock);
         setInterval(() => {
