@@ -252,10 +252,21 @@ html, body {
 
 /* row action buttons */
 .ucm-rowbtn { margin: 0 .2rem; }
-/* lock button in the dark rail: force white icon + label (p-icon inherits
-   currentColor and the base button color was rendering dark on dark) */
+/* Dark-rail icons: the offline Vanilla bundle ships every p-icon as a data-URI
+   SVG with a FIXED #000 fill (not currentColor), so `color` alone can never
+   whiten them — brightness(0) invert(1) is required. This covers the Lock
+   button's X (white icon + label) and the user glyph before "Administrator".
+   (p-icon--lock does not exist in the bundled set — do not use it.) */
 .ucm-lockbtn { color: #fff; }
+.ucm-lockbtn .p-icon,
+.ucm-rail-user .p-icon--user,
+.ucm-login__head .p-icon {
+    filter: brightness(0) invert(1);
+}
 .ucm-lockbtn .p-icon { color: #fff; }
+/* search field icon (light content area — keep the bundle's black fill); explicit
+   16px box so it matches the input height (base .p-icon size comes from font-size) */
+.ucm-search-ic { align-self: center; flex: 0 0 auto; width: 1rem; height: 1rem; }
 
 /* ---- chips ---------------------------------------------------------------- */
 .p-chip { border: 1px solid var(--ucm-grey-90); background: #fff; }

@@ -666,47 +666,42 @@ async function snapOp(name, action) {
     } catch (e) { toastErr(e); }
 }
 
-async function installSnap() {
-    const nameEl = $('#snapInstallName');
-    const name = nameEl.value.trim();
-    const channel = $('#snapInstallChannel').value;
-    if (!RE_SNAP_NAME.test(name)) {
-        toast('negative', 'Invalid snap name', 'Snap names use lowercase letters, digits and hyphens.');
-        nameEl.focus();
-        return;
-    }
-    const btn = $('#snapInstallBtn');
+/* Install a specific store result row. The channel pulldown and its options
+   live on the row (channels are store-defined, possibly versioned e.g.
+   stable/22.04) — never hardcoded. */
+async function installFromRow(name, channel) {
+    const btn = this;
     btn.classList.add('is-disabled');
+    btn.textContent = 'Installing…';
     try {
         await core.snaps.install(name, channel);
         toast('positive', 'Install started', `${name} is being installed from channel ${channel}.`);
-        nameEl.value = '';
-        $('#snapSearchResults').classList.add('ucm-hidden');
         loadSnaps();
     } catch (e) {
         toastErr(e);
     } finally {
         btn.classList.remove('is-disabled');
+        btn.textContent = 'Install';
     }
 }
 
-/* Populate the deploy channel pulldown from search results. The set of
-   channels is store-defined (many, possibly versioned like stable/22.04) —
-   never hardcode it. Keeps 'stable (default)' available pre-search. */
-function setChannelOptions(results) {
-    const sel = $('#snapInstallChannel');
-    if (!sel) return;
-    const set = new Set(['stable']);
-    (results || []).forEach((r) => Object.keys(r.channels || {}).forEach((c) => set.add(c)));
-    const sorted = Array.from(set).sort((x, y) => x.localeCompare(y));
-    sel.innerHTML = '';
-    sorted.forEach((c) => sel.append(el('option', { value: c, text: c === 'stable' ? 'stable (default)' : c })));
-    if (!sorted.length) sel.append(el('option', { value: '', text: 'no channels (search first)' }));
-    sel.value = sorted.includes('stable') ? 'stable' : sorted[0] || '';
+/* Build the per-row channel <select> from a result's `channels` map. Picks the
+   best default (latest/stable > stable > first) so the Install button is ready. */
+function channelSelect(r) {
+    const chs = Object.keys(r.channels || {});
+    const sel = el('select', { style: 'max-width:12rem;' });
+    if (!chs.length) {
+        sel.append(el('option', { value: 'stable', text: 'stable' }));
+        return sel;
+    }
+    const best = chs.find((c) => c === 'latest/stable') || chs.find((c) => c === 'stable') || chs[0];
+    chs.sort((x, y) => x.localeCompare(y)).forEach((c) => sel.append(el('option', { value: c, text: c })));
+    sel.value = best;
+    return sel;
 }
 
 async function searchStore() {
-    const nameEl = $('#snapInstallName');
+    const nameEl = $('#snapSearchName');
     const q = nameEl.value.trim();
     if (!q) { toast('caution', 'Search', 'Enter a snap name to search the store.'); return; }
     const box = $('#snapSearchResults');
@@ -715,7 +710,6 @@ async function searchStore() {
     $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'Searching…' })));
     try {
         const results = await core.snaps.search(q, 8);
-        setChannelOptions(results);
         $('#snapSearchBody').innerHTML = '';
         if (!results.length) {
             $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'No store results.' })));
@@ -723,18 +717,17 @@ async function searchStore() {
         }
         results.forEach((r) => {
             const publisher = r.publisher && r.publisher.username;
-            const chs = Object.keys(r.channels || {});
-            const best = chs.find((c) => c === 'latest/stable')
-                || chs.find((c) => c === 'stable')
-                || chs[0] || '—';
+            const chSel = channelSelect(r);
+            const installBtn = el('button', {
+                class: 'p-button--brand p-button ucm-rowbtn',
+                onclick: (e) => installFromRow(r.name, chSel.value),
+            }, 'Install');
             $('#snapSearchBody').append(el('tr', {},
                 el('td', { text: r.name, class: 'ucm-mono' }),
                 el('td', { class: 'ucm-wrap', text: r.summary || '' }),
                 el('td', { text: publisher || '—' }),
-                el('td', { text: best, title: chs.join(', '), class: 'ucm-mono' }),
-                el('td', { style: 'text-align:right;',
-                    onclick: () => { nameEl.value = r.name; installSnap(); },
-                    class: 'p-button--base p-button ucm-rowbtn' }, 'Install'),
+                el('td', {}, chSel),
+                el('td', { style: 'text-align:right;', onclick: (e) => { e.stopPropagation(); } }, installBtn),
             ));
         });
     } catch (e) {
@@ -903,10 +896,10 @@ function wire() {
         applyNetModeVisibility();
     });
 
-    // snaps
-    $('#snapInstallBtn').addEventListener('click', installSnap);
+    // snaps — the search field is a search ONLY: Enter runs the search, never
+    // installs. Per-row Install buttons (in the results card) do the install.
     $('#snapSearchBtn').addEventListener('click', searchStore);
-    $('#snapInstallName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); installSnap(); } });
+    $('#snapSearchName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchStore(); } });
 
     // interfaces
     $('#ifacesRefresh').addEventListener('click', loadInterfaces);

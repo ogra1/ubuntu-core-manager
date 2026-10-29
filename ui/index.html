@@ -140,7 +140,7 @@
                 <div class="ucm-role" id="railRole">local session</div>
             </div>
             <button class="p-button--base p-button ucm-lockbtn" id="lockBtn" type="button" title="Lock console">
-                <i class="p-icon--lock"></i> Lock
+                <i class="p-icon--close"></i> Lock
             </button>
         </div>
     </aside>
@@ -322,16 +322,13 @@
             <!-- deployment / install panel -->
             <div class="ucm-deploy">
                 <div class="p-form__group">
-                    <label class="p-form__label" for="snapInstallName">Deploy snap</label>
-                    <input class="ucm-mono" type="text" id="snapInstallName" placeholder="e.g. htop, mosquitto, firefox" spellcheck="false">
-                    <!-- channel pulldown is store-populated after a search (channels
-                         can be versioned, e.g. stable/22.04); 'stable' is the
-                         pre-search default -->
-                    <select id="snapInstallChannel" style="max-width:14rem;">
-                        <option value="stable" selected>stable (default)</option>
-                    </select>
-                    <button class="p-button--brand" id="snapInstallBtn" type="button"><i class="p-icon--plus"></i> Install</button>
-                    <button class="p-button--base p-button" id="snapSearchBtn" type="button" style="max-width:12rem;">Search store</button>
+                    <label class="p-form__label" for="snapSearchName">Search store</label>
+                    <div style="display:flex; gap:.6rem; max-width:34rem;">
+                        <i class="p-icon--search ucm-search-ic" aria-hidden="true"></i>
+                        <input class="ucm-mono" type="text" id="snapSearchName"
+                               placeholder="e.g. htop, mosquitto, firefox — Enter runs the search" spellcheck="false">
+                        <button class="p-button--brand" id="snapSearchBtn" type="button">Search store</button>
+                    </div>
                 </div>
             </div>
 
@@ -339,7 +336,7 @@
                 <div class="p-card">
                     <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Store results</p></div>
                     <table class="p-table" style="margin:0;">
-                        <thead><tr><th>Name</th><th>Summary</th><th>Publisher</th><th>Channel</th><th></th></tr></thead>
+                        <thead><tr><th>Name</th><th>Summary</th><th>Publisher</th><th>Channel</th><th style="text-align:right;">Install</th></tr></thead>
                         <tbody id="snapSearchBody"></tbody>
                     </table>
                 </div>

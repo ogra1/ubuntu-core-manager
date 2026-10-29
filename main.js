@@ -1008,10 +1008,15 @@ function initElectron() {
     ipcMain.handle('auth:create', guard((password) => { const p = createLocalPassword(password); armInactivity(); pushAuthStatus(); return p; }));
     ipcMain.handle('auth:login', guard((password) => { const p = loginLocal(password); armInactivity(); pushAuthStatus(); return p; }));
     ipcMain.handle('auth:logout', guard(() => { const p = logoutLocal(); pushAuthStatus(); return p; }));
-    // Activity beacon (mouse/keyboard/wheel from the UI): the countdown only
-    // advances while a local session is armed — re-arming here resets it to the
-    // full 15 minutes. Ignored on the login screen so the gate itself never locks.
-    ipcMain.on('session:activity', () => { if (session.localAuthenticated) armInactivity(); });
+    // Activity beacon (mouse/keyboard/wheel from the UI): re-arm resets the real
+    // lock clock to a full 15 minutes. Crucially we ALSO push the fresh expiresAt
+    // to the renderer — the header pill is a local countdown from the last received
+    // expiresAt, so without this push the pill would keep ticking to 0:00 (display
+    // only) while main's real timer was correctly still ~15 min out (the "0:00 but
+    // no lock" symptom). Ignored on the login screen so the gate itself never locks.
+    ipcMain.on('session:activity', () => {
+        if (session.localAuthenticated) { armInactivity(); pushAuthStatus(); }
+    });
 
     // ---- optional store login (macaroons; needs network) ------------
     ipcMain.handle('store:login', guard(async (email, password) => { const p = await storeLogin(email, password); pushAuthStatus(); return p; }));

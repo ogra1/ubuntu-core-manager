@@ -200,6 +200,7 @@ function ok(name, cond, extra = '') {
     {
         const handlers = {};
         const events = {};
+        const sends = [];
         process.env.UCM_FAKE_ELECTRON = '1';
         const WIRE_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-wire-'));
         process.env.UCM_STATE_DIR = WIRE_STATE;
@@ -211,7 +212,7 @@ function ok(name, cond, extra = '') {
             },
             BrowserWindow: class {
                 constructor() {
-                    this.webContents = { on: () => {}, send: () => {}, setWindowOpenHandler: () => {}, executeJavaScript: () => Promise.resolve(null) };
+                    this.webContents = { on: () => {}, send: (ch, p) => { sends.push({ ch, p }); }, setWindowOpenHandler: () => {}, executeJavaScript: () => Promise.resolve(null) };
                     this.on = () => {};
                     this.once = () => {};
                     this.loadFile = () => {};
@@ -259,6 +260,11 @@ function ok(name, cond, extra = '') {
                     ok('activity beacon resets countdown to ~15min',
                         after > before && Math.abs(after - expect) < 600,
                         `before=${before} after=${after} expect~${expect}`);
+                    const lastPush = sends.slice().reverse().find((x) => x.ch === 'auth-status-changed');
+                    ok('activity beacon PUSHES fresh expiresAt to renderer (pill reset; fixes "0:00 no lock")',
+                        !!lastPush && lastPush.p && lastPush.p.authenticated === true
+                        && Math.abs((lastPush.p.expiresAt || 0) - after) < 50,
+                        JSON.stringify(lastPush && lastPush.p));
                 }
             }
             delete global.UCM_FAKE_ELECTRON;

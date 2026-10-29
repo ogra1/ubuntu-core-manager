@@ -271,8 +271,9 @@ function mockFactoryJs() {
     // ---- 5. snaps view (store online now: search works) ----
     await page.click('.ucm-side a[data-view="snaps"]');
     await wait(700);
-    await page.type('#snapInstallName', 'mosquitto');
-    await page.click('#snapSearchBtn');
+    await page.type('#snapSearchName', 'mosquitto');
+    await page.click('#snapSearchName');
+    await page.keyboard.press('Enter'); // search field is search-only (Enter must NOT install)
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '9-snaps-search.png'), fullPage: true });
 
