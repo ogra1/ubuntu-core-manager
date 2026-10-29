@@ -591,12 +591,12 @@ async function applyNetwork() {
    actually settled — the old fire-and-forget reload raced the change and showed
    a stale list until the view was switched away and back. */
 async function waitChangeSettled(change, timeoutMs = 10 * 60 * 1000) {
-    const id = change && change.id;
-    if (id == null) return null;
+    const id = change && (change.id != null ? change.id : change.change != null ? change.change : null);
+    if (id == null) return null; // no change id in the response — nothing to wait on
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
         let c;
-        try { c = await core.system.change(id); }
+        try { c = await core.system.change(String(id)); }
         catch { return null; } // tracking failed — do NOT block the refresh
         if (c && c.status && c.status !== 'Doing') return c;
         await new Promise((r) => setTimeout(r, 250));
@@ -604,14 +604,20 @@ async function waitChangeSettled(change, timeoutMs = 10 * 60 * 1000) {
     return null;
 }
 
-/* snapd's channel is track/risk; a bare "stable" means the latest track. The
-   table column shows "Track / Channel" with both halves always present. */
-function fmtTrackChannel(ch) {
-    const c = String(ch || '');
-    const [track, risk] = c.split('/');
+/* Installed-snap channel display. VERIFIED against live snapd 2.77 (/v2/snaps):
+   an installed snap reports `channel` = RISK ONLY (e.g. "stable") and the real
+   track in `tracking-channel` (e.g. "latest/stable"). So: prefer
+   tracking-channel, split into "Track / Channel"; fall back to channel.
+   Formatting the risk-only `channel` produced the "stable/stable" bug. */
+function fmtTrackChannel(snap) {
+    const tc = String((snap && (snap.tracking_channel || snap.trackingChannel || snap['tracking-channel'])) || '');
+    const ch = String((snap && snap.channel) || '');
+    const full = tc || ch;
+    if (!full) return '—';
+    const [track, risk] = full.split('/');
     if (track && risk) return `${track} / ${risk}`;
     if (track && !risk) return `${track} / stable`;
-    return c || '—';
+    return full; // bare risk (e.g. "stable") — no track info available
 }
 
 async function loadSnaps() {
@@ -655,7 +661,7 @@ function renderSnaps() {
             el('td', { text: s.name, class: 'ucm-mono' }),
             el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
             el('td', { class: 'ucm-mono', text: `${s.version || '—'} · r${s.revision || '—'}` }),
-            el('td', { class: 'ucm-mono', text: fmtTrackChannel(s.channel), title: s.channel || '' }),
+            el('td', { class: 'ucm-mono', text: fmtTrackChannel(s), title: `${s.tracking_channel || s.channel || '—'}` }),
             el('td', { text: s.type || 'app' }),
             actions,
         ));

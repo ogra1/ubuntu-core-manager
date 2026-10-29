@@ -17,11 +17,11 @@ const path = require('path');
 const SNAPS = [
     {
         name: 'core24', version: '24.04', revision: 4110, channel: '24.04',
-        status: 'active', type: 'core', confinement: 'strict',
+        status: 'active', type: 'core', confinement: 'strict', 'tracking-channel': '24.04/stable',
         private: false, installDate: '2026-01-01T00:00:00Z',
     },
     {
-        name: 'snapd', version: '2.68', revision: 23448, channel: 'stable',
+        name: 'snapd', version: '2.68', revision: 23448, channel: 'stable', 'tracking-channel': 'latest/stable',
         status: 'active', type: 'snapd', confinement: 'strict',
         private: false, installDate: '2026-01-01T00:00:00Z',
     },
@@ -153,7 +153,8 @@ function makeServer(socketPath, state) {
             if (chRe && req.method === 'GET') {
                 const c = state.changes.find((x) => x.id === chRe[1]);
                 if (!c) return json(res, 404, { kind: 'not-found', message: `cannot find change ${chRe[1]}` });
-                return json(res, 200, c);
+                // real snapd: result = { id, kind, summary: "<string>", status, tasks, ... }
+                return json(res, 200, { id: c.id, kind: c.kind, summary: (c.summary && c.summary.message) || c.summary, status: c.status });
             }
 
             // ---- snaps --------------------------------------------------------
@@ -195,14 +196,26 @@ function makeServer(socketPath, state) {
                     state.changes.push(change);
                     setTimeout(() => {
                         if (data.action === 'install') {
-                            SNAPS.push({ name, version: '9.9.9', revision: 1, channel: data.channel || 'latest/stable', status: 'active', type: 'app', confinement: 'strict' });
+                            SNAPS.push({ name, version: '9.9.9', revision: 1, channel: 'stable',
+                                'tracking-channel': (data.channel && data.channel.includes('/')) ? data.channel : 'latest/stable',
+                                status: 'active', type: 'app', confinement: 'strict' });
                         } else if (data.action === 'remove') {
                             const i = SNAPS.findIndex((x) => x.name === name);
                             if (i >= 0) SNAPS.splice(i, 1);
                         }
                         change.status = 'Done';
                     }, 300);
-                    return json(res, 202, { id });
+                    // REAL snapd 2.77 async envelope (verified on a live daemon):
+                    //   { "type":"async", "status-code":202, "result": null, "change": "<id>" }
+                    // The change id is at the ENVELOPE top level — the UI client must
+                    // read `change`, not `result.id`. (A stub that returns {id} in
+                    // result masked this exact bug for three rounds.)
+                    const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: id });
+                    return new Promise((resolve) => {
+                        res.writeHead(202, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
+                        res.end(payload);
+                        resolve();
+                    });
                 }
             }
 

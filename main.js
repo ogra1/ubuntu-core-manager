@@ -303,7 +303,18 @@ function snapdRequest(method, apiPath, { body = null, auth = null, timeout = SOC
                 }
                 const st = res.statusCode || 0;
                 if (st >= 200 && st < 300) {
-                    resolve(data && data.result !== undefined ? data.result : (data === null ? {} : data));
+                    // snapd's ASYNC ops (install/remove/etc.) respond
+                    //   { type:"async", result: null, change: "<id>" }
+                    // — the change id lives at the ENVELOPE top level, not in
+                    // result. Surface it as { id } so waitChangeSettled() can
+                    // poll /v2/changes/{id}. (Verified against live snapd 2.77.)
+                    if (data && data.type === 'async') {
+                        resolve(data.change ? { id: String(data.change) } : {});
+                    } else if (data && data.result !== undefined) {
+                        resolve(data.result);
+                    } else {
+                        resolve(data === null ? {} : data);
+                    }
                 } else {
                     const r = data && data.result ? data.result : {};
                     reject(snapdError(st, r.kind, r.message || `HTTP ${st}`, r.value));

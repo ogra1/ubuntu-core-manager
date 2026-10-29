@@ -159,7 +159,11 @@ function ok(name, cond, extra = '') {
     // it ~300ms later and THEN the snap appears in the list (the UI must poll the
     // change and reload after settle — the "list did not refresh" regression).
     const ch = await m.installSnap('mosquitto', 'latest/stable');
-    ok('install returns a snapd change id', ch && /^[0-9]+$/.test(String(ch.id)), JSON.stringify(ch));
+    // Regression: snapd's async envelope is {type:"async", result:null, change:"<id>"}
+    // — the id lives at the envelope top level. The client MUST surface it as
+    // {id}; a stub that puts it in result masks exactly this class of bug.
+    ok('async envelope: install surfaces change id as {id} (result is null)',
+        ch && /^[0-9]+$/.test(String(ch.id)) && ch.result === undefined, JSON.stringify(ch));
     let pollCh = null;
     for (let i = 0; i < 40 && (!pollCh || pollCh.status === 'Doing'); i++) {
         pollCh = await m.getChange(ch.id);

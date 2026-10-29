@@ -24,14 +24,14 @@ const SHOTS = '/root/shots';
 fs.mkdirSync(SHOTS, { recursive: true });
 
 const SNAPS = [
-    { name: 'core24', version: '24.04.3', revision: 4110, channel: '24.04', status: 'active', type: 'core', confinement: 'strict' },
-    { name: 'snapd', version: '2.68.4', revision: 23448, channel: 'stable', status: 'active', type: 'snapd', confinement: 'strict' },
-    { name: 'kernel-noble', version: '6.8.0-40', revision: 1189, channel: 'noble', status: 'active', type: 'kernel', confinement: 'strict' },
+    { name: 'core24', version: '24.04.3', revision: 4110, channel: 'stable', 'tracking-channel': '24.04/stable', status: 'active', type: 'core', confinement: 'strict' },
+    { name: 'snapd', version: '2.68.4', revision: 23448, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'snapd', confinement: 'strict' },
+    { name: 'kernel-noble', version: '6.8.0-40', revision: 1189, channel: 'stable', 'tracking-channel': 'noble/stable', status: 'active', type: 'kernel', confinement: 'strict' },
     { name: 'gadget', version: '1.2', revision: 77, channel: 'local', status: 'active', type: 'gadget', confinement: 'jailmode' },
-    { name: 'htop', version: '3.3.0', revision: 5533, channel: 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
-    { name: 'mosquitto', version: '2.0.19', revision: 14077, channel: 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
-    { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
-    { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', status: 'disabled', type: 'app', confinement: 'devmode' },
+    { name: 'htop', version: '3.3.0', revision: 5533, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
+    { name: 'mosquitto', version: '2.0.19', revision: 14077, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
+    { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
+    { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', 'tracking-channel': 'latest/candidate', status: 'disabled', type: 'app', confinement: 'devmode' },
 ];
 
 const CONNECTIONS = {
@@ -178,11 +178,12 @@ function mockFactoryJs() {
                     CHANGES[id] = { id, status: 'Doing' };
                     setTimeout(() => {
                         if (!SNAPS.some((x) => x.name === n)) {
-                            SNAPS = SNAPS.concat([{ name: n, version: '9.9.9', revision: 1, channel: ch || 'latest/stable', status: 'active', type: 'app', confinement: 'strict' }]);
+                            SNAPS = SNAPS.concat([{ name: n, version: '9.9.9', revision: 1, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' }]);
                         }
                         CHANGES[id] = { id, status: 'Done' };
                     }, 250);
-                    return { id };
+                    // real snapd async envelope: id at top level, result null
+                    return { id, change: id };
                 },
                 async action(n, a) {
                     if (a === 'remove' && n === 'core24') throw new Error('cannot remove snap "core24": system snap');
@@ -192,7 +193,7 @@ function mockFactoryJs() {
                         if (a === 'remove') SNAPS = SNAPS.filter((x) => x.name !== n);
                         CHANGES[id] = { id, status: 'Done' };
                     }, 1200); // slow settle: keeps the confirm card visible for the shot
-                    return { id };
+                    return { id, change: id };
                 },
                 async confGet() { return {}; },
                 async confSet() { return { id: '19' }; },
@@ -330,6 +331,19 @@ function mockFactoryJs() {
         if (box) box.remove();
     });
 
+    // Regression guard: Status/Type columns must hug their content (the 100%-wide
+    // table used to stretch every nowrap column, making them "way too wide").
+    const cw = await page.evaluate(() => {
+        const tbl = document.querySelector('.ucm-snaps-table table');
+        if (!tbl) return { error: 'no snaps table' };
+        const heads = Array.from(tbl.querySelectorAll('thead th')).map((th) => th.textContent.trim());
+        const wi = (label) => heads.indexOf(label);
+        const w = (i) => (i >= 0 ? Math.round(tbl.querySelectorAll('thead th')[i].getBoundingClientRect().width) : -1);
+        return { status: w(wi('Status')), type: w(wi('Type')) };
+    });
+    if (cw.error) console.log('PAGE ERROR: ' + cw.error);
+    else if (cw.status > 140 || cw.type > 140)
+        console.log(`PAGE ERROR: snaps table Status/Type too wide (status=${cw.status}px type=${cw.type}px, want <=140px)`);
     // ---- 6. interfaces view ----
     await page.click('.ucm-side a[data-view="interfaces"]');
     await wait(700);

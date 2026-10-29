@@ -265,6 +265,13 @@ html, body {
 .ucm-login__head i {
     filter: brightness(0) invert(1);
 }
+/* installed-snaps table: the default `table{width:100%}` + 6 nowrap columns makes
+   table-layout:auto stretch EVERY column (Status/Type become far wider than
+   their content). Sizing the table to its max-content instead makes each
+   column exactly as wide as its widest cell (Status ~'activating', Type
+   ~'gadget'), with the table capped at the container so it never overflows. */
+.ucm-snaps-table .p-table { width: max-content; max-width: 100%; }
+
 /* remove-confirm row: single centred line (question icon + message + buttons).
    NOTE: the bundle's .p-notification__message is display:inline — an inline box
    inside a flex row is NOT a flex item, so it baseline-anchors and looks
