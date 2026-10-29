@@ -357,9 +357,13 @@ async function doStoreConnect(email, password) {
     }
 }
 
+/* requireStore is reserved for the future private brand store (a later
+   iteration) where /v2/login IS required. Global-store search and install
+   must work WITHOUT it — snapd's /v2/find and /v2/snaps are open to the
+   global store unauthenticated. Do not re-gate them on store login. */
 function requireStore() {
     if (!state.storeAuthenticated) {
-        toast('caution', 'Store not connected', 'Use “Connect to store” in the top bar to install snaps or search (needs network).');
+        toast('caution', 'Store not connected', 'The private brand store needs a store login — use “Connect to store” in the top bar.');
         return false;
     }
     return true;
@@ -671,7 +675,6 @@ async function installSnap() {
         nameEl.focus();
         return;
     }
-    if (!requireStore()) return;
     const btn = $('#snapInstallBtn');
     btn.classList.add('is-disabled');
     try {
@@ -687,8 +690,22 @@ async function installSnap() {
     }
 }
 
+/* Populate the deploy channel pulldown from search results. The set of
+   channels is store-defined (many, possibly versioned like stable/22.04) —
+   never hardcode it. Keeps 'stable (default)' available pre-search. */
+function setChannelOptions(results) {
+    const sel = $('#snapInstallChannel');
+    if (!sel) return;
+    const set = new Set(['stable']);
+    (results || []).forEach((r) => Object.keys(r.channels || {}).forEach((c) => set.add(c)));
+    const sorted = Array.from(set).sort((x, y) => x.localeCompare(y));
+    sel.innerHTML = '';
+    sorted.forEach((c) => sel.append(el('option', { value: c, text: c === 'stable' ? 'stable (default)' : c })));
+    if (!sorted.length) sel.append(el('option', { value: '', text: 'no channels (search first)' }));
+    sel.value = sorted.includes('stable') ? 'stable' : sorted[0] || '';
+}
+
 async function searchStore() {
-    if (!requireStore()) return;
     const nameEl = $('#snapInstallName');
     const q = nameEl.value.trim();
     if (!q) { toast('caution', 'Search', 'Enter a snap name to search the store.'); return; }
@@ -698,6 +715,7 @@ async function searchStore() {
     $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'Searching…' })));
     try {
         const results = await core.snaps.search(q, 8);
+        setChannelOptions(results);
         $('#snapSearchBody').innerHTML = '';
         if (!results.length) {
             $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'No store results.' })));
@@ -705,12 +723,15 @@ async function searchStore() {
         }
         results.forEach((r) => {
             const publisher = r.publisher && r.publisher.username;
-            const channels = r.channels ? Object.keys(r.channels)[0] : 'stable';
+            const chs = Object.keys(r.channels || {});
+            const best = chs.find((c) => c === 'latest/stable')
+                || chs.find((c) => c === 'stable')
+                || chs[0] || '—';
             $('#snapSearchBody').append(el('tr', {},
                 el('td', { text: r.name, class: 'ucm-mono' }),
                 el('td', { class: 'ucm-wrap', text: r.summary || '' }),
                 el('td', { text: publisher || '—' }),
-                el('td', { text: channels || '—' }),
+                el('td', { text: best, title: chs.join(', '), class: 'ucm-mono' }),
                 el('td', { style: 'text-align:right;',
                     onclick: () => { nameEl.value = r.name; installSnap(); },
                     class: 'p-button--base p-button ucm-rowbtn' }, 'Install'),

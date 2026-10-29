@@ -199,6 +199,7 @@ function ok(name, cond, extra = '') {
     // and asserts no handler wiring throws.
     {
         const handlers = {};
+        const events = {};
         process.env.UCM_FAKE_ELECTRON = '1';
         const WIRE_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-wire-'));
         process.env.UCM_STATE_DIR = WIRE_STATE;
@@ -223,13 +224,13 @@ function ok(name, cond, extra = '') {
             },
             ipcMain: {
                 handle: (ch, fn) => { handlers[ch] = fn; },
-                on: () => {},
+                on: (ch, fn) => { events[ch] = fn; },
             },
             session: { defaultSession: { webRequest: { onHeadersReceived: () => {} }, localAuthenticated: false } },
         };
         try {
             delete require.cache[require.resolve(path.join(__dirname, '..', 'main.js'))];
-            require(path.join(__dirname, '..', 'main.js'));
+            const mw = require(path.join(__dirname, '..', 'main.js'));
             const wireErr = process.__ucmWireErr || null;
             ok('ipc wiring threw no TypeError', !wireErr, wireErr && wireErr.message);
             ok('auth:create/login/logout handlers registered',
@@ -242,6 +243,23 @@ function ok(name, cond, extra = '') {
                 ok('auth:login returns guard result', r2 && r2.ok === true && r2.result.authenticated === true, JSON.stringify(r2));
                 const r3 = await new Promise((res) => handlers['auth:logout'](null).then(res));
                 ok('auth:logout returns guard result', r3 && r3.ok === true && r3.result.authenticated === false, JSON.stringify(r3));
+
+                // Inactivity-timer contract: login arms a 15-min countdown; an
+                // activity beacon (mouse/keyboard) resets it to the FULL 15 min.
+                if (handlers['auth:login'] && events['session:activity']) {
+                    const r4 = await new Promise((res) => handlers['auth:login'](null, 'testpass-123').then(res));
+                    await new Promise((res) => setTimeout(res, 150)); // let the countdown advance
+                    const before = mw.authStatus().expiresAt;
+                    events['session:activity'](); // simulate the UI beacon
+                    const after = mw.authStatus().expiresAt;
+                    const expect = Date.now() + mw.SESSION_TIMEOUT_MS;
+                    ok('login arms a 15-min countdown',
+                        r4 && r4.ok === true && before > Date.now() && before <= Date.now() + mw.SESSION_TIMEOUT_MS + 100,
+                        `before=${before}`);
+                    ok('activity beacon resets countdown to ~15min',
+                        after > before && Math.abs(after - expect) < 600,
+                        `before=${before} after=${after} expect~${expect}`);
+                }
             }
             delete global.UCM_FAKE_ELECTRON;
         } finally {

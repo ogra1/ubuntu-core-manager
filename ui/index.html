@@ -139,8 +139,8 @@
                 <div class="ucm-name">Administrator</div>
                 <div class="ucm-role" id="railRole">local session</div>
             </div>
-            <button class="p-button--base p-button" id="lockBtn" type="button" title="Lock console">
-                <i class="p-icon--close"></i> Lock
+            <button class="p-button--base p-button ucm-lockbtn" id="lockBtn" type="button" title="Lock console">
+                <i class="p-icon--lock"></i> Lock
             </button>
         </div>
     </aside>
@@ -314,9 +314,9 @@
 
         <!-- ================= SNAPS VIEW ================= -->
         <section class="ucm-view ucm-hidden" id="view-snaps" data-view="snaps">
-            <div class="p-notification p-notification--caution" id="snapsStoreNotice" style="margin-bottom:1.2rem;">
-                <h5 class="p-notification__title">Store not connected</h5>
-                <p class="p-notification__message">Installing new snaps and store search require a snapd store login. Use “Connect to store” in the top bar — this needs network connectivity and an Ubuntu One account.</p>
+            <div class="p-notification p-notification--information" id="snapsStoreNotice" style="margin-bottom:1.2rem;">
+                <h5 class="p-notification__title">Store</h5>
+                <p class="p-notification__message">Global-store search and install work without a store login. “Connect to store” in the top bar is reserved for the private brand store (requires network + Ubuntu One account).</p>
             </div>
 
             <!-- deployment / install panel -->
@@ -324,11 +324,11 @@
                 <div class="p-form__group">
                     <label class="p-form__label" for="snapInstallName">Deploy snap</label>
                     <input class="ucm-mono" type="text" id="snapInstallName" placeholder="e.g. htop, mosquitto, firefox" spellcheck="false">
-                    <select id="snapInstallChannel" style="max-width:12rem;">
-                        <option value="stable" selected>stable</option>
-                        <option value="candidate">candidate</option>
-                        <option value="beta">beta</option>
-                        <option value="edge">edge</option>
+                    <!-- channel pulldown is store-populated after a search (channels
+                         can be versioned, e.g. stable/22.04); 'stable' is the
+                         pre-search default -->
+                    <select id="snapInstallChannel" style="max-width:14rem;">
+                        <option value="stable" selected>stable (default)</option>
                     </select>
                     <button class="p-button--brand" id="snapInstallBtn" type="button"><i class="p-icon--plus"></i> Install</button>
                     <button class="p-button--base p-button" id="snapSearchBtn" type="button" style="max-width:12rem;">Search store</button>

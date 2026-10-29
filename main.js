@@ -52,8 +52,11 @@ const RE_SNAP_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const RE_INSTANCE_SUFFIX = /^\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 // Store channels we will ever dial: official risk levels only.
-const RE_CHANNEL = /^(latest|candidate|beta|edge|stable|devel)(\/[a-z0-9.-]+)?(\/[a-z0-9.-]+)?$/;
-const CHANNEL_WHITELIST = new Set(['latest', 'candidate', 'beta', 'edge', 'stable', 'devel']);
+// Channel = [track/]risk[/version] where risk is an official snapd risk level.
+// The channel LIST is store-driven (queried per search and offered to the UI);
+// validation here is structural only — no hardcoded channel set (stores can
+// publish versioned channels like stable/22.04).
+const RE_CHANNEL = /^(latest\/)?(stable|candidate|beta|edge|devel)(\/[0-9][a-z0-9.+-]*)?$/;
 
 // IPv4 CIDR, e.g. 192.168.1.50/24
 const RE_IPV4_CIDR = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\/(3[0-2]|2\d|1\d|[1-9])$/;
@@ -79,9 +82,11 @@ function validSnapName(name) {
     return RE_SNAP_NAME.test(base) && (suffix === '' || RE_INSTANCE_SUFFIX.test(suffix));
 }
 
+// Bare 'stable' stays valid: real snapd normalises it to latest/stable, and it is
+// the pre-search default for manual installs.
 function validChannel(channel) {
-    return typeof channel === 'string' && RE_CHANNEL.test(channel)
-        && CHANNEL_WHITELIST.has(channel.split('/')[0]);
+    return typeof channel === 'string' && channel.length > 0 && channel.length <= 64
+        && RE_CHANNEL.test(channel);
 }
 
 /* ------------------------------------------------------------------ *
@@ -526,7 +531,10 @@ async function getSnapInfo(name) {
     return snapdRequest('GET', '/v2/snaps/' + encodeURIComponent(name), { auth: A() });
 }
 
-/** GET /v2/find — search the store. */
+/** GET /v2/find — search the store. Unauthenticated by design: global-store search
+    works without a /v2/login macaroon (store login is reserved for a later
+    private-brand store). Results carry each snap's full `channels` map; the UI
+    populates the deploy pulldown from it. */
 async function searchSnaps(query, limit = 10) {
     if (typeof query !== 'string' || query.length > 120) throw new Error('invalid search query');
     const clean = query.replace(/[^\p{L}\p{N}._\-+ ]/gu, '').trim();
@@ -548,7 +556,7 @@ async function searchSnaps(query, limit = 10) {
 async function installSnap(name, channel = 'stable') {
     if (!validSnapName(name)) throw new Error('invalid snap name: ' + JSON.stringify(name));
     if (!validChannel(channel)) {
-        throw new Error('invalid channel (allowed: latest/candidate/beta/edge/stable/devel): ' + JSON.stringify(channel));
+        throw new Error('invalid channel (risk levels stable/candidate/beta/edge/devel, optional version): ' + JSON.stringify(channel));
     }
     return snapdRequest('POST', '/v2/snaps/' + encodeURIComponent(name), {
         body: { action: 'install', channel },
@@ -1000,6 +1008,9 @@ function initElectron() {
     ipcMain.handle('auth:create', guard((password) => { const p = createLocalPassword(password); armInactivity(); pushAuthStatus(); return p; }));
     ipcMain.handle('auth:login', guard((password) => { const p = loginLocal(password); armInactivity(); pushAuthStatus(); return p; }));
     ipcMain.handle('auth:logout', guard(() => { const p = logoutLocal(); pushAuthStatus(); return p; }));
+    // Activity beacon (mouse/keyboard/wheel from the UI): the countdown only
+    // advances while a local session is armed — re-arming here resets it to the
+    // full 15 minutes. Ignored on the login screen so the gate itself never locks.
     ipcMain.on('session:activity', () => { if (session.localAuthenticated) armInactivity(); });
 
     // ---- optional store login (macaroons; needs network) ------------

@@ -252,6 +252,10 @@ html, body {
 
 /* row action buttons */
 .ucm-rowbtn { margin: 0 .2rem; }
+/* lock button in the dark rail: force white icon + label (p-icon inherits
+   currentColor and the base button color was rendering dark on dark) */
+.ucm-lockbtn { color: #fff; }
+.ucm-lockbtn .p-icon { color: #fff; }
 
 /* ---- chips ---------------------------------------------------------------- */
 .p-chip { border: 1px solid var(--ucm-grey-90); background: #fff; }
