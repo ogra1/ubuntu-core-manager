@@ -590,6 +590,18 @@ async function applyNetwork() {
    reaches a terminal state, so the snap list can be reloaded AFTER the change
    actually settled — the old fire-and-forget reload raced the change and showed
    a stale list until the view was switched away and back. */
+/* snapd change status vocabulary (live-verified against snapd 2.77): the
+   in-flight state is "Doing", but snapd ALSO emits transient non-terminal
+   values (observed: "Do") while a change runs, and the terminal states are
+   Done / Error / Undo / Undoing. We must therefore classify TERMINAL states
+   explicitly and keep polling on anything else — the old "return when
+   status !== 'Doing'" rule treated the transient "Do" as a finished error,
+   surfacing toasts like 'Removal finished with an error: htop: Do'. */
+const CHANGE_TERMINAL = new Set(['done', 'error', 'undo', 'undoing']);
+function isChangeTerminal(status) {
+    return CHANGE_TERMINAL.has(String(status || '').toLowerCase());
+}
+
 async function waitChangeSettled(change, timeoutMs = 10 * 60 * 1000) {
     const id = change && (change.id != null ? change.id : change.change != null ? change.change : null);
     if (id == null) return null; // no change id in the response — nothing to wait on
@@ -598,7 +610,7 @@ async function waitChangeSettled(change, timeoutMs = 10 * 60 * 1000) {
         let c;
         try { c = await core.system.change(String(id)); }
         catch { return null; } // tracking failed — do NOT block the refresh
-        if (c && c.status && c.status !== 'Doing') return c;
+        if (c && isChangeTerminal(c.status)) return c;
         await new Promise((r) => setTimeout(r, 250));
     }
     return null;
@@ -691,7 +703,7 @@ function confirmRemove(name) {
             toast('positive', 'Removal started', `${name} is being removed by snapd.`);
             const done = await waitChangeSettled(change);
             loadSnaps();
-            if (done && done.status && done.status.toLowerCase() !== 'done') {
+            if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
                 toast('negative', 'Removal finished with an error', `${name}: ${done.err || done.status}`);
             }
         } catch (e) { toastErr(e); }
@@ -725,7 +737,7 @@ async function installFromRow(name, channel, btn) {
         toast('positive', 'Install started', `${name} is being installed from channel ${channel}.`);
         const done = await waitChangeSettled(change);
         loadSnaps();
-        if (done && done.status && done.status.toLowerCase() !== 'done') {
+        if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
             toast('negative', 'Install finished with an error', `${name}: ${done.err || done.status}`);
         }
     } catch (e) {

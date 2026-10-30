@@ -177,6 +177,25 @@ function ok(name, cond, extra = '') {
     try { await m.installSnap('mosquitto', 'stable'); } catch (e) { againErr = e; }
     ok('second install rejected (already installed — stub list mutated)', !!againErr, againErr && againErr.message);
 
+    // LIVE snapd 2.77 reports the in-flight change status as "Doing" AND the
+    // transient "Do" (observed on a real remove). The settle logic must classify
+    // terminal states explicitly and keep polling through "Do" — the old
+    // status!=='Doing' rule surfaced 'Removal finished with an error: <name>: Do'.
+    const rm = await m.snapAction('htop', 'remove');
+    ok('remove returns a snapd change id', rm && /^[0-9]+$/.test(String(rm.id)), JSON.stringify(rm));
+    const rmPoll = new Set();
+    let rmFinal = null;
+    for (let i = 0; i < 80 && !rmFinal; i++) {
+        const c = await m.getChange(String(rm.id));
+        if (c) { rmPoll.add(c.status); if (/^(done|error|undo|undoing)$/i.test(c.status)) rmFinal = c; }
+        // 30ms cadence: slow enough to reliably land inside the stub's 60ms
+        // "Doing"->"Do" window, fast enough that the whole wait is <~400ms.
+        if (!rmFinal) await new Promise((r) => setTimeout(r, 30));
+    }
+    ok('remove change passed through the "Do" transient', rmPoll.has('Do'), `[${Array.from(rmPoll).join(', ')}]`);
+    ok('remove settled to Done despite the transient', rmFinal && rmFinal.status === 'Done', JSON.stringify(rmFinal));
+    ok('htop gone from the list after settle', !(await m.listSnaps()).some((x) => x.name === 'htop'));
+
     const hs = m.readHostStats();
     ok('host stats have hostname+mem', typeof hs.hostname === 'string' && hs.mem && hs.mem.total > 0, JSON.stringify(hs).slice(0, 80));
     const nd = m.readProcNetDev();

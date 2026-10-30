@@ -194,17 +194,28 @@ function makeServer(socketPath, state) {
                         spawn_time: new Date().toISOString(),
                     };
                     state.changes.push(change);
-                    setTimeout(() => {
-                        if (data.action === 'install') {
+                    // The list mutation and the terminal state land TOGETHER (snapd
+                    // applies a snap's list change atomically when the change
+                    // completes) — otherwise a poll that sees "Done" could still
+                    // read the pre-mutation list.
+                    if (data.action === 'remove') {
+                        // LIVE-VERIFIED (snapd 2.77): the in-flight status oscillates
+                        // "Doing" <-> transient "Do" before the terminal state. The
+                        // client must keep polling through "Do".
+                        setTimeout(() => { if (change.status === 'Doing') change.status = 'Do'; }, 60);
+                        setTimeout(() => {
+                            const i = SNAPS.findIndex((x) => x.name === name);
+                            if (i >= 0) SNAPS.splice(i, 1);
+                            change.status = 'Done';
+                        }, 320);
+                    } else {
+                        setTimeout(() => {
                             SNAPS.push({ name, version: '9.9.9', revision: 1, channel: 'stable',
                                 'tracking-channel': (data.channel && data.channel.includes('/')) ? data.channel : 'latest/stable',
                                 status: 'active', type: 'app', confinement: 'strict' });
-                        } else if (data.action === 'remove') {
-                            const i = SNAPS.findIndex((x) => x.name === name);
-                            if (i >= 0) SNAPS.splice(i, 1);
-                        }
-                        change.status = 'Done';
-                    }, 300);
+                            change.status = 'Done';
+                        }, 300);
+                    }
                     // REAL snapd 2.77 async envelope (verified on a live daemon):
                     //   { "type":"async", "status-code":202, "result": null, "change": "<id>" }
                     // The change id is at the ENVELOPE top level — the UI client must

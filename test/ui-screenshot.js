@@ -151,6 +151,9 @@ function mockFactoryJs() {
                 async change(id) {
                     const c = CHANGES[id];
                     if (!c) throw new Error('unknown change ' + id);
+                    // live snapd shows the in-flight change as "Do" between "Doing"
+                    // and the terminal state — the UI must keep polling through it.
+                    if (c.status === 'Doing' && c.kind === 'remove-snap' && Date.now() - c.t0 > 150) c.status = 'Do';
                     return c;
                 },
                 async changes() {
@@ -175,7 +178,7 @@ function mockFactoryJs() {
                 async install(n, ch) {
                     if (!window.__storeOnline) throw new Error('cannot reach the store backend: network unreachable');
                     const id = '17';
-                    CHANGES[id] = { id, status: 'Doing' };
+                    CHANGES[id] = { id, status: 'Doing', kind: 'install-snap', t0: Date.now() };
                     setTimeout(() => {
                         if (!SNAPS.some((x) => x.name === n)) {
                             SNAPS = SNAPS.concat([{ name: n, version: '9.9.9', revision: 1, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' }]);
@@ -188,7 +191,7 @@ function mockFactoryJs() {
                 async action(n, a) {
                     if (a === 'remove' && n === 'core24') throw new Error('cannot remove snap "core24": system snap');
                     const id = '18';
-                    CHANGES[id] = { id, status: 'Doing' };
+                    CHANGES[id] = { id, status: 'Doing', kind: a + '-snap', t0: Date.now() };
                     setTimeout(() => {
                         if (a === 'remove') SNAPS = SNAPS.filter((x) => x.name !== n);
                         CHANGES[id] = { id, status: 'Done' };
