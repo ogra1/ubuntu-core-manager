@@ -314,6 +314,23 @@ function ok(name, cond, extra = '') {
                         JSON.stringify(lastPush && lastPush.p));
                 }
             }
+                // Guarded local-admin reset: console-privileged (active session),
+                // re-confirms the CURRENT password, wipes $SNAP_COMMON/admin.cred
+                // -> next launch is first-boot setup again.
+                if (handlers['auth:reset']) {
+                    const rBad = await new Promise((res) => handlers['auth:reset'](null, 'wrong-password').then(res));
+                    ok('auth:reset rejects an incorrect password (session kept)',
+                        rBad.ok === false && /incorrect password/.test(rBad.error), JSON.stringify(rBad));
+                    const rReset = await new Promise((res) => handlers['auth:reset'](null, 'testpass-123').then(res));
+                    ok('auth:reset wipes the credential (guarded by the current password)',
+                        rReset.ok === true && rReset.result.initialized === false && rReset.result.authenticated === false,
+                        JSON.stringify(rReset));
+                    ok('auth:reset removed admin.cred from disk', !fs.existsSync(path.join(WIRE_STATE, 'admin.cred')));
+                    const reInit = mw.authStatus();
+                    ok('post-reset status is first-boot (initialized=false)', reInit.initialized === false, JSON.stringify(reInit));
+                } else {
+                    ok('auth:reset handler registered', false);
+                }
             delete global.UCM_FAKE_ELECTRON;
         } finally {
             delete global.UCM_FAKE_ELECTRON;
@@ -321,6 +338,35 @@ function ok(name, cond, extra = '') {
             try { fs.rmSync(WIRE_STATE, { recursive: true, force: true }); } catch {}
         }
     }
+
+    console.log('\n[11] per-snap configuration (snapd /v2/snaps/{name}/conf)');
+    // conf UI backend: GET /v2/snaps/{name}/conf (optional ?keys=k),
+    // PUT with a flat {key: scalar|null} map; null removes the key.
+    // (The guarded reset above wiped the volatile store session — expected:
+    // a reset returns the device to first-boot state, so re-login first.)
+    await m.storeLogin('admin@example.com', 'correct-horse');
+    const confAll = await m.getSnapConfig('htop');
+    ok('conf-get returns the snap doc', confAll && confAll.port === '8080' && confAll['logging.level'] === 'info', JSON.stringify(confAll));
+    const confOne = await m.getSnapConfig('htop', 'port');
+    ok('conf-get ?keys=port unwraps to {port: value}', confOne && confOne.port === '8080', JSON.stringify(confOne));
+    const confMiss = await m.getSnapConfig('htop', 'no.such.key');
+    ok('conf-get unknown key -> null value (not an error)', confMiss && 'no.such.key' in confMiss && confMiss['no.such.key'] === null, JSON.stringify(confMiss));
+    await m.setSnapConfig('htop', { port: 9090 });
+    const confAfter = await m.getSnapConfig('htop');
+    ok('conf-set persists the value (number kept native)', confAfter.port === 9090, JSON.stringify(confAfter));
+    const confPut = state.confSets[state.confSets.length - 1];
+    ok('conf PUT carried {port: 9090} to htop',
+        confPut && confPut.name === 'htop' && JSON.stringify(confPut.data) === JSON.stringify({ port: 9090 }),
+        JSON.stringify(confPut && confPut.data));
+    let confKeyErr = null;
+    try { await m.setSnapConfig('htop', { 'port;rm -rf /': 1 }); } catch (e) { confKeyErr = e; }
+    ok('reject injected config key before socket', !!confKeyErr && /invalid config key/.test(confKeyErr.message), confKeyErr && confKeyErr.message);
+    let confValErr = null;
+    try { await m.setSnapConfig('htop', { port: { nested: true } }); } catch (e) { confValErr = e; }
+    ok('reject non-scalar config value', !!confValErr && /scalar/.test(confValErr.message), confValErr && confValErr.message);
+    await m.setSnapConfig('htop', { 'logging.level': null });
+    const confDel = await m.getSnapConfig('htop');
+    ok('conf-set null removes the key', confDel && !('logging.level' in confDel) && confDel.port === 9090, JSON.stringify(confDel));
 
     console.log(`\n================= ${passed} passed, ${failed} failed =================`);
     fs.rmSync(STATE, { recursive: true, force: true });

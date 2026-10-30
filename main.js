@@ -454,6 +454,31 @@ function loginLocal(password) {
     return beginLocalSession();
 }
 
+/**
+ * Physically-privileged local admin reset: the current administrator signs
+ * in, re-confirms the password, and wipes $SNAP_COMMON/admin.cred. The next
+ * launch re-enters first-boot setup, where a NEW password is created.
+ * There is no "keep the old password" path and no remote/offline trigger —
+ * the only way to call this is with an active local session (IPC handler
+ * enforces requireAuth), which is what makes it console-privileged.
+ */
+function resetLocalPassword(password) {
+    if (typeof password !== 'string' || password.length === 0 || password.length > 128) {
+        throw new Error('invalid password');
+    }
+    if (!session.localAuthenticated) {
+        throw new Error('authentication required — sign in as the current administrator first');
+    }
+    loginLocal(password); // throws 'incorrect password' on mismatch (timing-safe compare)
+    fs.rmSync(adminFile(), { force: true });
+    session.localInitialized = false;
+    session.localAuthenticated = false;
+    session.localExpiresAt = 0;
+    session.localWarned = false;
+    clearStoreSession('local-reset');
+    return statusPayload();
+}
+
 /** Lock the console (local logout). Also clears volatile store auth. */
 function logoutLocal() {
     session.localAuthenticated = false;
@@ -811,7 +836,7 @@ const api = {
     readHostStats, readProcNetDev,
 
     // local admin gate (the UI lock screen; offline)
-    createLocalPassword, loginLocal, logoutLocal, authStatus, detectInitialized,
+    createLocalPassword, loginLocal, logoutLocal, resetLocalPassword, authStatus, detectInitialized,
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
@@ -1036,6 +1061,10 @@ function initElectron() {
     ipcMain.handle('auth:create', guard((password) => { const p = createLocalPassword(password); armInactivity(); pushAuthStatus(); return p; }));
     ipcMain.handle('auth:login', guard((password) => { const p = loginLocal(password); armInactivity(); pushAuthStatus(); return p; }));
     ipcMain.handle('auth:logout', guard(() => { const p = logoutLocal(); pushAuthStatus(); return p; }));
+    // Console-privileged reset: re-confirms the CURRENT password (so a
+    // compromised renderer cannot wipe the gate without it), then deletes
+    // admin.cred -> next launch is first-boot setup again.
+    ipcMain.handle('auth:reset', guard((password) => { const p = resetLocalPassword(password); pushAuthStatus(); return p; }));
     // Activity beacon (mouse/keyboard/wheel from the UI): re-arm resets the real
     // lock clock to a full 15 minutes. Crucially we ALSO push the fresh expiresAt
     // to the renderer — the header pill is a local countdown from the last received

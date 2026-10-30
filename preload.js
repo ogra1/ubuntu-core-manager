@@ -73,6 +73,11 @@ const api = Object.freeze({
         create: invoke('auth:create'),           // (password) => status  (first boot only)
         login: invoke('auth:login'),             // (password) => status
         logout: invoke('auth:logout'),           // () => status
+        // Console-privileged admin reset: re-confirms the current
+        // password, then wipes the stored credential. Next launch is
+        // first-boot setup again. (UI is currently hidden behind the
+        // Settings view; the handler stays available for that path.)
+        reset: invoke('auth:reset'),             // (password) => status
         // Subscribe to 'auth-status-changed' pushed by main on create,
         // login, logout, or 15-min inactivity lock. Callback receives the
         // status payload above only — never any credential material.

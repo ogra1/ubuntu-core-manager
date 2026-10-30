@@ -7,10 +7,11 @@
  *
  * Mocked auth model:
  *   - local gate: initialized=false initially; create(password) requires
- *     'correct-horse'; login(password) requires 'correct-horse'.
- *   - store:      store.login succeeds only when window.__storeOnline is
- *     true (simulates store-backend reachability) — used to show the
- *     graceful offline error.
+ *     'correct-horse'; login(password) requires 'correct-horse';
+ *     reset(password) requires the ACTIVE session + 'correct-horse' and
+ *     wipes the credential (next state = first-boot setup).
+ *   - store login is NOT used by the UI anymore (model-attachment design);
+ *     search/install mocks succeed unauthenticated, like a VM with network.
  *
  * Usage: node test/ui-screenshot.js   (writes /root/shots/*.png)
  */
@@ -33,6 +34,11 @@ const SNAPS = [
     { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', 'tracking-channel': 'latest/candidate', status: 'disabled', type: 'app', confinement: 'devmode' },
 ];
+
+// Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
+const SNAP_CONF = {
+    htop: { port: '8080', 'logging.level': 'info' },
+};
 
 const CONNECTIONS = {
     established: [
@@ -80,49 +86,52 @@ function mockFactoryJs() {
     return `
     window.__mockCore = (function () {
         let SNAPS = ${JSON.stringify(SNAPS)};
+        const CONF = ${JSON.stringify(SNAP_CONF)};
         const CHANGES = {};
         const CONNECTIONS = ${JSON.stringify(CONNECTIONS)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
-        window.__storeOnline = false; // flip per-scenario from the test
+        const LOCAL_PW = 'correct-horse';
         let localSet = false;
         let localAuthed = false;
-        let storeAuthed = false;
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
             expiresAt: localAuthed ? Date.now() + 900000 : null,
             timeoutMs: 900000,
-            storeAuthenticated: storeAuthed,
-            storeUsername: storeAuthed ? 'admin@example.com' : null,
+            storeAuthenticated: false,
+            storeUsername: null,
         });
         return {
             auth: {
                 async create(pw) {
                     if (localSet) throw new Error('a local administrator password already exists — sign in instead');
-                    if (pw !== 'correct-horse') throw new Error('simulated: weak password');
+                    if (pw !== LOCAL_PW) throw new Error('simulated: weak password');
                     localSet = true; localAuthed = true;
                     return status();
                 },
                 async login(pw) {
                     if (!localSet) throw new Error('no local administrator password is set — create one first');
-                    if (pw !== 'correct-horse') throw new Error('incorrect password');
+                    if (pw !== LOCAL_PW) throw new Error('incorrect password');
                     localAuthed = true;
                     return status();
                 },
                 async logout() { localAuthed = false; return status(); },
+                // Guarded local-admin reset: active session + correct current
+                // password; wipes the credential (initialized=false).
+                async reset(pw) {
+                    if (!localAuthed) throw new Error('authentication required — sign in as the current administrator first');
+                    if (pw !== LOCAL_PW) throw new Error('incorrect password');
+                    localSet = false; localAuthed = false;
+                    return status();
+                },
                 async status() { return status(); },
                 onStatusChanged() { return () => {}; },
             },
             store: {
-                async login(email, pw) {
-                    if (!window.__storeOnline)
-                        throw new Error('cannot reach the store backend: network unreachable');
-                    if (!/admin@example\\.com$/.test(email) || pw !== 'store-pass')
-                        throw new Error('cannot authenticate the user: invalid credentials');
-                    storeAuthed = true;
-                    return status();
-                },
-                async logout() { storeAuthed = false; return status(); },
+                // Backend-only (not used by the UI anymore); kept so the
+                // bridge contract stays complete.
+                async login() { throw new Error('store login is no longer exposed in the UI'); },
+                async logout() { return status(); },
             },
             system: {
                 async info() {
@@ -168,15 +177,15 @@ function mockFactoryJs() {
             snaps: {
                 async list() { return SNAPS; },
                 async info(n) { return SNAPS.find((s) => s.name === n); },
+                // Store search/install: unauthenticated by design (model
+                // attachment at image build time) — no store login needed.
                 async search(q) {
-                    if (!window.__storeOnline) throw new Error('cannot reach the store backend: network unreachable');
                     return [
                         { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
                         { name: 'mqtt-spy', summary: 'Simple MQTT traffic inspector', publisher: { username: 'iot-labs' }, channels: { 'latest/stable': {} } },
                     ].filter((s) => s.name.includes((q || '').toLowerCase()));
                 },
                 async install(n, ch) {
-                    if (!window.__storeOnline) throw new Error('cannot reach the store backend: network unreachable');
                     const id = '17';
                     CHANGES[id] = { id, status: 'Doing', kind: 'install-snap', t0: Date.now() };
                     setTimeout(() => {
@@ -198,10 +207,20 @@ function mockFactoryJs() {
                     }, 1200); // slow settle: keeps the confirm card visible for the shot
                     return { id, change: id };
                 },
-                async confGet() { return {}; },
-                async confSet() { return { id: '19' }; },
+                async confGet(n, key) {
+                    const doc = CONF[n] || {};
+                    if (key) return { [key]: Object.prototype.hasOwnProperty.call(doc, key) ? doc[key] : null };
+                    return doc;
+                },
+                async confSet(n, obj) {
+                    if (!CONF[n]) CONF[n] = {};
+                    for (const [k, v] of Object.entries(obj)) {
+                        if (v === null) delete CONF[n][k]; else CONF[n][k] = v;
+                    }
+                    return {};
+                },
             },
-            network: { async apply() { return { id: '20' }; } },
+            network: { async apply() { return {}; } },
             interfaces: {
                 async list() { return CONNECTIONS; },
                 async connect() { return { status: 'Done' }; },
@@ -245,38 +264,50 @@ function mockFactoryJs() {
     await wait(400);
     await page.screenshot({ path: path.join(SHOTS, '2-setup-mismatch.png') });
 
-    // fix + create -> console
+    // fix + create -> console (no store chip in the top bar anymore)
     await page.click('#setupConfirm', { clickCount: 3 });
     await page.type('#setupConfirm', 'correct-horse');
     await page.click('#setupBtn');
     await wait(900);
-    await page.screenshot({ path: path.join(SHOTS, '3-dashboard-store-offline.png'), fullPage: true });
+    await page.screenshot({ path: path.join(SHOTS, '3-dashboard-clean.png'), fullPage: true });
+    const chipGone = await page.evaluate(() => !document.querySelector('#storeChip') && !document.querySelector('#storeModal'));
+    if (!chipGone) console.log('PAGE ERROR: store chip/modal still present in the DOM');
 
-    // ---- 2. STORE OFFLINE: modal + graceful failure ----
-    await page.click('#storeBtn');
-    await wait(400);
-    await page.type('#storeEmail', 'admin@example.com');
-    await page.type('#storePassword', 'store-pass');
-    await page.click('#storeConnectBtn');
+    // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
+    await page.click('.ucm-side a[data-view="settings"]');
     await wait(500);
-    await page.screenshot({ path: path.join(SHOTS, '4-store-offline-error.png') });
-    await page.click('#storeModalClose');
-    await wait(200);
+    await page.screenshot({ path: path.join(SHOTS, '4-settings-reset.png'), fullPage: true });
 
-    // ---- 3. STORE ONLINE: connect succeeds ----
-    await page.evaluate(() => { window.__storeOnline = true; });
-    await page.click('#storeBtn');
-    await wait(300);
-    await page.click('#storePassword', { clickCount: 3 });
-    await page.type('#storePassword', 'store-pass');
-    await page.click('#storeConnectBtn');
+    // wrong current password -> validation error (session kept)
+    await page.type('#resetCurrent', 'wrong-pass');
+    await page.type('#resetConfirm', 'wrong-pass');
+    await page.click('#resetBtn');
+    await wait(400);
+    await page.screenshot({ path: path.join(SHOTS, '5-settings-reset-wrong.png') });
+
+    // correct password (match) -> credential wiped -> first-boot setup again
+    await page.click('#resetCurrent', { clickCount: 3 });
+    await page.click('#resetConfirm', { clickCount: 3 });
+    await page.type('#resetCurrent', 'correct-horse');
+    await page.type('#resetConfirm', 'correct-horse');
+    await page.click('#resetBtn');
     await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '5-dashboard-store-online.png'), fullPage: true });
+    const backToSetup = await page.evaluate(() => !document.querySelector('#setupView').classList.contains('ucm-hidden'));
+    if (!backToSetup) console.log('PAGE ERROR: reset did not return to the setup view');
+    await page.screenshot({ path: path.join(SHOTS, '6-reset-to-setup.png') });
 
-    // ---- 4. network view (static + validation + apply) ----
+    // recreate the password so the remaining steps have a console
+    await page.click('#setupPassword', { clickCount: 3 });
+    await page.click('#setupConfirm', { clickCount: 3 });
+    await page.type('#setupPassword', 'correct-horse');
+    await page.type('#setupConfirm', 'correct-horse');
+    await page.click('#setupBtn');
+    await wait(800);
+
+    // ---- 3. network view (static + validation + apply) ----
     await page.click('.ucm-side a[data-view="network"]');
     await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '6-network-dhcp.png') });
+    await page.screenshot({ path: path.join(SHOTS, '7-network-dhcp.png') });
     await page.$eval('#netModeStatic', (el) => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); });
     await page.select('#netIface', 'eth0');
     await page.type('#netIpv4', '192.168.1.50/24');
@@ -284,34 +315,66 @@ function mockFactoryJs() {
     await wait(300);
     await page.click('#netApply');
     await wait(500);
-    await page.screenshot({ path: path.join(SHOTS, '7-network-validation.png') });
+    await page.screenshot({ path: path.join(SHOTS, '8-network-validation.png') });
     await page.click('#netGw4', { clickCount: 3 });
     await page.type('#netGw4', '192.168.1.1');
     await page.type('#netDns', '1.1.1.1, 8.8.8.8');
     await page.click('#netApply');
     await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '8-network-applied.png') });
+    await page.screenshot({ path: path.join(SHOTS, '9-network-applied.png') });
 
-    // ---- 5. snaps view (store online now: search works) ----
+    // ---- 4. snaps view (search works WITHOUT a store login) ----
     await page.click('.ucm-side a[data-view="snaps"]');
     await wait(700);
     await page.type('#snapSearchName', 'mosquitto');
-    await page.click('#snapSearchName');
     await page.keyboard.press('Enter'); // search field is search-only (Enter must NOT install)
     await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '9-snaps-search.png'), fullPage: true });
+    await page.screenshot({ path: path.join(SHOTS, '10-snaps-search.png'), fullPage: true });
 
-    // ---- 5b. installed-snaps table + remove-confirm card (verify alignment) ----
-    // htop is a non-system snap -> shows Refresh/Remove row actions.
-    const removeBtn = page.$$('tr', { hidden: false });
-    // find the Remove button in the htop row by its text
+    // ---- 4b. per-snap config modal (htop) ----
     await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
         const htop = rows.find((r) => r.textContent.includes('htop'));
-        if (htop) htop.querySelector('button:last-of-type, .ucm-rowbtn:last-of-type')?.click();
+        if (!htop) throw new Error('htop row missing');
+        const btn = Array.from(htop.querySelectorAll('button')).find((b) => b.textContent.trim().startsWith('Config'));
+        if (!btn) throw new Error('Config button missing');
+        btn.click();
+    });
+    await wait(600);
+    const cfgState = await page.evaluate(() => ({
+        key: document.querySelector('#cfgKey') ? document.querySelector('#cfgKey').value : null,
+        value: document.querySelector('#cfgValue') ? document.querySelector('#cfgValue').value : null,
+    }));
+    if (cfgState.key !== 'port' || cfgState.value !== '8080')
+        console.log(`PAGE ERROR: config modal prefill wrong (${JSON.stringify(cfgState)})`);
+    await page.screenshot({ path: path.join(SHOTS, '11-config-modal.png') });
+    // change port to a number and save
+    await page.click('#cfgValue', { clickCount: 3 });
+    await page.type('#cfgValue', '9090');
+    await page.select('#cfgType', 'number');
+    await page.click('#cfgValue', { clickCount: 3 });
+    await page.type('#cfgValue', '9090');
+    await page.evaluate(() => document.querySelector('.ucm-config button.p-button--brand').click());
+    await wait(700);
+    const cfgSaved = await page.evaluate(() => ({
+        modalGone: !document.querySelector('.ucm-config'),
+        port: window.__mockCore && 'ok',
+    }));
+    if (cfgSaved.modalGone !== true) console.log('PAGE ERROR: config modal did not close after save');
+    await page.screenshot({ path: path.join(SHOTS, '12-config-saved.png') });
+
+    // ---- 4c. installed-snaps table + remove-confirm card (alignment) ----
+    // htop is a non-system snap -> shows Config/Refresh/Remove row actions.
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.textContent.includes('htop'));
+        if (!htop) throw new Error('htop row missing');
+        const btn = Array.from(htop.querySelectorAll('button')).find((b) => b.textContent.trim().startsWith('Remove'));
+        if (!btn) throw new Error('Remove button missing');
+        btn.click();
     });
     await wait(800); // still inside the 1.2s settle window -> card is up
-    await page.screenshot({ path: path.join(SHOTS, '9b-remove-confirm.png'), fullPage: true });
+    await page.screenshot({ path: path.join(SHOTS, '13-remove-confirm.png'), fullPage: true });
     // Regression guard: every item in the remove-confirm row must share the same
     // vertical centre (bundle's .p-button margin-bottom used to shift the buttons
     // above centre, making the text look bottom-aligned).
@@ -347,24 +410,30 @@ function mockFactoryJs() {
     if (cw.error) console.log('PAGE ERROR: ' + cw.error);
     else if (cw.status > 140 || cw.type > 140)
         console.log(`PAGE ERROR: snaps table Status/Type too wide (status=${cw.status}px type=${cw.type}px, want <=140px)`);
-    // ---- 6. interfaces view ----
+
+    // defensive: no modal may still be covering the UI (a stuck modal would
+    // mask later clicks and mask real layout in the shots)
+    const stray = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);
+    if (stray) console.log('PAGE ERROR: stray modal left open before interfaces view');
+
+    // ---- 5. interfaces view ----
     await page.click('.ucm-side a[data-view="interfaces"]');
     await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '10-interfaces.png'), fullPage: true });
+    await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
     await page.click('#ifacesFilterBtn');
     await wait(300);
-    await page.screenshot({ path: path.join(SHOTS, '11-interfaces-all.png'), fullPage: true });
+    await page.screenshot({ path: path.join(SHOTS, '15-interfaces-all.png'), fullPage: true });
 
-    // ---- 7. lock -> local sign-in view ----
+    // ---- 6. lock -> local sign-in view ----
     await page.click('#lockBtn');
     await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '12-login-local.png') });
+    await page.screenshot({ path: path.join(SHOTS, '16-login-local.png') });
 
     // wrong password -> validation error
     await page.type('#loginPassword', 'wrong');
     await page.click('#loginBtn');
     await wait(400);
-    await page.screenshot({ path: path.join(SHOTS, '13-login-error.png') });
+    await page.screenshot({ path: path.join(SHOTS, '17-login-error.png') });
 
     console.log('screenshots written to ' + SHOTS);
     if (errors.length) {

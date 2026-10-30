@@ -6,7 +6,7 @@
  * device. It enforces the same auth contract as the real daemon:
  *   - POST /v2/login issues a root macaroon + a discharge (fake but shaped
  *     like the real thing); the Authorization header must carry
- *     `Macaroon root="..." \n  discharge="..."` for authenticated routes.
+ *     `Macaroon root="..." discharge="..."` for authenticated routes.
  *   - Writes require valid auth; reads are open (like snapd openAccess).
  */
 
@@ -89,6 +89,13 @@ function authFrom(req) {
 }
 
 function makeServer(socketPath, state) {
+    // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
+    // htop ships defaults so the conf UI has something to edit; core keeps
+    // the netplan external-config key. `null` values model removed keys.
+    state.conf = state.conf || {
+        htop: { port: '8080', 'logging.level': 'info' },
+    };
+
     fs.existsSync(socketPath) && fs.unlinkSync(socketPath);
     const server = http.createServer((req, res) => {
         const url = new URL(req.url, 'http://stub');
@@ -231,6 +238,10 @@ function makeServer(socketPath, state) {
             }
 
             // ---- snap conf (system config incl. netplan) ----------------------
+            // Per-snap config documents: GET /v2/snaps/{name}/conf[?keys=k]
+            // -> { k: value } | { k: null }; PUT /v2/snaps/{name}/conf with a
+            // {key: scalar|null} map. `core` additionally carries the netplan
+            // external-config key. null values remove the key (snapd semantics).
             const confRe = p.match(/^\/v2\/snaps\/([^/]+)\/conf$/);
             if (confRe) {
                 const name = decodeURIComponent(confRe[1]);
@@ -239,7 +250,10 @@ function makeServer(socketPath, state) {
                     if (name === 'core' && (keys === null || keys.startsWith('system.network.netplan'))) {
                         return json(res, 200, { 'system.network.netplan': state.netplanYaml });
                     }
-                    return json(res, 200, {});
+                    const doc = state.conf[name] || {};
+                    if (keys === null) return json(res, 200, doc);
+                    const k = decodeURIComponent(keys);
+                    return json(res, 200, { [k]: Object.prototype.hasOwnProperty.call(doc, k) ? doc[k] : null });
                 }
                 if (req.method === 'PUT') {
                     if (!auth.ok) return json(res, 401, { kind: 'unauthenticated', message: 'unauthenticated access' });
@@ -247,8 +261,14 @@ function makeServer(socketPath, state) {
                     state.confSets.push({ name, data });
                     if (name === 'core' && data['system.network.netplan']) {
                         state.netplanYaml = data['system.network.netplan'];
+                    } else {
+                        if (!state.conf[name]) state.conf[name] = {};
+                        for (const [k, v] of Object.entries(data)) {
+                            if (v === null) delete state.conf[name][k];
+                            else state.conf[name][k] = v;
+                        }
                     }
-                    return json(res, 202, { id: String(state.changeSeq += 1) });
+                    return json(res, 200, {});
                 }
             }
 

@@ -11,9 +11,11 @@
  *   - LOCAL admin gate (offline): first boot => setup (create password);
  *     thereafter => login (password). This is what unlocks the console, so
  *     the operator can configure the network before any connectivity exists.
- *   - STORE auth (optional, volatile): snapd /v2/login macaroons. Shown in
- *     the top bar as "store online/offline"; required only for install and
- *     store search.
+ *   - STORE auth (optional, volatile): snapd /v2/login macaroons. The UI no
+ *     longer exposes a store login — on Ubuntu Core the device's store
+ *     attachment comes from the model assertion baked into the image, and
+ *     global-store search/install work unauthenticated. The backend path
+ *     stays for a possible private brand store (later iteration).
  * ==========================================================================*/
 
 const core = window.__mockCore || window.ucmCore; // frozen context bridge (mock for headless QA)
@@ -121,8 +123,8 @@ const state = {
     dashPoll: null,
 };
 
-const VIEWS = ['dashboard', 'network', 'snaps', 'interfaces'];
-const VIEW_TITLES = { dashboard: 'Dashboard', network: 'Network configuration', snaps: 'Snap packages', interfaces: 'Snap interfaces' };
+const VIEWS = ['dashboard', 'network', 'snaps', 'interfaces', 'settings'];
+const VIEW_TITLES = { dashboard: 'Dashboard', network: 'Network configuration', snaps: 'Snap packages', interfaces: 'Snap interfaces', settings: 'Settings' };
 
 /* --------------------------- three-gate routing -------------------------- */
 /*   !initialized  -> #setupView  (create the local password; offline)
@@ -153,6 +155,7 @@ function switchView(name) {
         network: loadNetwork,
         snaps: loadSnaps,
         interfaces: loadInterfaces,
+        settings: () => {},
     })[name]();
 }
 
@@ -160,7 +163,6 @@ function enterApp() {
     showGate();
     startSessionTick();
     startDashPoll();
-    renderStoreStatus();
     const fromHash = (location.hash || '').replace('#', '');
     switchView(VIEWS.includes(fromHash) ? fromHash : 'dashboard');
 }
@@ -258,6 +260,7 @@ async function doLock() {
 function applyAuthPayload(p) {
     if (!p) return;
     const wasAuth = state.authenticated;
+    const wasInit = state.initialized;
     state.initialized = !!p.initialized;
     state.authenticated = !!p.authenticated;
     state.expiresAt = p.expiresAt || null;
@@ -272,102 +275,28 @@ function applyAuthPayload(p) {
         const manual = state.manualLock;
         state.manualLock = false;
         exitApp();
-        toast('info', manual ? 'Console locked' : 'Session locked',
-            manual ? 'Re-enter the administrator password to continue.'
-                   : 'The console was locked after inactivity. Sign in to continue.');
+        if (wasInit && !state.initialized) {
+            // The credential was just wiped (guarded reset) — not a lock.
+            // Next launch is first-boot setup again.
+            toast('positive', 'Password wiped',
+                'The local administrator credential was erased. Set a new password to continue.');
+        } else {
+            toast('info', manual ? 'Console locked' : 'Session locked',
+                manual ? 'Re-enter the administrator password to continue.'
+                       : 'The console was locked after inactivity. Sign in to continue.');
+        }
     }
     showGate();
-    renderStoreStatus();
 }
 
-/* ------------------------- store (optional) ------------------------------ */
-
-function renderStoreStatus() {
-    const label = $('#storeStatus');
-    const btn = $('#storeBtn');
-    const chip = $('#storeChip');
-    const notice = $('#snapsStoreNotice');
-    if (state.storeAuthenticated) {
-        label.className = 'p-status-label p-status-label--positive';
-        label.textContent = 'store online';
-        btn.textContent = 'Disconnect';
-        $('#railRole').textContent = state.storeUsername || 'store connected';
-        if (notice) notice.classList.add('ucm-hidden');
-    } else {
-        label.className = 'p-status-label p-status-label--caution';
-        label.textContent = 'store offline';
-        btn.textContent = 'Connect to store';
-        $('#railRole').textContent = 'local session';
-        if (notice) notice.classList.remove('ucm-hidden');
-    }
-    chip.title = state.storeAuthenticated
-        ? `Store session active as ${state.storeUsername}. Click to disconnect.`
-        : 'Store access is optional and requires network connectivity.';
-}
-
-function openStoreModal() {
-    if (state.storeAuthenticated) {
-        core.store.logout()
-            .then((p) => applyAuthPayload(p))
-            .then(() => toast('positive', 'Store disconnected', 'Store authentication cleared (volatile).'));
-        return;
-    }
-    $('#storeModal').classList.remove('ucm-hidden');
-    $('#storeFormStatus').textContent = '';
-    $('#storeEmail').focus();
-}
-function closeStoreModal() {
-    $('#storeModal').classList.add('ucm-hidden');
-    setFieldState('storeEmailGroup', '');
-    setFieldState('storePasswordGroup', '');
-}
-
-async function doStoreConnect(email, password) {
-    let ok = true;
-    if (!RE_EMAIL.test(email)) { setFieldState('storeEmailGroup', 'error', 'Enter a valid email address.'); ok = false; }
-    else setFieldState('storeEmailGroup', 'valid');
-    if (!password) { setFieldState('storePasswordGroup', 'error', 'Password is required.'); ok = false; }
-    else setFieldState('storePasswordGroup', 'valid');
-    if (!ok) return;
-
-    const btn = $('#storeConnectBtn');
-    btn.classList.add('is-disabled');
-    $('#storeFormStatus').textContent = 'Connecting… (store backend must be reachable)';
-    try {
-        const p = await core.store.login(email, password);
-        applyAuthPayload(p);
-        toast('positive', 'Store connected', `snapd is now authenticated to the store as ${state.storeUsername || email}.`);
-        closeStoreModal();
-        loadSnaps(); // refresh: store-gated fields may now resolve
-    } catch (e) {
-        const offline = /unreachable|timeout|ECONNREFUSED|fetch failed|network|store backend/i.test(e.message);
-        if (offline) {
-            // Connectivity problem, not a credential problem: keep both
-            // fields neutral and surface the cause on the status line.
-            setFieldState('storePasswordGroup', '');
-            setFieldState('storeEmailGroup', '');
-            $('#storeFormStatus').textContent =
-                'Store backend not reachable — set up the network (Network view), then retry.';
-        } else {
-            setFieldState('storePasswordGroup', 'error', 'Store sign-in failed: ' + e.message);
-            $('#storeFormStatus').textContent = '';
-        }
-    } finally {
-        btn.classList.remove('is-disabled');
-    }
-}
-
-/* requireStore is reserved for the future private brand store (a later
-   iteration) where /v2/login IS required. Global-store search and install
-   must work WITHOUT it — snapd's /v2/find and /v2/snaps are open to the
-   global store unauthenticated. Do not re-gate them on store login. */
-function requireStore() {
-    if (!state.storeAuthenticated) {
-        toast('caution', 'Store not connected', 'The private brand store needs a store login — use “Connect to store” in the top bar.');
-        return false;
-    }
-    return true;
-}
+/* ------------------------- store (backend only) -------------------------- *
+ * The snap store login (snapd /v2/login macaroons) is deliberately NOT
+ * surfaced in the UI: on Ubuntu Core the device's store attachment is
+ * handled by the model assertion baked into the image, and global-store
+ * search/install work unauthenticated. The main-process backend
+ * (storeLogin/storeLogout) is kept for a possible private brand store in a
+ * later iteration — do not re-add UI around it without that decision.
+ */
 
 /* ----------------------------- dashboard --------------------------------- */
 
@@ -665,6 +594,7 @@ function renderSnaps() {
 
         if (!isSystem && s.installed !== null) {
             actions.append(
+                rowBtn('Config', 'p-icon--code', () => openConfigModal(s.name)),
                 rowBtn('Refresh', 'p-icon--success', () => snapOp(s.name, 'refresh')),
                 rowBtn('Remove', 'p-icon--delete', () => confirmRemove(s.name)),
             );
@@ -805,6 +735,162 @@ async function searchStore() {
     }
 }
 
+/* ------------------------- snap configuration ---------------------------- */
+/* Per-snap config (snapd /v2/snaps/{name}/conf). Keys follow snapd's dotted
+   identifier grammar (validated again in main.js before the socket). Values
+   are scalars: string / number / boolean, or null (removes the key). The
+   modal edits ONE key at a time — snapd's conf API is a key map, and that
+   matches how snap configs actually look (rare, small, scalar). */
+const RE_CONF_KEY_UI = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)*$/;
+
+function openConfigModal(name) {
+    const card = $('#snapsBody').closest('.ucm-table-wrap');
+    const box = el('div', { class: 'ucm-modal' });
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
+    const inner = el('div', { class: 'ucm-modal__card' });
+
+    const head = el('div', { class: 'ucm-modal__head' });
+    head.append(
+        el('p', { class: 'p-heading--5', text: `Configure ${name}`, style: 'margin:0;' }),
+        el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => box.remove() },
+            el('i', { class: 'p-icon--close' })),
+    );
+
+    const bodyBox = el('div', { class: 'ucm-modal__body ucm-config' });
+    bodyBox.append(el('p', { class: 'ucm-muted', text: 'Loading configuration…', id: 'cfgStatus' }));
+    inner.append(head, bodyBox);
+    box.append(backdrop, inner);
+    document.body.append(box);
+
+    let current = null; // { key, label, has, type }
+    const close = () => box.remove();
+
+    function typeSelect() {
+        const sel = el('select', { id: 'cfgType' });
+        ['string', 'number', 'boolean', 'delete'].forEach((t) => sel.append(el('option', { value: t, text: t })));
+        sel.value = (current && current.type) || 'string';
+        return sel;
+    }
+
+    function render() {
+        bodyBox.innerHTML = '';
+        const st = $('#cfgStatus');
+        if (st) st.remove();
+
+        const form = el('form', { novalidate: '' });
+        form.addEventListener('submit', (e) => e.preventDefault());
+
+        const keyGroup = el('div', { class: 'p-form__group', id: 'cfgKeyGroup' });
+        keyGroup.append(
+            el('label', { class: 'p-form__label', for: 'cfgKey', text: 'Config key' }),
+            el('input', {
+                class: 'p-form-validation__input ucm-mono', id: 'cfgKey', type: 'text',
+                placeholder: 'e.g. port or logging.level', spellcheck: 'false',
+            }),
+            el('p', { class: 'p-form-help-text', text: 'Dotted identifier (a-z, 0-9, “-”, “_”, “.”).' }),
+            el('p', { class: 'p-form-validation__message', id: 'cfgKeyMsg' }),
+        );
+
+        const valGroup = el('div', { class: 'p-form__group', id: 'cfgValueGroup' });
+        const typeSel = typeSelect();
+        const valInput = el('input', {
+            class: 'p-form-validation__input ucm-mono', id: 'cfgValue', type: 'text',
+            spellcheck: 'false',
+        });
+        valGroup.append(
+            el('label', { class: 'p-form__label', for: 'cfgValue', text: 'Value' }),
+            el('div', { style: 'display:flex; gap:.6rem; align-items:center;' }, valInput, typeSel),
+            el('p', { class: 'p-form-help-text', text: 'Type “delete” to remove the key. Numbers and booleans are sent as their native type.' }),
+            el('p', { class: 'p-form-validation__message', id: 'cfgValueMsg' }),
+        );
+
+        const statusP = el('p', { class: 'ucm-muted', id: 'cfgStatus2', style: 'font-size:.85rem; margin:0 0 1rem;' });
+
+        const btns = el('div', { style: 'display:flex; gap:.8rem; align-items:center;' });
+        const saveBtn = el('button', { class: 'p-button--brand p-button', type: 'button', text: 'Save' });
+        const cancelBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel', onclick: close });
+        btns.append(saveBtn, cancelBtn, statusP);
+
+        form.append(keyGroup, valGroup, btns);
+        bodyBox.append(form);
+
+        typeSel.addEventListener('change', () => {
+            valInput.value = '';
+            valInput.placeholder = typeSel.value === 'number' ? 'e.g. 8080'
+                : typeSel.value === 'boolean' ? 'true or false'
+                : typeSel.value === 'delete' ? '(no value needed)' : 'e.g. info';
+            setFieldState('cfgValueGroup', '');
+        });
+        valInput.placeholder = 'e.g. info';
+
+        // prefill the existing key, if any
+        if (current) {
+            $('#cfgKey').value = current.key;
+            typeSel.value = current.type;
+            if (current.has && current.type !== 'delete') valInput.value = String(current.value == null ? '' : current.value);
+        }
+        $('#cfgKey').focus();
+
+        saveBtn.onclick = async () => {
+            const key = $('#cfgKey').value.trim();
+            const type = typeSel.value;
+            const raw = valInput.value.trim();
+            let ok = true;
+
+            if (!RE_CONF_KEY_UI.test(key)) {
+                setFieldState('cfgKeyGroup', 'error', 'Invalid config key (use a dotted identifier: a-z, 0-9, “-”, “_”, “.”).');
+                ok = false;
+            } else setFieldState('cfgKeyGroup', 'valid');
+
+            let value = null;
+            if (type === 'delete') {
+                value = null;
+                setFieldState('cfgValueGroup', '');
+            } else if (type === 'string') {
+                if (raw === '') { setFieldState('cfgValueGroup', 'error', 'Enter a value.'); ok = false; }
+                else { value = raw; setFieldState('cfgValueGroup', 'valid'); }
+            } else if (type === 'number') {
+                if (raw === '' || !/^-?\d+(\.\d+)?$/.test(raw)) { setFieldState('cfgValueGroup', 'error', 'Enter a number, e.g. 8080.'); ok = false; }
+                else { value = Number(raw); setFieldState('cfgValueGroup', 'valid'); }
+            } else if (type === 'boolean') {
+                const lr = raw.toLowerCase();
+                if (lr !== 'true' && lr !== 'false') { setFieldState('cfgValueGroup', 'error', 'Enter “true” or “false”.'); ok = false; }
+                else { value = lr === 'true'; setFieldState('cfgValueGroup', 'valid'); }
+            }
+            if (!ok) return;
+
+            saveBtn.classList.add('is-disabled');
+            statusP.textContent = 'Saving…';
+            try {
+                await core.snaps.confSet(name, { [key]: value });
+                toast('positive', 'Configuration saved', `${name}: ${key} ${value === null ? 'removed' : 'updated'}.`);
+                close();
+            } catch (e) {
+                statusP.textContent = 'Failed: ' + e.message;
+            } finally {
+                saveBtn.classList.remove('is-disabled');
+            }
+        };
+    }
+
+    // Load the snap's current config, then show the form.
+    (async () => {
+        let conf = {};
+        try { conf = (await core.snaps.confGet(name)) || {}; }
+        catch (e) { $('#cfgStatus').textContent = 'Could not load configuration: ' + e.message; return; }
+        // Pre-fill the FIRST existing key (snapd conf GET returns {key: value}
+        // per key; a snap usually has one or a handful — the operator edits
+        // keys one at a time). No keys -> empty form, operator adds one.
+        const entries = Object.entries(conf || {}).filter(([, v]) => v !== null);
+        if (entries.length) {
+            const [k, v] = entries[0];
+            const type = typeof v === 'number' ? 'number' : typeof v === 'boolean' ? 'boolean' : 'string';
+            current = { key: k, has: true, value: v, type };
+        }
+        render();
+    })();
+}
+
 /* ----------------------------- interfaces -------------------------------- */
 /* Verified snapd /v2/connections contract:
  *   GET /v2/connections            -> { established:[c], undesired:[c],
@@ -915,6 +1001,35 @@ async function ifaceOp(op, item) {
     } catch (e) { toastErr(e); }
 }
 
+/* --------------------------- settings: reset ----------------------------- */
+/* Guarded local-admin reset: an ACTIVE session re-confirms the current
+   password, then the credential file is wiped. The IPC handler in main.js
+   is the real gate (requireAuth + timing-safe verify); this is just the
+   form UX around it. */
+async function doResetPassword() {
+    const cur = $('#resetCurrent').value;
+    const confirm = $('#resetConfirm').value;
+    let ok = true;
+    if (!cur) { setFieldState('resetCurrentGroup', 'error', 'Enter the current password.'); ok = false; }
+    else setFieldState('resetCurrentGroup', 'valid');
+    if (confirm !== cur) { setFieldState('resetConfirmGroup', 'error', 'Passwords do not match.'); ok = false; }
+    else setFieldState('resetConfirmGroup', 'valid');
+    if (!ok) return;
+
+    const btn = $('#resetBtn');
+    btn.classList.add('is-disabled');
+    try {
+        const p = await core.auth.reset(cur);
+        applyAuthPayload(p); // wipes the session -> gate falls back to #setupView
+    } catch (e) {
+        const mismatch = /incorrect password/i.test(e.message);
+        setFieldState('resetCurrentGroup', 'error', mismatch ? 'Incorrect current password.' : e.message);
+        setFieldState('resetConfirmGroup', '');
+    } finally {
+        btn.classList.remove('is-disabled');
+    }
+}
+
 /* ------------------------------- wiring ---------------------------------- */
 
 function wire() {
@@ -934,19 +1049,13 @@ function wire() {
         a.addEventListener('click', (e) => { e.preventDefault(); switchView(a.dataset.view); });
     });
 
-    // main push events (local lock + store changes)
+    // main push events (local lock)
     core.auth.onStatusChanged((p) => applyAuthPayload(p));
 
-    // optional store connect
-    $('#storeBtn').addEventListener('click', openStoreModal);
-    $('#storeModalClose').addEventListener('click', closeStoreModal);
-    $$('#storeModal [data-close="store"]').forEach((n) => n.addEventListener('click', closeStoreModal));
-    $('#storeForm').addEventListener('submit', (e) => {
+    // settings: guarded local-admin reset (re-confirms the current password)
+    $('#resetForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        doStoreConnect($('#storeEmail').value.trim(), $('#storePassword').value);
-    });
-    $('#storeDisconnectBtn').addEventListener('click', () => {
-        core.store.logout().then((p) => applyAuthPayload(p)).then(closeStoreModal);
+        doResetPassword();
     });
 
     // dashboard

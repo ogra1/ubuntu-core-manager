@@ -351,13 +351,6 @@ html, body {
 .ucm-hidden { display: none !important; }
 .ucm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
-/* top-bar store indicator */
-.ucm-store {
-    display: inline-flex; align-items: center; gap: .5rem;
-    margin-left: 1rem;
-}
-.ucm-store .p-button--base { padding: 0; }
-
 /* ---- store connect modal --------------------------------------------- */
 .ucm-modal {
     position: fixed; inset: 0; z-index: 60;
@@ -394,6 +387,24 @@ html, body {
     background: var(--ucm-grey-50); border: 1px solid var(--ucm-grey-90);
 }
 .ucm-session-chip.is-warning { background: rgba(249,155,17,.1); border-color: rgba(249,155,17,.5); color: #8a5a00; }
+
+/* ---- settings view: guarded admin reset ------------------------------- */
+.ucm-reset__warn {
+    display: flex; gap: .6rem; align-items: flex-start;
+    font-size: .85rem; color: #8a5a00;
+    background: rgba(249,155,17,.10);
+    border: 1px solid rgba(249,155,17,.45);
+    border-radius: .25rem;
+    padding: .8rem 1rem; margin: 0 0 1.2rem;
+}
+.ucm-reset__warn .p-icon { flex: 0 0 auto; margin-top: .15rem; }
+.ucm-reset .p-form__group { margin-bottom: 1.1rem; max-width: 24rem; }
+.ucm-reset .p-button--negative { margin-top: .4rem; }
+
+/* ---- per-snap config modal --------------------------------------------- */
+.ucm-config .p-form__group { margin-bottom: 1rem; max-width: 24rem; }
+.ucm-config input[type="text"] { font-family: "Ubuntu Mono variable", monospace; }
+.ucm-config select { max-width: 9rem; }
 
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }

@@ -130,6 +130,11 @@
                         <span class="ucm-nav-label">Interfaces</span>
                     </a>
                 </li>
+                <li class="p-side-navigation__item">
+                    <a class="p-side-navigation__link" href="#settings" data-view="settings">
+                        <span class="ucm-nav-label">Settings</span>
+                    </a>
+                </li>
             </ul>
         </nav>
 
@@ -151,11 +156,6 @@
             <p class="p-heading--4" id="topbarTitle">Dashboard</p>
             <span class="ucm-session-chip" id="sessionChip" title="Console locks after 15 minutes without activity">
                 <i class="p-icon--spinner"></i><span id="sessionChipText">active</span>
-            </span>
-            <!-- optional store connection (needs network) -->
-            <span class="ucm-store" id="storeChip">
-                <span class="p-status-label p-status-label--caution" id="storeStatus">store offline</span>
-                <button class="p-button--base p-button ucm-rowbtn" id="storeBtn" type="button">Connect to store</button>
             </span>
         </div>
 
@@ -316,7 +316,7 @@
         <section class="ucm-view ucm-hidden" id="view-snaps" data-view="snaps">
             <div class="p-notification p-notification--information" id="snapsStoreNotice" style="margin-bottom:1.2rem;">
                 <h5 class="p-notification__title">Store</h5>
-                <p class="p-notification__message">Global-store search and install work without a store login. “Connect to store” in the top bar is reserved for the private brand store (requires network + Ubuntu One account).</p>
+                <p class="p-notification__message">Search and install use the snap store directly — no account login is needed. On Ubuntu Core the device&#8217;s store attachment is handled by the model assertion baked into the image.</p>
             </div>
 
             <!-- deployment / install panel -->
@@ -390,49 +390,56 @@
             </div>
         </section>
 
+        <!-- ================= SETTINGS VIEW ================= -->
+        <section class="ucm-view ucm-hidden" id="view-settings" data-view="settings">
+            <div class="row">
+                <div class="col-8">
+                    <div class="p-card">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Console administrator</p></div>
+                        <p class="p-form-help-text" style="margin:0 0 1rem;">
+                            The local administrator password gates this console and is verified
+                            entirely on this device. It can be changed or wiped only from an
+                            active session — there is no remote or offline reset path.
+                        </p>
+                        <form id="resetForm" class="ucm-reset" novalidate>
+                            <p class="p-form-validation__message ucm-reset__warn">
+                                <i class="p-icon--warning"></i>
+                                Wiping the password erases the local credential file. The next
+                                launch of this application returns to the first-boot setup
+                                screen, where a new password must be created.
+                            </p>
+                            <div class="p-form__group" id="resetCurrentGroup">
+                                <label class="p-form__label" for="resetCurrent">Current administrator password</label>
+                                <input class="p-form-validation__input" type="password" id="resetCurrent"
+                                       name="current-password" autocomplete="current-password" required spellcheck="false">
+                                <p class="p-form-validation__message" id="resetCurrentMsg"></p>
+                            </div>
+                            <div class="p-form__group" id="resetConfirmGroup">
+                                <label class="p-form__label" for="resetConfirm">Type your current password again</label>
+                                <input class="p-form-validation__input" type="password" id="resetConfirm"
+                                       name="confirm-password" autocomplete="current-password" required spellcheck="false">
+                                <p class="p-form-validation__message" id="resetConfirmMsg"></p>
+                            </div>
+                            <button class="p-button--negative p-button" type="submit" id="resetBtn">
+                                Wipe password &amp; return to setup
+                            </button>
+                        </form>
+                    </div>
+                    <div class="p-card" style="margin-top:1.2rem;">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Session</p></div>
+                        <dl class="ucm-kv">
+                            <div><dt>Gate</dt><dd>local administrator (offline)</dd></div>
+                            <div><dt>Inactivity lock</dt><dd>15 minutes</dd></div>
+                            <div><dt>Credential storage</dt><dd class="ucm-mono">$SNAP_COMMON/admin.cred (scrypt, mode 0600)</dd></div>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+        </section>
+
     </main>
 </div>
 
-<!-- ==========================================================================
-     STORE CONNECT MODAL — optional; snapd /v2/login (Ubuntu One). Requires
-     network connectivity. Fails gracefully offline; the console itself is
-     unaffected.
-     ========================================================================== -->
-<div id="storeModal" class="ucm-modal ucm-hidden" role="dialog" aria-modal="true" aria-labelledby="storeModalTitle">
-    <div class="ucm-modal__backdrop" data-close="store"></div>
-    <div class="ucm-modal__card">
-        <div class="ucm-modal__head">
-            <p class="p-heading--5" id="storeModalTitle" style="margin:0;">Connect to the snap store</p>
-            <button class="p-button--base p-button" id="storeModalClose" type="button" aria-label="Close"><i class="p-icon--close"></i></button>
-        </div>
-        <form id="storeForm" class="ucm-modal__body" novalidate>
-            <p class="ucm-lockscreen-note">
-                <i class="p-icon--information"></i>
-                Optional. Enables snap installation and store search. Needs
-                network connectivity and a valid Ubuntu One account.
-            </p>
-            <div class="p-form__group" id="storeEmailGroup">
-                <label class="p-form__label" for="storeEmail">Ubuntu One email</label>
-                <input class="p-form-validation__input" type="email" id="storeEmail"
-                       name="store-email" autocomplete="username" spellcheck="false" placeholder="admin@example.com">
-                <p class="p-form-validation__message" id="storeEmailMsg"></p>
-            </div>
-            <div class="p-form__group" id="storePasswordGroup">
-                <label class="p-form__label" for="storePassword">Password</label>
-                <input class="p-form-validation__input" type="password" id="storePassword"
-                       name="store-password" autocomplete="current-password" spellcheck="false">
-                <p class="p-form-validation__message" id="storePasswordMsg"></p>
-            </div>
-            <div style="display:flex; gap:.8rem; align-items:center;">
-                <button class="p-button--brand" type="submit" id="storeConnectBtn">Connect</button>
-                <button class="p-button--base p-button" type="button" id="storeDisconnectBtn">Disconnect</button>
-                <span class="ucm-muted" id="storeFormStatus" style="font-size:.85rem;"></span>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- toast notifications -->
 <div class="ucm-toasts" id="toasts" aria-live="polite"></div>
 
 <script src="app.js"></script>
