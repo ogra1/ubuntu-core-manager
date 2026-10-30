@@ -381,10 +381,11 @@ function mockFactoryJs() {
         const get = (k) => rows.find((r) => r.dt === k)?.dd || null;
         const m = (sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; };
         const mcs = mstat ? getComputedStyle(mstat) : null;
-        const memCard = document.querySelector('.ucm-stat:not(.ucm-stat--model):not(.ucm-stat--cpu)');
-        const modelH = mstat ? Math.round(mstat.getBoundingClientRect().height) : null;
-        const memH = memCard ? Math.round(memCard.getBoundingClientRect().height) : null;
-        const brand = document.querySelector('#modelBrand');
+        // ALL stat cards in the row must share the same height (grid
+        // stretch): the two-line Uptime card and the Model card added a
+        // third content line — guard the rhythm across the whole strip.
+        const statHeights = Array.from(document.querySelectorAll('#dashStats .ucm-stat'))
+            .map((c) => Math.round(c.getBoundingClientRect().height));
         return {
             sysRows: rows.map((r) => r.dt + '=' + r.dd),
             hostname: get('Hostname'), kernel: get('Kernel'),
@@ -393,10 +394,16 @@ function mockFactoryJs() {
             sysHasModelRows: rows.some((r) => ['Model', 'Base', 'Grade', 'Brand'].includes(r.dt)),
             // model stat card
             modelCardDisplay: mcs ? (mcs.display === 'none' ? 'none' : 'visible') : null,
-            modelH, memH,
+            statHeights,
             statModel: m('#statModel'), statModelHint: m('#statModelHint'),
             brandGone: !document.querySelector('#modelBrand'),
-            uptimeHint: m('#statUptimeHint'),
+            uptimeLast: m('#statUptimeLast'),
+            uptimeNext: m('#statUptimeNext'),
+            stampsLineDelta: (() => {
+                const a = document.querySelector('#statUptimeLast');
+                const b = document.querySelector('#statUptimeNext');
+                return a && b ? Math.round(b.getBoundingClientRect().top - a.getBoundingClientRect().top) : null;
+            })(),
             snapdGone: !document.querySelector('#statSnapd'),
         };
     });
@@ -409,20 +416,26 @@ function mockFactoryJs() {
         if (cards.sysHasModelRows !== false)
             console.log('PAGE ERROR: model rows still in System card (' + cards.sysRows.join(' ') + ')');
         if (cards.modelCardDisplay !== 'visible') console.log('PAGE ERROR: model stat card not visible (' + cards.modelCardDisplay + ')');
-        if (cards.modelH == null || cards.memH == null || Math.abs(cards.modelH - cards.memH) > 6)
-            console.log('PAGE ERROR: model card height off-rhythm (model=' + cards.modelH + ' mem=' + cards.memH + ')');
+        const hs = cards.statHeights || [];
+        if (hs.length < 4 || Math.max(...hs) - Math.min(...hs) > 6)
+            console.log('PAGE ERROR: stat card heights off-rhythm (' + JSON.stringify(hs) + ')');
         if (cards.statModel !== 'core-24-kvm') console.log('PAGE ERROR: Model card name (' + cards.statModel + ')');
         if (cards.statModelHint !== 'core24 · signed') console.log('PAGE ERROR: Model card base/grade (' + cards.statModelHint + ')');
         if (cards.brandGone !== true) console.log('PAGE ERROR: brand-id line still in Model card');
-        // Uptime hint: last/next refresh, local 'dd.mm.yyyy hh:mm' (the mock
-        // uses fixed UTC stamps; the harness runs in the container's local
-        // TZ, so assert SHAPE + the normalized date pieces, not the offset).
-        if (!/^last \d{2}\.\d{2}\.\d{4} \d{2}:\d{2} · next \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeHint || ''))
-            console.log('PAGE ERROR: Uptime refresh hint wrong (' + cards.uptimeHint + ')');
-        if (!cards.uptimeHint || !cards.uptimeHint.includes('30.10.2026'))
-            console.log('PAGE ERROR: refresh last-date not normalized (' + cards.uptimeHint + ')');
-        if (!cards.uptimeHint || !cards.uptimeHint.includes('31.10.2026'))
-            console.log('PAGE ERROR: refresh next-date not normalized (' + cards.uptimeHint + ')');
+        // Uptime: two labeled lines, forced wrap between the stamps, local
+        // 'dd.mm.yyyy hh:mm' (the mock uses fixed UTC stamps; the harness
+        // runs in the container's local TZ, so assert shape + date pieces,
+        // not the offset).
+        if (!/^last refresh \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeLast || ''))
+            console.log('PAGE ERROR: uptime last-refresh line wrong (' + cards.uptimeLast + ')');
+        if (!/^next refresh \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeNext || ''))
+            console.log('PAGE ERROR: uptime next-refresh line wrong (' + cards.uptimeNext + ')');
+        if (!cards.uptimeLast || !cards.uptimeLast.includes('30.10.2026'))
+            console.log('PAGE ERROR: refresh last-date not normalized (' + cards.uptimeLast + ')');
+        if (!cards.uptimeNext || !cards.uptimeNext.includes('31.10.2026'))
+            console.log('PAGE ERROR: refresh next-date not normalized (' + cards.uptimeNext + ')');
+        if (cards.stampsLineDelta == null || cards.stampsLineDelta < 5)
+            console.log('PAGE ERROR: refresh stamps not on separate lines (delta=' + cards.stampsLineDelta + ')');
         if (cards.snapdGone !== true) console.log('PAGE ERROR: old Snapd stat card still present');
     }
     await page.screenshot({ path: path.join(SHOTS, '3c-system-card.png') });

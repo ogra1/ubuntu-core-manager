@@ -386,10 +386,11 @@ function renderDashboard() {
     if (state.cpuSeries) renderCpuChart();
     $('#statUptime').textContent = fmtUptime(h.uptimeSec);
     // last/next automatic refresh (snapd /v2/system-info refresh{last,next},
-    // UTC ISO — rendered in LOCAL time, dd.mm.yyyy hh:mm)
+    // UTC ISO — rendered in LOCAL time, dd.mm.yyyy hh:mm). One labeled line
+    // per stamp: two hint divs = forced line wrap between them.
     const rf = s.refresh || {};
-    $('#statUptimeHint').textContent =
-        `last ${fmtDm(rf.last)} · next ${fmtDm(rf.next)}`;
+    $('#statUptimeLast').textContent = `last refresh ${fmtDm(rf.last)}`;
+    $('#statUptimeNext').textContent = `next refresh ${fmtDm(rf.next)}`;
 
     // System card: platform facts from /v2/system-info (real snapd field
     // names: hyphenated kernel-version, architecture, os-release{ id,
