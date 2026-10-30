@@ -132,13 +132,35 @@ function makeServer(socketPath, state) {
 
             // ---- system info / storage ------------------------------------
             if (p === '/v2/system-info' && req.method === 'GET') {
+                // real snapd /v2/system-info field names (hyphenated
+                // kernel-version, architecture, os-release{id, version-id}) —
+                // verified live against snapd 2.77.
                 return json(res, 200, {
-                    version: '2.68', series: '16', brand: 'canonical', model: 'core-24-kvm',
-                    kernel_version: '6.8.0-40-generic', on_architecture: 'amd64',
-                    system_id: 'deadbeef', serial: '0001',
-                    storage: { total: 4194304000, used: 1288490188, used_percent: 31, model: 'virtio', type: 'ssd' },
-                    cloud_init: { status: 'done' },
+                    version: '2.68', series: '16', architecture: 'amd64',
+                    'kernel-version': '6.8.0-40-generic',
+                    'os-release': { id: 'ubuntu', 'version-id': '24.04' },
                 });
+            }
+            // ---- model assertion (RAW assertion text, NOT JSON — the live
+            //      daemon returns content-type application/x.ubuntu.assertion
+            //      with no envelope; snapdRequest's parse-fallback gives us
+            //      { raw: text }) ----------------------------------------
+            if (p === '/v2/assertions/model' && req.method === 'GET') {
+                res.setHeader('Content-Type', 'application/x.ubuntu.assertion; bundle=y');
+                return res.end(
+                    'type: model\n' +
+                    'authority-id: canonical\n' +
+                    'series: 16\n' +
+                    'brand-id: canonical\n' +
+                    'model: core-24-kvm\n' +
+                    'base: core24\n' +
+                    'grade: signed\n' +
+                    'architecture: amd64\n' +
+                    'timestamp: 2026-01-01T00:00:00Z\n' +
+                    'sign-key-sha3-384: stub-key-id\n' +
+                    '\n' +
+                    'STUBSIGNATUREBLOCK-NOT-PART-OF-HEADERS\n'
+                );
             }
             if (p === '/v2/system-info/storage' && req.method === 'GET') {
                 return json(res, 200, { total: 4194304000, used: 1288490188, used_percent: 31 });

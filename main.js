@@ -560,6 +560,33 @@ async function listChanges(select = 'all') {
     return snapdRequest('GET', '/v2/changes?select=' + s, { auth: A() });
 }
 
+/** GET /v2/assertions/model — the device's model ASSERTION.
+    Unlike the JSON REST endpoints this returns the RAW assertion text
+    (content-type application/x.ubuntu.assertion, verified against live
+    snapd 2.77: no JSON envelope at all), so snapdRequest lands in its
+    JSON-parse-fallback branch and hands us { raw: text }. Parse the header
+    section (lines up to the first blank line; everything after is the
+    signature block) into { key: value } with classic/true->bool. */
+function parseModelAssertion(raw) {
+    const out = {};
+    if (typeof raw !== 'string' || !raw) return out;
+    for (const line of raw.split('\n')) {
+        if (line.trim() === '') break;              // signature block follows
+        const i = line.indexOf(':');
+        if (i <= 0) continue;
+        const k = line.slice(0, i).trim();
+        const v = line.slice(i + 1).trim();
+        if (!k) continue;
+        out[k] = (v === 'true') ? true : (v === 'false') ? false : v;
+    }
+    return out;
+}
+
+async function getModelAssertion() {
+    const data = await snapdRequest('GET', '/v2/assertions/model', { auth: A() });
+    return parseModelAssertion(data && (typeof data === 'string' ? data : data.raw));
+}
+
 /** GET /v2/changes/{id} — one change. The id is a numeric change ID from a
     snapd 2xx write response (validated here; snapd itself 400s anything else). */
 async function getChange(id) {
@@ -871,7 +898,8 @@ const api = {
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
-    getSystemInfo, getDisk, listChanges, getWarnings,
+    getSystemInfo, getModelAssertion, parseModelAssertion,
+    getDisk, listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapConfig, getNetplan, listInterfaces,
 
@@ -1114,12 +1142,14 @@ function initElectron() {
     ipcMain.handle('sys:info', guard(async () => ({
         snapd: await getSystemInfo().catch(() => null),
         host: readHostStats(),
+        model: await getModelAssertion().catch(() => null),
         netdev: readProcNetDev(),
         warnings: await getWarnings().catch(() => []),
     })));
     // CPU utilization history (sparkline). Read-only /proc sampling, so it
     // is open to the local gate like the other diagnostics — no write path.
     ipcMain.handle('sys:cpu', guard(() => readCpuUtilization()));
+    ipcMain.handle('sys:model', guard(() => getModelAssertion()));
     ipcMain.handle('sys:disk', guard(() => getDisk()));
     ipcMain.handle('sys:changes', guard((select) => listChanges(select)));
     ipcMain.handle('sys:change', guard((id) => getChange(id)));

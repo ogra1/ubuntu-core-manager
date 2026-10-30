@@ -110,6 +110,7 @@ const state = {
     storeAuthenticated: false,
     storeUsername: null,
     snapd: null,
+    model: null,       // model assertion headers (parsed in main.js)
     host: null,
     cpuSeries: null,      // last sys:cpu sample: (number|null)[] oldest->newest
     cpuPoll: null,
@@ -312,6 +313,7 @@ async function loadDashboard() {
     try {
         const info = await core.system.info();
         state.snapd = info.snapd || null;
+        state.model = info.model || null;   // model assertion headers (main.js)
         state.host = info.host || null;
         state.netdev = info.netdev || null;
         state.warnings = info.warnings || [];
@@ -356,14 +358,22 @@ function renderDashboard() {
     $('#statUptime').textContent = fmtUptime(h.uptimeSec);
     $('#statUptimeHint').textContent = `${h.platform || ''} / ${h.arch || ''}`;
 
+    // System card: device identity from the MODEL ASSERTION (/v2/assertions/
+    // model — raw assertion text, parsed in main.js) + platform facts from
+    // /v2/system-info (real snapd field names: hyphenated kernel-version,
+    // architecture, os-release{ id, version-id }). 'Base release' dropped
+    // (it was the snapd version — already the Snapd stat card).
+    const mod = state.model || {};
+    const osr = s['os-release'] || {};
     const sys = [
         ['Hostname', h.hostname],
-        ['Model / brand', [s.brand, s.model].filter(Boolean).join(' · ')],
-        ['Device serial', s.serial],
-        ['Kernel', s.kernel_version],
-        ['Base release', s.version || null],
-        ['Storage', s.storage ? `used ${Math.round((s.storage.used / 1000).toFixed(0))} MB of ${Math.round((s.storage.total / 1000).toFixed(0))} MB` : null],
-        ['Cloud-init', s.cloud_init ? s.cloud_init.status : null],
+        ['Model', mod.model],
+        ['Base', mod.base],
+        ['Grade', mod.grade],
+        ['Brand', mod['brand-id']],
+        ['Kernel', s['kernel-version']],
+        ['Architecture', s.architecture],
+        ['OS release', [osr.id, osr['version-id']].filter(Boolean).join(' ') || null],
     ];
     renderKV('#dashSystem', sys);
 

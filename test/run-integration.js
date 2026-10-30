@@ -109,6 +109,20 @@ function ok(name, cond, extra = '') {
     console.log('\n[4] reads over the socket');
     const info = await m.getSystemInfo();
     ok('system-info version', info.version === '2.68', JSON.stringify(info).slice(0, 80));
+
+    // model assertion: RAW assertion text over the socket, parsed to headers
+    const mod = await m.getModelAssertion();
+    ok('model assertion parsed: model/base/grade/brand-id',
+        mod.model === 'core-24-kvm' && mod.base === 'core24' && mod.grade === 'signed' && mod['brand-id'] === 'canonical',
+        JSON.stringify(mod).slice(0, 120));
+    ok('model assertion: signature block NOT parsed as headers',
+        !Object.keys(mod).some((k) => k.includes('STUBSIGNATUREBLOCK')) && mod.type === 'model',
+        Object.keys(mod).join(','));
+    // direct parser unit checks (edge cases without the socket)
+    ok('parser: classic:true -> boolean true',
+        m.parseModelAssertion('type: model\nclassic: true\nmodel: x\n\nSIG').classic === true);
+    ok('parser: missing headers -> empty object',
+        Object.keys(m.parseModelAssertion(null)).length === 0);
     const snaps = await m.listSnaps();
     ok('listSnaps returns array of 3', Array.isArray(snaps) && snaps.length === 3, JSON.stringify(snaps).slice(0, 60));
     const find = await m.searchSnaps('fire');

@@ -138,10 +138,14 @@ function mockFactoryJs() {
                 async info() {
                     return {
                         snapd: {
-                            version: '2.68.4', series: '16', brand: 'canonical', model: 'core-24-kvm',
-                            kernel_version: '6.8.0-40-generic', on_architecture: 'amd64', serial: '0001',
-                            storage: { total: 4194304000000, used: 1288490188000, used_percent: 31, model: 'VIRTIO BLK', type: 'ssd' },
-                            cloud_init: { status: 'done' },
+                            version: '2.68.4', series: '16', architecture: 'amd64',
+                            'kernel-version': '6.8.0-40-generic',
+                            'os-release': { id: 'ubuntu', 'version-id': '24.04' },
+                        },
+                        model: {
+                            'authority-id': 'canonical', series: '16', 'brand-id': 'canonical',
+                            model: 'core-24-kvm', base: 'core24', grade: 'signed',
+                            architecture: 'amd64', 'sign-key-sha3-384': 'stub-key-id',
                         },
                         host: {
                             hostname: 'core-kvm-01', platform: 'linux', arch: 'x64',
@@ -362,6 +366,34 @@ function mockFactoryJs() {
         if (cpu.lineStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: cpu line not orange (' + cpu.lineStroke + ')');
     }
     await page.screenshot({ path: path.join(SHOTS, '3b-cpu-graph.png') });
+
+    // System card guard (round 19): model-assertion + system-info rows render
+    // with the real data (mock provides model + hyphenated system-info fields).
+    const syscard = await page.evaluate(() => {
+        const box = document.querySelector('#dashSystem');
+        if (!box) return { error: 'dashSystem missing' };
+        const rows = Array.from(box.querySelectorAll(':scope > div'))
+            .map((d) => ({ dt: d.querySelector('dt')?.textContent || '', dd: d.querySelector('dd')?.textContent || '' }));
+        const get = (k) => rows.find((r) => r.dt === k)?.dd || null;
+        return {
+            rows: rows.map((r) => r.dt + '=' + r.dd),
+            model: get('Model'), base: get('Base'), grade: get('Grade'),
+            brand: get('Brand'), kernel: get('Kernel'), arch: get('Architecture'),
+            os: get('OS release'), hostname: get('Hostname'),
+        };
+    });
+    if (syscard.error) console.log('PAGE ERROR: ' + syscard.error);
+    else {
+        if (syscard.model !== 'core-24-kvm') console.log('PAGE ERROR: System card Model row (' + JSON.stringify(syscard) + ')');
+        if (syscard.base !== 'core24') console.log('PAGE ERROR: System card Base row (' + syscard.base + ')');
+        if (syscard.grade !== 'signed') console.log('PAGE ERROR: System card Grade row (' + syscard.grade + ')');
+        if (syscard.brand !== 'canonical') console.log('PAGE ERROR: System card Brand row (' + syscard.brand + ')');
+        if (syscard.kernel !== '6.8.0-40-generic') console.log('PAGE ERROR: System card Kernel row (' + syscard.kernel + ')');
+        if (syscard.arch !== 'amd64') console.log('PAGE ERROR: System card Architecture row (' + syscard.arch + ')');
+        if (syscard.os !== 'ubuntu 24.04') console.log('PAGE ERROR: System card OS release row (' + syscard.os + ')');
+        if (syscard.hostname !== 'core-kvm-01') console.log('PAGE ERROR: System card Hostname row (' + syscard.hostname + ')');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '3c-system-card.png') });
 
     // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
     await page.click('.ucm-side a[data-view="settings"]');
