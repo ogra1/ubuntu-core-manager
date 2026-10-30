@@ -93,6 +93,7 @@ function mockFactoryJs() {
         const LOCAL_PW = 'correct-horse';
         let localSet = false;
         let localAuthed = false;
+        let cpuCalls = 0;
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
@@ -173,6 +174,14 @@ function mockFactoryJs() {
                     ];
                 },
                 async netplan() { return NETPLAN; },
+                // CPU sparkline mock: one delta per call (main samples on its own clock),
+                // deterministic wave so the drawn shape is stable in screenshots.
+                async cpu() {
+                    cpuCalls++;
+                    const n = Math.min(100, cpuCalls);
+                    return Array.from({ length: n }, (_, i) =>
+                        Math.round((40 + 30 * Math.sin(i / 3)) * 10) / 10);
+                },
             },
             snaps: {
                 async list() { return SNAPS; },
@@ -313,6 +322,46 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: lock button margin-bottom not zeroed (' + topbar.lockBtnMarginBottom + ')');
         if (!topbar.lockBg) console.log('PAGE ERROR: lock icon background not applied');
     }
+
+    // CPU sparkline guard (dashboard): SVG paths drawn, current-% text set,
+    // load stats rendered small. Catches missing mock/renderer wiring the
+    // same way the topbar guard catches mangled CSS.
+    await wait(4500); // 2+ cpu ticks at the 2 s cadence
+    const cpu = await page.evaluate(() => {
+        const line = document.querySelector('#cpuLine');
+        const area = document.querySelector('#cpuArea');
+        const now = document.querySelector('#statCpuNow');
+        const load = document.querySelector('#statLoad');
+        if (!line || !area || !now || !load) return { error: 'cpu elements missing' };
+        const csLoad = getComputedStyle(load);
+        const csStat = getComputedStyle(line.closest('.ucm-stat'));
+        const ld = line.getAttribute('d') || '';
+        const ad = area.getAttribute('d') || '';
+        return {
+            lineShape: ld.startsWith('M') && /L/.test(ld) ? 'multi' : 'bad:' + ld.slice(0, 20),
+            areaClosed: ad.endsWith('Z') && ad.length > ld.length ? true : 'bad',
+            nowText: now.textContent,
+            loadText: load.textContent,
+            loadHint: (document.querySelector('#statLoadHint') || {}).textContent || '',
+            loadFontSize: csLoad.fontSize,
+            statDisplay: csStat.display,
+            lineStroke: getComputedStyle(line).stroke,
+        };
+    });
+    if (cpu.error) console.log('PAGE ERROR: ' + cpu.error);
+    else {
+        if (cpu.lineShape !== 'multi') console.log('PAGE ERROR: cpu line path not drawn (' + cpu.lineShape + ')');
+        if (cpu.areaClosed !== true) console.log('PAGE ERROR: cpu area path not closed (' + cpu.areaClosed + ')');
+        if (!/^\d+%$/.test(cpu.nowText)) console.log('PAGE ERROR: cpu current % missing (' + cpu.nowText + ')');
+        if (!/cores$/.test(cpu.loadHint)) console.log('PAGE ERROR: load hint missing (' + cpu.loadHint + ')');
+        if (!/^\d{1,2}\.\d{2} · \d{1,2}\.\d{2} · \d{1,2}\.\d{2}$/.test(cpu.loadText)) console.log('PAGE ERROR: load stats not small-formatted (' + cpu.loadText + ')');
+        // 1.6rem value would be the unstyled .ucm-stat__value; the small
+        // override computes to 15.2px.
+        if (cpu.loadFontSize !== '15.2px') console.log('PAGE ERROR: load value not shrunk (' + cpu.loadFontSize + ')');
+        if (cpu.statDisplay !== 'flex') console.log('PAGE ERROR: cpu stat card lost flex layout (' + cpu.statDisplay + ')');
+        if (cpu.lineStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: cpu line not orange (' + cpu.lineStroke + ')');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '3b-cpu-graph.png') });
 
     // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
     await page.click('.ucm-side a[data-view="settings"]');

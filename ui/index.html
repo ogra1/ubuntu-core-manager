@@ -170,10 +170,24 @@
                             <div class="ucm-bar" id="barMem"><div class="ucm-bar__fill" style="width:0%"></div></div>
                             <div class="ucm-stat__hint" id="statMemHint"></div>
                         </div>
-                        <div class="ucm-stat">
+                        <div class="ucm-stat ucm-stat--cpu">
                             <div class="ucm-stat__label">System load</div>
-                            <div class="ucm-stat__value" id="statLoad">—</div>
-                            <div class="ucm-stat__hint" id="statLoadHint"></div>
+                            <div class="ucm-stat__value ucm-stat__value--small" id="statLoad">—</div>
+                            <div class="ucm-cpu" aria-hidden="true">
+                                <svg class="ucm-cpu__svg" viewBox="0 0 100 30" preserveAspectRatio="none">
+                                    <g class="ucm-cpu__grid">
+                                        <line x1="0" y1="15" x2="100" y2="15"></line>
+                                        <line x1="0" y1="0" x2="100" y2="0"></line>
+                                        <line x1="0" y1="30" x2="100" y2="30"></line>
+                                    </g>
+                                    <path id="cpuArea" class="ucm-cpu__area"></path>
+                                    <path id="cpuLine" class="ucm-cpu__line"></path>
+                                </svg>
+                            </div>
+                            <div class="ucm-cpu__row">
+                                <span class="ucm-cpu__now" id="statCpuNow">—</span>
+                                <span class="ucm-stat__hint" id="statLoadHint"></span>
+                            </div>
                         </div>
                         <div class="ucm-stat">
                             <div class="ucm-stat__label">Uptime</div>

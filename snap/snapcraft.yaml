@@ -28,6 +28,7 @@ apps:
       - network
       - network-bind
       - snapd-control
+      - system-observe
 
 parts:
   app:

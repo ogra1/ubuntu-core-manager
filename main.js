@@ -812,6 +812,37 @@ function readHostStats() {
     return out;
 }
 
+/* /proc/stat cumulative jiffies for the aggregate cpu line + previous
+ * sample. Module-level state: the main process is the only sampler, and
+ * the deltas are computed here (renderer never sees raw counters). */
+const CPU_SAMPLES = 100;      // history window the sparkline draws (2 s cadence => 3 min)
+let cpuPrev = null;           // { idle, total } jiffies at last sample
+
+function cpuTimes() {
+    const line = String(fs.readFileSync('/proc/stat', 'utf8')).split('\n')[0]; // 'cpu  u n s i idle iowait irq softirq steal ...'
+    const f = line.trim().split(/\s+/).slice(1).map(Number);
+    const idle = (f[3] || 0) + (f[4] || 0);           // idle + iowait
+    const total = f.reduce((a, b) => a + (b || 0), 0);
+    return { idle, total };
+}
+
+function readCpuUtilization() {
+    const cur = cpuTimes();
+    let now = null; // null = boot baseline, no delta computable yet
+    if (cpuPrev) {
+        const di = cur.idle - cpuPrev.idle;
+        const dt = cur.total - cpuPrev.total;
+        // 0..100, two decimals; dt===0 only in a fully frozen system.
+        now = dt > 0 ? Math.min(100, Math.max(0, (1 - di / dt) * 100)) : 0;
+        now = Math.round(now * 100) / 100;
+    }
+    cpuPrev = cur;
+    // ring buffer (module state): oldest -> newest, capped at CPU_SAMPLES.
+    // A copy is returned so the IPC layer serializes plain data only.
+    readCpuUtilization.buf = (readCpuUtilization.buf || []).concat(now).slice(-CPU_SAMPLES);
+    return readCpuUtilization.buf.slice();
+}
+
 function readProcNetDev() {
     try {
         const text = fs.readFileSync('/proc/net/dev', 'utf8');
@@ -833,7 +864,7 @@ const api = {
     SESSION_TIMEOUT_MS,
     validSnapName, validChannel,
     toYaml, fromYaml, buildNetplanIface,
-    readHostStats, readProcNetDev,
+    readHostStats, readProcNetDev, readCpuUtilization,
 
     // local admin gate (the UI lock screen; offline)
     createLocalPassword, loginLocal, logoutLocal, resetLocalPassword, authStatus, detectInitialized,
@@ -1086,6 +1117,9 @@ function initElectron() {
         netdev: readProcNetDev(),
         warnings: await getWarnings().catch(() => []),
     })));
+    // CPU utilization history (sparkline). Read-only /proc sampling, so it
+    // is open to the local gate like the other diagnostics — no write path.
+    ipcMain.handle('sys:cpu', guard(() => readCpuUtilization()));
     ipcMain.handle('sys:disk', guard(() => getDisk()));
     ipcMain.handle('sys:changes', guard((select) => listChanges(select)));
     ipcMain.handle('sys:change', guard((id) => getChange(id)));

@@ -111,6 +111,8 @@ const state = {
     storeUsername: null,
     snapd: null,
     host: null,
+    cpuSeries: null,      // last sys:cpu sample: (number|null)[] oldest->newest
+    cpuPoll: null,
     netplan: null,
     changes: [],
     warnings: [],
@@ -151,7 +153,7 @@ function switchView(name) {
     history.replaceState(null, '', '#' + name);
 
     ({
-        dashboard: loadDashboard,
+        dashboard: () => { loadDashboard(); sampleCpu(); },
         network: loadNetwork,
         snaps: loadSnaps,
         interfaces: loadInterfaces,
@@ -163,6 +165,7 @@ function enterApp() {
     showGate();
     startSessionTick();
     startDashPoll();
+    startCpuPoll();
     const fromHash = (location.hash || '').replace('#', '');
     switchView(VIEWS.includes(fromHash) ? fromHash : 'dashboard');
 }
@@ -170,6 +173,7 @@ function enterApp() {
 function exitApp() {
     stopSessionTick();
     stopDashPoll();
+    stopCpuPoll();
     $('#setupPassword').value = '';
     $('#setupConfirm').value = '';
     $('#loginPassword').value = '';
@@ -343,9 +347,12 @@ function renderDashboard() {
     }
 
     if (h.load) {
-        $('#statLoad').textContent = h.load.map((x) => x.toFixed(2)).join('  ');
-        $('#statLoadHint').textContent = `${h.cpus} cores`;
+        // the 1/5/15-min averages stay small here — the utilization
+        // sparkline + current % (statCpuNow) carry the primary metric.
+        $('#statLoad').textContent = h.load.map((x) => x.toFixed(2)).join(' · ');
+        $('#statLoadHint').textContent = '1m · 5m · 15m — ' + h.cpus + ' cores';
     }
+    if (state.cpuSeries) renderCpuChart();
     $('#statUptime').textContent = fmtUptime(h.uptimeSec);
     $('#statUptimeHint').textContent = `${h.platform || ''} / ${h.arch || ''}`;
 
@@ -424,6 +431,45 @@ function startDashPoll() {
 }
 function stopDashPoll() {
     if (state.dashPoll) { clearInterval(state.dashPoll); state.dashPoll = null; }
+}
+
+/* CPU utilization sparkline — 2 s cadence (matches the main-process
+ * /proc/stat sampler), 100 samples = 3 min window. The renderer only
+ * draws; all sampling math happens in main.js. */
+function startCpuPoll() {
+    stopCpuPoll();
+    state.cpuPoll = setInterval(() => {
+        if (state.view === 'dashboard' && state.authenticated) sampleCpu();
+    }, 2000);
+}
+function stopCpuPoll() {
+    if (state.cpuPoll) { clearInterval(state.cpuPoll); state.cpuPoll = null; }
+}
+async function sampleCpu() {
+    try {
+        state.cpuSeries = await core.system.cpu();
+        renderCpuChart();
+    } catch { /* non-fatal: next tick retries */ }
+}
+
+function renderCpuChart() {
+    const series = state.cpuSeries;
+    const line = $('#cpuLine'), area = $('#cpuArea');
+    if (!line || !area || !Array.isArray(series) || !series.length) return;
+    const n = series.length, W = 100, H = 30;
+    let d = '';
+    for (let i = 0; i < n; i++) {
+        const v = series[i];
+        if (v == null) continue;
+        const x = (i / (n - 1 || 1)) * W;
+        const y = H - (Math.min(100, Math.max(0, v)) / 100) * H;
+        d += (d ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+    }
+    if (!d) return; // no deltas yet (fresh boot)
+    line.setAttribute('d', d);
+    area.setAttribute('d', d + 'L' + W + ' ' + H + 'L0 ' + H + 'Z');
+    const last = [...series].reverse().find((v) => v != null);
+    $('#statCpuNow').textContent = last != null ? Math.round(last) + '%' : '—';
 }
 
 /* ------------------------------- network --------------------------------- */

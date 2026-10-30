@@ -208,6 +208,24 @@ html, body {
 .ucm-stat__hint { font-size: .72rem; color: #999; margin-top: .35rem; }
 @media (max-width: 1200px) { .ucm-stats { grid-template-columns: repeat(2, 1fr); } }
 
+/* ---- CPU utilization sparkline (System load stat card) ------------------ */
+.ucm-stat--cpu { display: flex; flex-direction: column; }
+.ucm-stat--cpu .ucm-stat__value--small { font-size: .95rem; font-weight: 400; color: #555; margin-top: .5rem; }
+.ucm-cpu { position: relative; height: 3rem; margin-top: .6rem; }
+.ucm-cpu__svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.ucm-cpu__grid line { stroke: var(--ucm-grey-90); stroke-width: .5; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+.ucm-cpu__area { fill: rgba(233, 84, 32, .10); stroke: none; }
+.ucm-cpu__line {
+    fill: none; stroke: var(--ucm-orange); stroke-width: 1.6;
+    stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
+}
+.ucm-cpu__row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: .5rem; margin-top: .5rem;
+}
+.ucm-cpu__now { font-size: 1.05rem; font-weight: 300; color: var(--ucm-grey-dark); }
+.ucm-stat--cpu .ucm-stat__hint { margin-top: 0; }
+
 .ucm-kv { margin: 0; }
 .ucm-kv > div {
     display: grid;

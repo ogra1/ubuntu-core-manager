@@ -207,6 +207,19 @@ function ok(name, cond, extra = '') {
     const nd = m.readProcNetDev();
     ok('proc netdev parsed', Array.isArray(nd) && nd.some((d) => d.name === 'lo'), JSON.stringify(nd && nd[0]));
 
+    // CPU utilization sampler (main-process /proc/stat ring buffer)
+    const c1 = m.readCpuUtilization();
+    const c2 = m.readCpuUtilization();
+    ok('cpu series is an array with a null boot baseline',
+        Array.isArray(c1) && Array.isArray(c2) && c1.length === 1 && c1[0] == null && c2.length === 2 && c2[1] != null,
+        JSON.stringify(c2));
+    ok('cpu deltas are 0..100 numbers',
+        c2.every((v) => v == null || (typeof v === 'number' && v >= 0 && v <= 100)),
+        JSON.stringify(c2));
+    await new Promise((r) => setTimeout(r, 50));
+    const c3 = m.readCpuUtilization();
+    ok('cpu series grows per call', c3.length === 3, String(c3.length));
+
     console.log('\n[8] logout purges volatile state');
     const s1 = await m.storeLogout();
     ok('store logout -> storeAuthenticated=false', s1.storeAuthenticated === false);
@@ -282,7 +295,8 @@ function ok(name, cond, extra = '') {
             const wireErr = process.__ucmWireErr || null;
             ok('ipc wiring threw no TypeError', !wireErr, wireErr && wireErr.message);
             ok('auth:create/login/logout handlers registered',
-                !!handlers['auth:create'] && !!handlers['auth:login'] && !!handlers['auth:logout']);
+                !!handlers['auth:create'] && !!handlers['auth:login'] && !!handlers['auth:logout']
+                && !!handlers['sys:cpu']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
