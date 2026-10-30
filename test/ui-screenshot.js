@@ -142,8 +142,11 @@ function mockFactoryJs() {
                             'kernel-version': '6.8.0-40-generic',
                             'os-release': { id: 'ubuntu', 'version-id': '24.04' },
                         },
+                        // 'brand-id' is a realistic 32-char account id: it must
+                        // fit on ONE line in the value column (round-20 fix).
                         model: {
-                            'authority-id': 'canonical', series: '16', 'brand-id': 'canonical',
+                            'authority-id': 'canonical', series: '16',
+                            'brand-id': 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP',
                             model: 'core-24-kvm', base: 'core24', grade: 'signed',
                             architecture: 'amd64', 'sign-key-sha3-384': 'stub-key-id',
                         },
@@ -367,31 +370,56 @@ function mockFactoryJs() {
     }
     await page.screenshot({ path: path.join(SHOTS, '3b-cpu-graph.png') });
 
-    // System card guard (round 19): model-assertion + system-info rows render
-    // with the real data (mock provides model + hyphenated system-info fields).
-    const syscard = await page.evaluate(() => {
-        const box = document.querySelector('#dashSystem');
-        if (!box) return { error: 'dashSystem missing' };
-        const rows = Array.from(box.querySelectorAll(':scope > div'))
+    // System + Model cards (round 20): device identity moved from the System
+    // card into the 'Model' stat card (snapd version left the strip; it
+    // stays in the rail). System card is compact again -> default 50/50
+    // .ucm-kv columns, no mangling.
+    const cards = await page.evaluate(() => {
+        const sys = document.querySelector('#dashSystem');
+        const mstat = document.querySelector('#modelStat');
+        if (!sys) return { error: 'dashSystem missing' };
+        const rows = Array.from(sys.querySelectorAll(':scope > div'))
             .map((d) => ({ dt: d.querySelector('dt')?.textContent || '', dd: d.querySelector('dd')?.textContent || '' }));
         const get = (k) => rows.find((r) => r.dt === k)?.dd || null;
+        const m = (sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; };
+        const mcs = mstat ? getComputedStyle(mstat) : null;
+        const memCard = document.querySelector('.ucm-stat:not(.ucm-stat--model):not(.ucm-stat--cpu)');
+        const modelH = mstat ? Math.round(mstat.getBoundingClientRect().height) : null;
+        const memH = memCard ? Math.round(memCard.getBoundingClientRect().height) : null;
+        const brand = document.querySelector('#modelBrand');
         return {
-            rows: rows.map((r) => r.dt + '=' + r.dd),
-            model: get('Model'), base: get('Base'), grade: get('Grade'),
-            brand: get('Brand'), kernel: get('Kernel'), arch: get('Architecture'),
-            os: get('OS release'), hostname: get('Hostname'),
+            sysRows: rows.map((r) => r.dt + '=' + r.dd),
+            hostname: get('Hostname'), kernel: get('Kernel'),
+            arch: get('Architecture'), os: get('OS release'),
+            // model rows must be GONE from the System card
+            sysHasModelRows: rows.some((r) => ['Model', 'Base', 'Grade', 'Brand'].includes(r.dt)),
+            // model stat card
+            modelCardDisplay: mcs ? (mcs.display === 'none' ? 'none' : 'visible') : null,
+            modelH, memH,
+            statModel: m('#statModel'), statModelHint: m('#statModelHint'),
+            modelBrand: m('#modelBrand'),
+            brandFont: document.querySelector('#modelBrand') ? getComputedStyle(document.querySelector('#modelBrand')).fontSize : null,
+            snapdGone: !document.querySelector('#statSnapd'),
         };
     });
-    if (syscard.error) console.log('PAGE ERROR: ' + syscard.error);
+    if (cards.error) console.log('PAGE ERROR: ' + cards.error);
     else {
-        if (syscard.model !== 'core-24-kvm') console.log('PAGE ERROR: System card Model row (' + JSON.stringify(syscard) + ')');
-        if (syscard.base !== 'core24') console.log('PAGE ERROR: System card Base row (' + syscard.base + ')');
-        if (syscard.grade !== 'signed') console.log('PAGE ERROR: System card Grade row (' + syscard.grade + ')');
-        if (syscard.brand !== 'canonical') console.log('PAGE ERROR: System card Brand row (' + syscard.brand + ')');
-        if (syscard.kernel !== '6.8.0-40-generic') console.log('PAGE ERROR: System card Kernel row (' + syscard.kernel + ')');
-        if (syscard.arch !== 'amd64') console.log('PAGE ERROR: System card Architecture row (' + syscard.arch + ')');
-        if (syscard.os !== 'ubuntu 24.04') console.log('PAGE ERROR: System card OS release row (' + syscard.os + ')');
-        if (syscard.hostname !== 'core-kvm-01') console.log('PAGE ERROR: System card Hostname row (' + syscard.hostname + ')');
+        if (cards.hostname !== 'core-kvm-01') console.log('PAGE ERROR: System card Hostname row (' + cards.hostname + ')');
+        if (cards.kernel !== '6.8.0-40-generic') console.log('PAGE ERROR: System card Kernel row (' + cards.kernel + ')');
+        if (cards.arch !== 'amd64') console.log('PAGE ERROR: System card Architecture row (' + cards.arch + ')');
+        if (cards.os !== 'ubuntu 24.04') console.log('PAGE ERROR: System card OS release row (' + cards.os + ')');
+        if (cards.sysHasModelRows !== false)
+            console.log('PAGE ERROR: model rows still in System card (' + cards.sysRows.join(' ') + ')');
+        if (cards.modelCardDisplay !== 'visible') console.log('PAGE ERROR: model stat card not visible (' + cards.modelCardDisplay + ')');
+        if (cards.modelH == null || cards.memH == null || Math.abs(cards.modelH - cards.memH) > 6)
+            console.log('PAGE ERROR: model card height off-rhythm (model=' + cards.modelH + ' mem=' + cards.memH + ')');
+        if (cards.statModel !== 'core-24-kvm') console.log('PAGE ERROR: Model card name (' + cards.statModel + ')');
+        if (cards.statModelHint !== 'core24 · signed') console.log('PAGE ERROR: Model card base/grade (' + cards.statModelHint + ')');
+        if (cards.modelBrand !== 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP')
+            console.log('PAGE ERROR: Model card brand id (' + cards.modelBrand + ')');
+        // small monospace brand font (0.75rem -> 12px); default dd is 15.2px
+        if (cards.brandFont !== '12px') console.log('PAGE ERROR: brand id font not small (' + cards.brandFont + ')');
+        if (cards.snapdGone !== true) console.log('PAGE ERROR: old Snapd stat card still present');
     }
     await page.screenshot({ path: path.join(SHOTS, '3c-system-card.png') });
 

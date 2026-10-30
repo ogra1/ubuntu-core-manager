@@ -335,9 +335,32 @@ function renderDashboard() {
     const h = state.host || {};
     const s = state.snapd || {};
 
+    // The snapd version no longer has a stat card — it stays visible in the
+    // rail under the logo (brandHost). Never reference the removed
+    // #statSnapd/#statSnapdHint here: renderDashboard would throw and the
+    // whole dashboard would render empty.
     $('#brandHost').textContent = s.version ? `snapd ${s.version} · ${h.hostname || ''}` : (h.hostname || '—');
-    $('#statSnapd').textContent = s.version || '—';
-    $('#statSnapdHint').textContent = `on ${s.series || '—'} · ${s.on_architecture || h.arch || ''}`;
+    // Device model — model-assertion identity lives in the stat strip
+    // (the snapd version was here; it stays visible in the rail under the
+    // logo, and per user decision it is not dashboard-tier info). Brand id
+    // is a small monospace line, allowed to break mid-string.
+    const mod = state.model || {};
+    const mstat = $('#modelStat');
+    mstat.hidden = false; // always shown: keeps the 4-up stat grid even pre-model
+    if (mod.model || mod['brand-id']) {
+        $('#modelLabel').textContent = 'Model';
+        $('#statModel').textContent = mod.model || '—';
+        $('#statModelHint').textContent = [mod.base, mod.grade].filter(Boolean).join(' · ');
+        $('#modelBrand').textContent = mod['brand-id'] || '';
+        $('#modelBrand').classList.remove('ucm-hidden');
+    } else {
+        // defensive fallback (shouldn't happen on Ubuntu Core): snapd version
+        $('#modelLabel').textContent = 'Snapd';
+        $('#statModel').textContent = s.version || '—';
+        $('#statModelHint').textContent = `on ${s.series || '—'}`;
+        $('#modelBrand').textContent = '';
+        $('#modelBrand').classList.add('ucm-hidden');
+    }
 
     const mem = h.mem;
     if (mem) {
@@ -358,19 +381,14 @@ function renderDashboard() {
     $('#statUptime').textContent = fmtUptime(h.uptimeSec);
     $('#statUptimeHint').textContent = `${h.platform || ''} / ${h.arch || ''}`;
 
-    // System card: device identity from the MODEL ASSERTION (/v2/assertions/
-    // model — raw assertion text, parsed in main.js) + platform facts from
-    // /v2/system-info (real snapd field names: hyphenated kernel-version,
-    // architecture, os-release{ id, version-id }). 'Base release' dropped
-    // (it was the snapd version — already the Snapd stat card).
-    const mod = state.model || {};
+    // System card: platform facts from /v2/system-info (real snapd field
+    // names: hyphenated kernel-version, architecture, os-release{ id,
+    // version-id }). Device identity (model/base/grade/brand) lives in the
+    // 'Model' stat card — keeping the list compact so the default 50/50
+    // .ucm-kv columns never need mangling.
     const osr = s['os-release'] || {};
     const sys = [
         ['Hostname', h.hostname],
-        ['Model', mod.model],
-        ['Base', mod.base],
-        ['Grade', mod.grade],
-        ['Brand', mod['brand-id']],
         ['Kernel', s['kernel-version']],
         ['Architecture', s.architecture],
         ['OS release', [osr.id, osr['version-id']].filter(Boolean).join(' ') || null],
