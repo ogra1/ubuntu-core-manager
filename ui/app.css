@@ -394,6 +394,12 @@ html, body {
     background-image: url("../build/images/suru-lock.svg");
 }
 .p-icon--clock{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1.5rem; width: 1.5rem;
+    background-image: url("../build/images/suru-clock.svg");
+}
 
 /* session countdown chip */
 .ucm-session-chip {

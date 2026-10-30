@@ -1,0 +1,9 @@
+<!-- Suru lock icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru package: /usr/share/icons/suru/actions/scalable/lock.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata stripped, the three glyph paths (shackle,
+     body, keyhole) kept verbatim (verified pixel-identical geometry to the
+     original render), fill set to #000000 — the original #808080 is too faint
+     on the dark sidebar; it is whitened in-app via the brightness(0) invert(1)
+     filter like the other dark-rail icons. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><g transform="translate(67.857146,-78.50504)"><g transform="matrix(0,-1,-1,0,373.50506,516.50504)"><g transform="matrix(-0.9996045,0,0,1,575.94296,-611.00001)"><g transform="matrix(-1,0,0,1,575.99999,611)"><path fill="#000000" fill-rule="nonzero" d="m 393.98438,425.36133 -2,0 -46.01758,0 0,-64 48.01758,0 0,64 z m -4,-4 0,-55.99805 -40.01758,0 0,55.99805 40.01758,0 z"/><path fill="#000000" fill-rule="nonzero" d="m 434.00087,393.36222 c 0,13.81562 -11.1845,25.00195 -25.00013,25.00195 l -16.0161,0 0,-4.00195 16.0161,0 c 11.66838,0 21.0005,-9.33162 21.0005,-21 0,-11.66838 -9.33212,-20.99805 -21.0005,-20.99805 l -16.0161,0 0,-4.00195 16.0161,0 c 13.81563,0 25.00013,11.18438 25.00013,25 z"/><path fill="#000000" fill-rule="nonzero" transform="matrix(0,-1,-1,0,0,0)" d="m -397.36221,-377.9787 8,-2.00079 0,20.00794 -8,0 z"/></g></g></g></g></svg>

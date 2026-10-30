@@ -1,0 +1,7 @@
+<!-- Suru clock icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru package: /usr/share/icons/suru/actions/scalable/clock.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata stripped, the two glyph paths kept verbatim
+     (verified pixel-identical to the original render), fill set to #000000 — the
+     original #808080 has low contrast on the light status chip. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><g transform="translate(67.857146,-78.50504)"><g transform="matrix(0,-1,-1,0,373.50506,516.50504)"><g transform="matrix(-0.9996045,0,0,1,575.94296,-611.00001)"><g transform="matrix(-1,0,0,1,575.99999,611)"><path fill="#000000" fill-rule="nonzero" d="M432,393.36133 c 0,23.17267 -18.83507,42 -42.01562,42 -23.18056,0 -42.01758,-18.82733 -42.01758,-42 0,-23.17267 18.83702,-42 42.01758,-42 23.18055,0 42.01562,18.82733 42.01562,42 z m -4.00195,0 c 0,-21.00963 -16.99445,-37.99805 -38.01367,-37.99805 -21.01923,0 -38.01563,16.98842 -38.01563,37.99805 0,21.00963 16.9964,38 38.01563,38 21.01922,0 38.01367,-16.99037 38.01367,-38 z"/><path fill="#000000" fill-rule="nonzero" d="M374.39062,374.94727 L371.5625,377.77734 L389.1543,395.36328 L417.99414,395.36328 L417.99414,391.36133 L390.8125,391.36133 Z"/></g></g></g></g></svg>

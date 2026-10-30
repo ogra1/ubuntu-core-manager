@@ -272,6 +272,47 @@ function mockFactoryJs() {
     await page.screenshot({ path: path.join(SHOTS, '3-dashboard-clean.png'), fullPage: true });
     const chipGone = await page.evaluate(() => !document.querySelector('#storeChip') && !document.querySelector('#storeModal'));
     if (!chipGone) console.log('PAGE ERROR: store chip/modal still present in the DOM');
+    // CSS-integrity guard (round-17 regression): a mangled rule in app.css
+    // (e.g. a rule body swallowing the next rules) is SILENT — no page error,
+    // the styles just stop applying. Pin the two computed styles that broke
+    // when .p-icon--clock's body was clobbered (it took .ucm-session-chip
+    // down with it: pill frame AND clock icon vanished).
+    const topbar = await page.evaluate(() => {
+        const chip = document.querySelector('#sessionChip');
+        const ic = document.querySelector('#sessionChip i');
+        const btn = document.querySelector('#lockBtn');
+        const lockic = document.querySelector('#lockBtn i');
+        if (!chip || !ic || !btn || !lockic) return { error: 'topbar elements missing' };
+        const csChip = getComputedStyle(chip);
+        const csIc = getComputedStyle(ic);
+        const csLock = getComputedStyle(lockic);
+        const csBtn = getComputedStyle(btn);
+        return {
+            chipDisplay: csChip.display,
+            chipBg: csChip.backgroundColor,
+            chipRadius: csChip.borderRadius,
+            clockBg: csIc.backgroundImage.includes('suru-clock.svg'),
+            clockH: csIc.height,
+            lockBg: csLock.backgroundImage.includes('suru-lock.svg'),
+            lockBtnMarginBottom: csBtn.marginBottom,
+        };
+    });
+    if (topbar.error) console.log('PAGE ERROR: ' + topbar.error);
+    else {
+        // Chromium normalizes computed values (inline-flex -> flex,
+        // rgba(247,247,247,1) -> rgb(247,247,247)); the broken-CSS state was
+        // display:block + transparent + 0px radius (verified by mutation test).
+        if (topbar.chipDisplay !== 'flex' && topbar.chipDisplay !== 'inline-flex')
+            console.log('PAGE ERROR: session chip lost its display style (' + JSON.stringify(topbar) + ')');
+        if (topbar.chipBg !== 'rgb(247, 247, 247)' && topbar.chipBg !== 'rgba(247, 247, 247, 1)')
+            console.log('PAGE ERROR: session chip lost its background (' + JSON.stringify(topbar) + ')');
+        if (topbar.chipRadius !== '16px')
+            console.log('PAGE ERROR: session chip lost its border-radius (' + JSON.stringify(topbar) + ')');
+        if (!topbar.clockBg) console.log('PAGE ERROR: clock icon background not applied');
+        if (topbar.lockBtnMarginBottom !== '0px')
+            console.log('PAGE ERROR: lock button margin-bottom not zeroed (' + topbar.lockBtnMarginBottom + ')');
+        if (!topbar.lockBg) console.log('PAGE ERROR: lock icon background not applied');
+    }
 
     // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
     await page.click('.ucm-side a[data-view="settings"]');
