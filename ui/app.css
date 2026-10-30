@@ -379,6 +379,18 @@ html, body {
 .ucm-modal__body .p-form__group { margin-bottom: 1rem; }
 .ucm-modal__body .p-button--brand { min-width: 8rem; }
 
+/* Clock glyph for the session-countdown pill. The bundled Vanilla icon set
+   ships NO clock (checked: anchor..youtube, no clock), so define one following
+   the bundle's own pattern: 16x16 fill data-URI SVG, background-size:contain.
+   Sizing via the bundle's .p-icon--medium token (1.25rem) on the element. */
+.p-icon--clock{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1.5rem; width: 1.5rem;
+    background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 2.5A4.5 4.5 0 1 1 8 12.5 4.5 4.5 0 0 1 8 3.5zM7.4 4.6H8.6V8.6H7.4zM8 7.4H10.8V8.6H8z'/%3E%3C/svg%3E");
+}
+
 /* session countdown chip */
 .ucm-session-chip {
     display: inline-flex; align-items: center; gap: .45rem;
