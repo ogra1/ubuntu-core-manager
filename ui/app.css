@@ -226,12 +226,9 @@ html, body {
 .ucm-cpu__now { font-size: 1.05rem; font-weight: 300; color: var(--ucm-grey-dark); }
 .ucm-stat--cpu .ucm-stat__hint { margin-top: 0; }
 
-/* Model stat card (device identity from the model assertion): name,
-   base/grade hint, small monospace brand account id. Plain block flow —
-   no flex/margin-top:auto, so its vertical rhythm matches the two-line
-   neighbors instead of stretching. */
-.ucm-stat__brand { margin-top: .6rem; font-size: .75rem; line-height: 1.3; }
-.ucm-break { overflow-wrap: anywhere; }
+/* Model stat card (device identity from the model assertion): name +
+   base/grade hint only. The brand-account-id line was dropped — real VM
+   font metrics wrapped long ids in the narrow card (user decision). */
 
 .ucm-kv { margin: 0; }
 .ucm-kv > div {

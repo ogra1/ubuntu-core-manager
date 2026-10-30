@@ -59,6 +59,15 @@ const fmtDate = (iso) => {
     if (!iso) return '—';
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
 };
+// snapd timestamps (UTC ISO, e.g. refresh.last/next) -> local
+// 'dd.mm.yyyy hh:mm' (user preference). '—' on missing/invalid.
+const fmtDm = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};;
 
 /* ------------------------------- toasts ---------------------------------- */
 
@@ -342,24 +351,21 @@ function renderDashboard() {
     $('#brandHost').textContent = s.version ? `snapd ${s.version} · ${h.hostname || ''}` : (h.hostname || '—');
     // Device model — model-assertion identity lives in the stat strip
     // (the snapd version was here; it stays visible in the rail under the
-    // logo, and per user decision it is not dashboard-tier info). Brand id
-    // is a small monospace line, allowed to break mid-string.
+    // logo, and per user decision it is not dashboard-tier info). The
+    // brand-id line was DROPPED: real VM font metrics wrapped the long
+    // account id in the narrow card (user decision: not worth fighting).
     const mod = state.model || {};
     const mstat = $('#modelStat');
     mstat.hidden = false; // always shown: keeps the 4-up stat grid even pre-model
-    if (mod.model || mod['brand-id']) {
+    if (mod.model) {
         $('#modelLabel').textContent = 'Model';
         $('#statModel').textContent = mod.model || '—';
         $('#statModelHint').textContent = [mod.base, mod.grade].filter(Boolean).join(' · ');
-        $('#modelBrand').textContent = mod['brand-id'] || '';
-        $('#modelBrand').classList.remove('ucm-hidden');
     } else {
         // defensive fallback (shouldn't happen on Ubuntu Core): snapd version
         $('#modelLabel').textContent = 'Snapd';
         $('#statModel').textContent = s.version || '—';
         $('#statModelHint').textContent = `on ${s.series || '—'}`;
-        $('#modelBrand').textContent = '';
-        $('#modelBrand').classList.add('ucm-hidden');
     }
 
     const mem = h.mem;
@@ -379,7 +385,11 @@ function renderDashboard() {
     }
     if (state.cpuSeries) renderCpuChart();
     $('#statUptime').textContent = fmtUptime(h.uptimeSec);
-    $('#statUptimeHint').textContent = `${h.platform || ''} / ${h.arch || ''}`;
+    // last/next automatic refresh (snapd /v2/system-info refresh{last,next},
+    // UTC ISO — rendered in LOCAL time, dd.mm.yyyy hh:mm)
+    const rf = s.refresh || {};
+    $('#statUptimeHint').textContent =
+        `last ${fmtDm(rf.last)} · next ${fmtDm(rf.next)}`;
 
     // System card: platform facts from /v2/system-info (real snapd field
     // names: hyphenated kernel-version, architecture, os-release{ id,

@@ -139,6 +139,8 @@ function makeServer(socketPath, state) {
                     version: '2.68', series: '16', architecture: 'amd64',
                     'kernel-version': '6.8.0-40-generic',
                     'os-release': { id: 'ubuntu', 'version-id': '24.04' },
+                    // live snapd shape (verified 2.77): UTC ISO timestamps
+                    refresh: { timer: '00:00~24:00/4', last: '2026-10-30T18:45:00Z', next: '2026-10-31T03:55:00Z' },
                 });
             }
             // ---- model assertion (RAW assertion text, NOT JSON — the live

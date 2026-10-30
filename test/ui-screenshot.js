@@ -141,12 +141,10 @@ function mockFactoryJs() {
                             version: '2.68.4', series: '16', architecture: 'amd64',
                             'kernel-version': '6.8.0-40-generic',
                             'os-release': { id: 'ubuntu', 'version-id': '24.04' },
+                            refresh: { timer: '00:00~24:00/4', last: '2026-10-30T18:45:00Z', next: '2026-10-31T03:55:00Z' },
                         },
-                        // 'brand-id' is a realistic 32-char account id: it must
-                        // fit on ONE line in the value column (round-20 fix).
                         model: {
-                            'authority-id': 'canonical', series: '16',
-                            'brand-id': 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP',
+                            'authority-id': 'canonical', series: '16', 'brand-id': 'canonical',
                             model: 'core-24-kvm', base: 'core24', grade: 'signed',
                             architecture: 'amd64', 'sign-key-sha3-384': 'stub-key-id',
                         },
@@ -397,8 +395,8 @@ function mockFactoryJs() {
             modelCardDisplay: mcs ? (mcs.display === 'none' ? 'none' : 'visible') : null,
             modelH, memH,
             statModel: m('#statModel'), statModelHint: m('#statModelHint'),
-            modelBrand: m('#modelBrand'),
-            brandFont: document.querySelector('#modelBrand') ? getComputedStyle(document.querySelector('#modelBrand')).fontSize : null,
+            brandGone: !document.querySelector('#modelBrand'),
+            uptimeHint: m('#statUptimeHint'),
             snapdGone: !document.querySelector('#statSnapd'),
         };
     });
@@ -415,10 +413,16 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: model card height off-rhythm (model=' + cards.modelH + ' mem=' + cards.memH + ')');
         if (cards.statModel !== 'core-24-kvm') console.log('PAGE ERROR: Model card name (' + cards.statModel + ')');
         if (cards.statModelHint !== 'core24 · signed') console.log('PAGE ERROR: Model card base/grade (' + cards.statModelHint + ')');
-        if (cards.modelBrand !== 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP')
-            console.log('PAGE ERROR: Model card brand id (' + cards.modelBrand + ')');
-        // small monospace brand font (0.75rem -> 12px); default dd is 15.2px
-        if (cards.brandFont !== '12px') console.log('PAGE ERROR: brand id font not small (' + cards.brandFont + ')');
+        if (cards.brandGone !== true) console.log('PAGE ERROR: brand-id line still in Model card');
+        // Uptime hint: last/next refresh, local 'dd.mm.yyyy hh:mm' (the mock
+        // uses fixed UTC stamps; the harness runs in the container's local
+        // TZ, so assert SHAPE + the normalized date pieces, not the offset).
+        if (!/^last \d{2}\.\d{2}\.\d{4} \d{2}:\d{2} · next \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeHint || ''))
+            console.log('PAGE ERROR: Uptime refresh hint wrong (' + cards.uptimeHint + ')');
+        if (!cards.uptimeHint || !cards.uptimeHint.includes('30.10.2026'))
+            console.log('PAGE ERROR: refresh last-date not normalized (' + cards.uptimeHint + ')');
+        if (!cards.uptimeHint || !cards.uptimeHint.includes('31.10.2026'))
+            console.log('PAGE ERROR: refresh next-date not normalized (' + cards.uptimeHint + ')');
         if (cards.snapdGone !== true) console.log('PAGE ERROR: old Snapd stat card still present');
     }
     await page.screenshot({ path: path.join(SHOTS, '3c-system-card.png') });

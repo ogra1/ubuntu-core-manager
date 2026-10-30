@@ -29,6 +29,7 @@ apps:
       - network-bind
       - snapd-control
       - system-observe
+      - mount-observe
 
 parts:
   app:

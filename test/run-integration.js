@@ -110,6 +110,13 @@ function ok(name, cond, extra = '') {
     const info = await m.getSystemInfo();
     ok('system-info version', info.version === '2.68', JSON.stringify(info).slice(0, 80));
 
+    // /v2/system-info refresh{last,next} — live snapd shape (UTC ISO);
+    // the stub mirrors it and the UI normalizes to local dd.mm.yyyy hh:mm
+    ok('system-info carries refresh last/next (UTC ISO)',
+        typeof info.refresh?.last === 'string' && typeof info.refresh?.next === 'string'
+        && /Z$/.test(info.refresh.last) && /Z$/.test(info.refresh.next),
+        JSON.stringify(info.refresh));
+
     // model assertion: RAW assertion text over the socket, parsed to headers
     const mod = await m.getModelAssertion();
     ok('model assertion parsed: model/base/grade/brand-id',
