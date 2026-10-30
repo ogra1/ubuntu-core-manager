@@ -560,8 +560,8 @@ function fmtTrackChannel(snap) {
     const full = tc || ch;
     if (!full) return '—';
     const [track, risk] = full.split('/');
-    if (track && risk) return `${track} / ${risk}`;
-    if (track && !risk) return `${track} / stable`;
+    if (track && risk) return `${track}/${risk}`;
+    if (track && !risk) return `${track}/stable`;
     return full; // bare risk (e.g. "stable") — no track info available
 }
 
@@ -606,7 +606,7 @@ function renderSnaps() {
         body.append(el('tr', {},
             el('td', { text: s.name, class: 'ucm-mono' }),
             el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
-            el('td', { class: 'ucm-mono', text: `${s.version || '—'} · r${s.revision || '—'}` }),
+            el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
             el('td', { class: 'ucm-mono', text: fmtTrackChannel(s), title: `${s.tracking_channel || s.channel || '—'}` }),
             el('td', { text: s.type || 'app' }),
             actions,
