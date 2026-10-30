@@ -294,6 +294,18 @@ function mockFactoryJs() {
     await wait(700);
     const backToSetup = await page.evaluate(() => !document.querySelector('#setupView').classList.contains('ucm-hidden'));
     if (!backToSetup) console.log('PAGE ERROR: reset did not return to the setup view');
+    // round 13: the reset form must be CLEARED after the wipe (old password
+    // must not linger in the fields) and the hash must be dropped so the
+    // re-created session lands on the dashboard, not #settings.
+    const resetClean = await page.evaluate(() => ({
+        cur: document.querySelector('#resetCurrent').value,
+        confirm: document.querySelector('#resetConfirm').value,
+        hash: location.hash,
+    }));
+    if (resetClean.cur !== '' || resetClean.confirm !== '')
+        console.log('PAGE ERROR: reset form kept the old password (' + JSON.stringify(resetClean) + ')');
+    if (resetClean.hash !== '')
+        console.log('PAGE ERROR: view hash not cleared after reset (hash=' + resetClean.hash + ')');
     await page.screenshot({ path: path.join(SHOTS, '6-reset-to-setup.png') });
 
     // recreate the password so the remaining steps have a console
@@ -303,6 +315,13 @@ function mockFactoryJs() {
     await page.type('#setupConfirm', 'correct-horse');
     await page.click('#setupBtn');
     await wait(800);
+    // round 13: after reset + new password, the default view is the DASHBOARD
+    const onDash = await page.evaluate(() =>
+        !document.querySelector('#view-dashboard').classList.contains('ucm-hidden'));
+    if (!onDash) console.log('PAGE ERROR: post-reset session did not land on the dashboard');
+    // the store-notice info card is gone from the Snaps view
+    const noticeGone = await page.evaluate(() => !document.querySelector('#snapsStoreNotice'));
+    if (!noticeGone) console.log('PAGE ERROR: snaps store notice card still present');
 
     // ---- 3. network view (static + validation + apply) ----
     await page.click('.ucm-side a[data-view="network"]');

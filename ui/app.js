@@ -173,9 +173,13 @@ function exitApp() {
     $('#setupPassword').value = '';
     $('#setupConfirm').value = '';
     $('#loginPassword').value = '';
+    $('#resetCurrent').value = '';
+    $('#resetConfirm').value = '';
     setFieldState('setupPasswordGroup', '');
     setFieldState('setupConfirmGroup', '');
     setFieldState('loginPasswordGroup', '');
+    setFieldState('resetCurrentGroup', '');
+    setFieldState('resetConfirmGroup', '');
     showGate();
 }
 
@@ -1021,6 +1025,10 @@ async function doResetPassword() {
     try {
         const p = await core.auth.reset(cur);
         applyAuthPayload(p); // wipes the session -> gate falls back to #setupView
+        // Drop the view hash: the console re-enters on the DASHBOARD after a
+        // reset (the previous #settings fragment would otherwise route the
+        // fresh login straight back to the reset form).
+        history.replaceState(null, '', location.pathname);
     } catch (e) {
         const mismatch = /incorrect password/i.test(e.message);
         setFieldState('resetCurrentGroup', 'error', mismatch ? 'Incorrect current password.' : e.message);
