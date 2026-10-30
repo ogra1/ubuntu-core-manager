@@ -379,16 +379,17 @@ html, body {
 .ucm-modal__body .p-form__group { margin-bottom: 1rem; }
 .ucm-modal__body .p-button--brand { min-width: 8rem; }
 
-/* Clock glyph for the session-countdown pill. The bundled Vanilla icon set
-   ships NO clock (checked: anchor..youtube, no clock), so define one following
-   the bundle's own pattern: 16x16 fill data-URI SVG, background-size:contain.
-   Sizing via the bundle's .p-icon--medium token (1.25rem) on the element. */
+/* Session-countdown pill icon: the SURU clock (actions category) shipped from
+   build/images/suru-clock.svg (see that file's header for provenance/license).
+   Served 'self'-like the other bundled suru images — stays offline-complete.
+   The original's #808080 fill was too faint on the light chip, so the copy is
+   monochrome #000 like every other icon in the app. */
 .p-icon--clock{
     display: inline-block;
     background-repeat: no-repeat;
     background-size: contain;
     height: 1.5rem; width: 1.5rem;
-    background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M8 1.2A6.8 6.8 0 1 0 8 14.8 6.8 6.8 0 1 0 8 1.2zM8 2.4A5.6 5.6 0 1 1 8 13.6 5.6 5.6 0 1 1 8 2.4zM7.4 4.6H8.6V8.6H7.4zM8 7.4H10.8V8.6H8z'/%3E%3C/svg%3E");
+    background-image: url("../build/images/suru-clock.svg");
 }
 
 /* session countdown chip */
