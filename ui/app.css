@@ -124,6 +124,7 @@ html, body {
 .ucm-rail-user .ucm-name { color: #fff; }
 .ucm-rail-user .ucm-role { color: rgba(255,255,255,.6); font-size: .72rem; }
 .ucm-rail-user .p-button--base { margin-left: auto; }
+.ucm-rail-user .ucm-lockbtn { margin-bottom: 0; } /* bundle .p-button margin-bottom (18.88px) otherwise shifts the button ~9px above the user icon */
 
 /* main content pane */
 .ucm-main {
@@ -384,13 +385,15 @@ html, body {
    Served 'self'-like the other bundled suru images — stays offline-complete.
    The original's #808080 fill was too faint on the light chip, so the copy is
    monochrome #000 like every other icon in the app. */
-.p-icon--clock{
+.p-icon--lock{
     display: inline-block;
     background-repeat: no-repeat;
     background-size: contain;
-    height: 1.5rem; width: 1.5rem;
-    background-image: url("../build/images/suru-clock.svg");
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-lock.svg");
 }
+.p-icon--clock{
 
 /* session countdown chip */
 .ucm-session-chip {
