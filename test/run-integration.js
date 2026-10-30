@@ -48,8 +48,14 @@ function ok(name, cond, extra = '') {
     ok('accept instance "firefox.42"', m.validSnapName('firefox.42') === true);
     ok('valid channel "stable"', m.validChannel('stable') === true);
     ok('valid channel "latest/edge"', m.validChannel('latest/edge') === true);
+    ok('valid channel "21/stable" (versioned track, live-store node channel)', m.validChannel('21/stable') === true);
+    ok('valid channel "6/stable" (single-digit track)', m.validChannel('6/stable') === true);
+    ok('valid channel "18.04/candidate" (dotted track)', m.validChannel('18.04/candidate') === true);
+    ok('valid channel "25-foo/edge/my-hotfix-1234" (store branch: track/risk/branch)', m.validChannel('25-foo/edge/my-hotfix-1234') === true);
     ok('reject channel "stable;curl evil"', m.validChannel('stable;curl evil') === false);
     ok('reject channel "/etc/passwd"', m.validChannel('/etc/passwd') === false);
+    ok('reject channel "a/b/c/d" (>3 segments)', m.validChannel('a/b/c/d') === false);
+    ok('reject channel with newline', m.validChannel('latest/stable\n') === false);
 
     console.log('\n[2] YAML round-trip (netplan document)');
     const doc = m.fromYaml(state.netplanYaml);

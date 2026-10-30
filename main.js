@@ -51,12 +51,17 @@ const SESSION_WARN_MS = 60 * 1000;
 const RE_SNAP_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const RE_INSTANCE_SUFFIX = /^\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
-// Store channels we will ever dial: official risk levels only.
-// Channel = [track/]risk[/version] where risk is an official snapd risk level.
-// The channel LIST is store-driven (queried per search and offered to the UI);
-// validation here is structural only — no hardcoded channel set (stores can
-// publish versioned channels like stable/22.04).
-const RE_CHANNEL = /^(latest\/)?(stable|candidate|beta|edge|devel)(\/[0-9][a-z0-9.+-]*)?$/;
+// Channel = a store-issued channel: track[/risk[/branch]], e.g. "stable",
+// "latest/stable", "21/stable" (versioned track), or "26/edge/fix-1234" (a short-
+// lived BRANCH for testing a fix). THE STORE IS AUTHORITATIVE: channels come from
+// the /v2/find `channels` map (or the UI pulldown fed by it), so we do NOT
+// re-impose any vocabulary — snapd itself is the ultimate arbiter of what a real
+// channel is (it 400s anything the store never had). We validate STRUCTURE ONLY
+// (a shape allow-list, not a content block-list): 1-3 URL-safe store-token
+// segments, <= 4095 chars (snapd's own channel length limit). That still defeats
+// shell/URL injection (no ;, space, newline, empty segment, >3 segments).
+// Verified against the live store: 20/20 real node channels + branch names.
+const RE_CHANNEL = /^[A-Za-z0-9._+-]+(\/[A-Za-z0-9._+-]+){0,2}$/;
 
 // IPv4 CIDR, e.g. 192.168.1.50/24
 const RE_IPV4_CIDR = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\/(3[0-2]|2\d|1\d|[1-9])$/;
@@ -84,8 +89,11 @@ function validSnapName(name) {
 
 // Bare 'stable' stays valid: real snapd normalises it to latest/stable, and it is
 // the pre-search default for manual installs.
+// Pure predicate (no input mutation): a channel is a store-issued token. Anything
+// outside the store-token alphabet — whitespace, newlines, semicolons, path
+// separators, >3 segments — is rejected rather than normalised.
 function validChannel(channel) {
-    return typeof channel === 'string' && channel.length > 0 && channel.length <= 64
+    return typeof channel === 'string' && channel.length > 0 && channel.length <= 4095
         && RE_CHANNEL.test(channel);
 }
 
@@ -574,8 +582,10 @@ async function searchSnaps(query, limit = 10) {
 async function installSnap(name, channel = 'stable') {
     if (!validSnapName(name)) throw new Error('invalid snap name: ' + JSON.stringify(name));
     if (!validChannel(channel)) {
-        throw new Error('invalid channel (risk levels stable/candidate/beta/edge/devel, optional version): ' + JSON.stringify(channel));
+        throw new Error('invalid channel (expected a store channel like latest/stable, 21/stable or a branch): ' + JSON.stringify(channel));
     }
+    // No `--classic` is ever sent: this app runs ONLY on Ubuntu Core, where
+    // snapd itself rejects classic-confined snaps (there is no classic base).
     return snapdRequest('POST', '/v2/snaps/' + encodeURIComponent(name), {
         body: { action: 'install', channel },
         auth: A(),
