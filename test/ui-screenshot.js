@@ -162,7 +162,9 @@ function mockFactoryJs() {
                         warnings: [{ warn: 'refresh candidates available for 2 snaps', last: '2026-10-28T00:00:00Z' }],
                     };
                 },
-                async disk() { return { total: 4194304000000, used: 1288490188000, used_percent: 31 }; },
+                // (system.disk bridge removed — the old /v2/system-info/storage
+                //  endpoint does not exist on live snapd; storage comes from
+                //  statfs via system.dataDisk now)
                 async change(id) {
                     const c = CHANGES[id];
                     if (!c) throw new Error('unknown change ' + id);

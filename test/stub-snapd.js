@@ -164,10 +164,6 @@ function makeServer(socketPath, state) {
                     'STUBSIGNATUREBLOCK-NOT-PART-OF-HEADERS\n'
                 );
             }
-            if (p === '/v2/system-info/storage' && req.method === 'GET') {
-                return json(res, 200, { total: 4194304000, used: 1288490188, used_percent: 31 });
-            }
-
             // ---- warnings / changes ----------------------------------------
             if (p === '/v2/warnings' && req.method === 'GET') {
                 return json(res, 200, [{ warn: 'some warning', last: '2026-10-28T00:00:00Z' }]);

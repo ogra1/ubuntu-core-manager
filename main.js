@@ -551,10 +551,6 @@ async function getSystemInfo() {
     return snapdRequest('GET', '/v2/system-info', { auth: A() });
 }
 
-async function getDisk() {
-    return snapdRequest('GET', '/v2/system-info/storage', { auth: A() });
-}
-
 async function listChanges(select = 'all') {
     const s = ['in-progress', 'ready', 'all'].includes(select) ? select : 'all';
     return snapdRequest('GET', '/v2/changes?select=' + s, { auth: A() });
@@ -956,7 +952,7 @@ const api = {
 
     getSystemInfo, getModelAssertion, parseModelAssertion,
     getDataPartition, mountsTable,
-    getDisk, listChanges, getWarnings,
+    listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapConfig, getNetplan, listInterfaces,
 
@@ -1209,7 +1205,6 @@ function initElectron() {
     ipcMain.handle('sys:model', guard(() => getModelAssertion()));
     // Data partition usage (/run/mnt/data on core, / elsewhere). Read-only.
     ipcMain.handle('sys:data-disk', guard(getDataPartition));
-    ipcMain.handle('sys:disk', guard(() => getDisk()));
     ipcMain.handle('sys:changes', guard((select) => listChanges(select)));
     ipcMain.handle('sys:change', guard((id) => getChange(id)));
     ipcMain.handle('sys:netplan', guard(() => getNetplan()));
