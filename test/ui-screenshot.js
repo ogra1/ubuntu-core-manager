@@ -532,6 +532,14 @@ function mockFactoryJs() {
             legend: !!document.querySelector('.ucm-datadisk__legend'),
             swatch: getComputedStyle(document.querySelector('.ucm-datadisk__sw--used')).backgroundColor,
             reservedGone: !document.querySelector('#dataDiskRes'),
+            bodyGap: (() => {
+                const card = document.querySelector('.ucm-datadisk').closest('.p-card');
+                const sep = card.querySelector('.p-card__header').getBoundingClientRect().bottom;
+                const top = Math.min(
+                    card.querySelector('#dataDiskDonut').getBoundingClientRect().top,
+                    card.querySelector('.ucm-datadisk__row').getBoundingClientRect().top);
+                return Math.round(top - sep);
+            })(),
         };
     });
     if (dd.error) console.log('PAGE ERROR: ' + dd.error);
@@ -543,6 +551,7 @@ function mockFactoryJs() {
         if (dd.used !== '2.7 GiB') console.log('PAGE ERROR: data disk used (' + dd.used + ')');
         if (dd.free !== '5.3 GiB') console.log('PAGE ERROR: data disk free (' + dd.free + ')');
         if (dd.reservedGone !== true) console.log('PAGE ERROR: Reserved row still present');
+        if (dd.bodyGap < 8) console.log('PAGE ERROR: data disk body touches the header separator (gap ' + dd.bodyGap + 'px)');
         if (dd.src !== 'ext4') console.log('PAGE ERROR: data disk source label (' + dd.src + ')');
         if (!dd.legend) console.log('PAGE ERROR: donut legend missing');
         if (dd.swatch !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: used swatch not orange (' + dd.swatch + ')');

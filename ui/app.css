@@ -236,6 +236,10 @@ html, body {
     grid-template-columns: auto 1fr;
     gap: 1.2rem;
     align-items: center;
+    /* breathing room under the header separator: .p-card content starts
+       right at the line (sibling cards earn their spacing from .ucm-kv
+       row padding), so without this the donut/Total row touch it */
+    margin-top: .55rem;
 }
 .ucm-datadisk__donut {
     position: relative;
