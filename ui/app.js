@@ -55,12 +55,6 @@ const fmtUptime = (s) => {
     const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
     return (d ? `${d}d ` : '') + `${h}h ${m}m`;
 };
-const fmtDate = (iso) => {
-    if (!iso) return '—';
-    // 24h clock (hour12:false) — the kiosk is read by operators across time
-    // zones and AM/PM is noise in a monitoring table.
-    try { return new Date(iso).toLocaleString(undefined, { hour12: false }); } catch { return iso; }
-};
 // snapd timestamps (UTC ISO, e.g. refresh.last/next) -> local
 // 'dd.mm.yyyy hh:mm' (user preference). '—' on missing/invalid.
 const fmtDm = (iso) => {
@@ -506,7 +500,7 @@ function renderChanges() {
         body.append(el('tr', {},
             el('td', { text: c.kind || '—' }),
             el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
-            el('td', { class: 'ucm-muted', text: fmtDate(when) }),
+            el('td', { class: 'ucm-muted', text: fmtDm(when) }),
             el('td', { class: 'ucm-wrap ucm-muted', text }),
         ));
     });

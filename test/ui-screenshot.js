@@ -400,9 +400,11 @@ function mockFactoryJs() {
     const changes = await page.evaluate(() => {
         const trs = Array.from(document.querySelectorAll('#dashChangesBody tr'));
         if (!trs.length) return { error: 'no change rows' };
+        const ths = Array.from(document.querySelectorAll('#dashChangesTable th'));
         return {
             rows: trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim())),
             refreshBtn: !!document.querySelector('#dashChangesRefresh'),
+            colWidths: ths.map((th) => Math.round(th.getBoundingClientRect().width)),
         };
     });
     if (changes.error) console.log('PAGE ERROR: ' + changes.error);
@@ -414,16 +416,24 @@ function mockFactoryJs() {
         // sorted newest-first: 09:30, 09:00, 08:12 (the mock is 08:12, 09:30, 09:00)
         if (rows.length === 3 && rows[0][0] !== 'connect-plug')
             console.log('PAGE ERROR: changes not sorted newest-first (' + JSON.stringify(rows.map((r) => r[0])) + ')');
-        // spawned column: 24h clock (no AM/PM, zero-padded hh:mm) — fmtDate is
-        // locale-dependent, so assert the 24h MARKERS, not the exact string.
+        // spawned column: full 'dd.mm.yyyy hh:mm' stamp (same format as the
+        // Uptime refresh lines). Assert the SHAPE + the date piece; the
+        // time-of-day is TZ-dependent (mock is UTC, harness renders local).
         const spawned = rows[0] ? rows[0][2] : '';
-        if (!spawned || spawned === '—') console.log('PAGE ERROR: spawned column empty (' + spawned + ')');
-        if (/\bAM\b|\bPM\b/i.test(spawned)) console.log('PAGE ERROR: spawned date uses 12h clock (' + spawned + ')');
-        if (!/\d{2}:\d{2}/.test(spawned)) console.log('PAGE ERROR: spawned date not 24h-formatted (' + spawned + ')');
+        if (!/^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(spawned))
+            console.log('PAGE ERROR: spawned stamp not dd.mm.yyyy hh:mm (' + spawned + ')');
+        if (!/28\.10\.2026/.test(spawned))
+            console.log('PAGE ERROR: newest spawn date wrong (' + spawned + ')');
         if (rows[0] && rows[0][3] !== 'Connect firefox:network to core24:network')
             console.log('PAGE ERROR: summary column wrong (' + (rows[0] && rows[0][3]) + ')');
         // manual Refresh button removed — the 20 s auto-refresh supersedes it
         if (changes.refreshBtn !== false) console.log('PAGE ERROR: changes Refresh button still present');
+        // column widths: Change/Status/Spawned hug content, Summary owns the
+        // remainder (>= 2x the widest of the three narrow columns).
+        const cw = changes.colWidths || [];
+        if (cw.length !== 4) console.log('PAGE ERROR: changes table column count (' + JSON.stringify(cw) + ')');
+        else if (Math.max(cw[0], cw[1], cw[2]) >= cw[3] / 2)
+            console.log('PAGE ERROR: changes columns not content-hugging (widths ' + JSON.stringify(cw) + ')');
     }
 
     // System + Model cards (round 20): device identity moved from the System

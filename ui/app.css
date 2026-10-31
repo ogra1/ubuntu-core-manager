@@ -325,6 +325,19 @@ html, body {
     border-top: 1px solid #f0f0f0;
     padding-top: .45rem;
 }
+
+/* ---- Recent changes table: content-hugging narrow columns --------------
+   Change / Status / Spawned carry short, non-wrapping content; Summary is a
+   sentence. We want the first three to hug their content and Summary to take
+   the whole remainder. The Vanilla bundle forces 'table-layout: fixed' on
+   .p-table, which (a) ignores max-content -> equal columns, and (b) collapses
+   a 1% shrink-wrap to ~7px (clips). So we restore 'auto' AND use the classic
+   1% width hint on cols 1-3: under auto layout a nowrap 1% column grows to
+   fit its content, and the one width-less column (Summary) absorbs the rest.
+   Measured: [90, 66, 96, 426]. */
+#dashChangesTable { table-layout: auto; }
+#dashChangesTable th:nth-child(-n+3),
+#dashChangesTable td:nth-child(-n+3) { width: 1%; }
 @media (max-width: 900px) {
     .ucm-datadisk { grid-template-columns: 1fr; }
     .ucm-datadisk__donut { margin: 0 auto; }
