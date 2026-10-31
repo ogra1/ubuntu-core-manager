@@ -160,7 +160,14 @@ function mockFactoryJs() {
                             { name: 'eth0', rxBytes: 9961472000, txBytes: 1509949440 },
                             { name: 'enp3s0', rxBytes: 524288000, txBytes: 209715200 },
                         ],
-                        warnings: [{ warn: 'refresh candidates available for 2 snaps', last: '2026-10-28T00:00:00Z' }],
+                        // LIVE-verified warning shape { message, first-seen,
+                        // last-seen } (user demo data). The newest (by
+                        // last-seen) is the long 'apiVersion' message and it
+                        // is deliberately LAST in the array.
+                        warnings: [
+                            { message: 'Another system-level warning message here', 'first-seen': '2026-10-20T12:00:00Z', 'last-seen': '2026-10-21T14:30:00Z', 'delete-after': '1h30m' },
+                            { message: "Option value has invalid field name 'apiVersion'. For core26+ snaps, fields must be dash separated lowercase alphanumerics.", 'first-seen': '2026-10-05T16:00:44Z', 'last-seen': '2026-10-22T16:05:12Z' },
+                        ],
                     };
                 },
                 // (system.disk bridge removed — the old /v2/system-info/storage
@@ -494,9 +501,9 @@ function mockFactoryJs() {
         // 'dd.mm.yyyy hh:mm' (the mock uses fixed UTC stamps; the harness
         // runs in the container's local TZ, so assert shape + date pieces,
         // not the offset).
-        if (!/^last refresh \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeLast || ''))
+        if (!/^Last refresh \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeLast || ''))
             console.log('PAGE ERROR: uptime last-refresh line wrong (' + cards.uptimeLast + ')');
-        if (!/^next refresh \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeNext || ''))
+        if (!/^Next refresh \d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$/.test(cards.uptimeNext || ''))
             console.log('PAGE ERROR: uptime next-refresh line wrong (' + cards.uptimeNext + ')');
         if (!cards.uptimeLast || !cards.uptimeLast.includes('30.10.2026'))
             console.log('PAGE ERROR: refresh last-date not normalized (' + cards.uptimeLast + ')');
@@ -524,6 +531,7 @@ function mockFactoryJs() {
             src: txt('dataDiskSrc'),
             legend: !!document.querySelector('.ucm-datadisk__legend'),
             swatch: getComputedStyle(document.querySelector('.ucm-datadisk__sw--used')).backgroundColor,
+            reservedGone: !document.querySelector('#dataDiskRes'),
         };
     });
     if (dd.error) console.log('PAGE ERROR: ' + dd.error);
@@ -534,8 +542,8 @@ function mockFactoryJs() {
         if (dd.total !== '8.0 GiB') console.log('PAGE ERROR: data disk total (' + dd.total + ')');
         if (dd.used !== '2.7 GiB') console.log('PAGE ERROR: data disk used (' + dd.used + ')');
         if (dd.free !== '5.3 GiB') console.log('PAGE ERROR: data disk free (' + dd.free + ')');
-        if (dd.res !== '410 MiB') console.log('PAGE ERROR: data disk reserved (' + dd.res + ')');
-        if (!dd.src.includes('/run/mnt/data')) console.log('PAGE ERROR: data disk source label (' + dd.src + ')');
+        if (dd.reservedGone !== true) console.log('PAGE ERROR: Reserved row still present');
+        if (dd.src !== 'ext4') console.log('PAGE ERROR: data disk source label (' + dd.src + ')');
         if (!dd.legend) console.log('PAGE ERROR: donut legend missing');
         if (dd.swatch !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: used swatch not orange (' + dd.swatch + ')');
         if (dd.hole !== 'rgb(255, 255, 255)') console.log('PAGE ERROR: donut hole not white (' + dd.hole + ')');
@@ -569,6 +577,25 @@ function mockFactoryJs() {
     if (ng.downStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: net down line not orange (' + ng.downStroke + ')');
     if (ng.upStroke !== 'rgb(119, 119, 119)') console.log('PAGE ERROR: net up line not grey (' + ng.upStroke + ')');
     await page.screenshot({ path: path.join(SHOTS, '3e-net-graphs.png') });
+
+    // Warnings guard (round 30): the card shows only the LATEST warning
+    // (by last-seen, not array order), ellipsized to 60 chars + …, with the
+    // full message in the title attribute.
+    const LONG = "Option value has invalid field name 'apiVersion'. For core26+ snaps, fields must be dash separated lowercase alphanumerics.";
+    const warn = await page.evaluate((long) => {
+        const box = document.querySelector('#dashWarnings');
+        if (!box) return { error: 'warnings box missing' };
+        const p = box.querySelector('p');
+        return { text: p ? p.textContent : null, title: p ? p.title : null, longLen: long.length };
+    }, LONG);
+    if (warn.error) console.log('PAGE ERROR: ' + warn.error);
+    else {
+        const expected = LONG.slice(0, 60).trimEnd() + '…';
+        if (warn.text !== expected)
+            console.log('PAGE ERROR: warnings card text wrong (latest+ellipsis) (' + warn.text + ')');
+        if (warn.title !== LONG)
+            console.log('PAGE ERROR: warnings card missing full title (' + warn.title + ')');
+    }
 
     // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
     await page.click('.ucm-side a[data-view="settings"]');

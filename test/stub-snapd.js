@@ -166,7 +166,13 @@ function makeServer(socketPath, state) {
             }
             // ---- warnings / changes ----------------------------------------
             if (p === '/v2/warnings' && req.method === 'GET') {
-                return json(res, 200, [{ warn: 'some warning', last: '2026-10-28T00:00:00Z' }]);
+                // LIVE-VERIFIED shape: { message, first-seen, last-seen }
+                // (the old 'warn' key was invented — round-19 class bug).
+                return json(res, 200, [{
+                    message: 'Option value has invalid field name \'apiVersion\'. For core26+ snaps, fields must be dash separated lowercase alphanumerics.',
+                    'first-seen': '2026-10-05T16:00:44.806931498+02:00',
+                    'last-seen': '2026-10-05T16:05:12.124531234+02:00',
+                }]);
             }
             if (p === '/v2/changes' && req.method === 'GET') {
                 const sel = url.searchParams.get('select') || 'all';

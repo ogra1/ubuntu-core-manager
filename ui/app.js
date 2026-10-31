@@ -399,8 +399,8 @@ function renderDashboard() {
     // UTC ISO — rendered in LOCAL time, dd.mm.yyyy hh:mm). One labeled line
     // per stamp: two hint divs = forced line wrap between them.
     const rf = s.refresh || {};
-    $('#statUptimeLast').textContent = `last refresh ${fmtDm(rf.last)}`;
-    $('#statUptimeNext').textContent = `next refresh ${fmtDm(rf.next)}`;
+    $('#statUptimeLast').textContent = `Last refresh ${fmtDm(rf.last)}`;
+    $('#statUptimeNext').textContent = `Next refresh ${fmtDm(rf.next)}`;
 
     // System card: platform facts from /v2/system-info (real snapd field
     // names: hyphenated kernel-version, architecture, os-release{ id,
@@ -425,12 +425,21 @@ function renderDashboard() {
     $('#netIfaceSrc').textContent = act.length ? act.join(' + ') : 'all interfaces';
     if (state.netSeries) renderNetGraph();
 
+    // Warnings: the card is small — show only the LATEST warning
+    // (max 'last-seen' when present) and ellipsize long messages so the
+    // card keeps its shape; full text in the title attr.
     const w = $('#dashWarnings');
     w.innerHTML = '';
-    if (!state.warnings.length) w.append(el('p', { class: 'ucm-muted', text: 'No active warnings.' }));
-    else state.warnings.forEach((x) => {
-        w.append(el('p', { class: 'p-status-label p-status-label--caution', text: x.message || x.warn || JSON.stringify(x) }));
-    });
+    const warns = state.warnings || [];
+    if (!warns.length) {
+        w.append(el('p', { class: 'ucm-muted', text: 'No active warnings.' }));
+    } else {
+        const latest = [...warns].sort((x, y) =>
+            String(y['last-seen'] || '').localeCompare(String(x['last-seen'] || '')))[0];
+        const msg = latest.message || latest.warn || JSON.stringify(latest);
+        const shown = msg.length > 60 ? msg.slice(0, 60).trimEnd() + '…' : msg;
+        w.append(el('p', { class: 'p-status-label p-status-label--caution', text: shown, title: msg }));
+    }
 }
 
 /** Data partition: /run/mnt/data on Ubuntu Core (the writable
@@ -442,7 +451,7 @@ function renderDataDisk() {
     const set = (id, v) => { const e = $('#' + id); if (e) e.textContent = v; };
     if (!d) {
         set('dataDiskPct', '—'); set('dataDiskTotal', '—');
-        set('dataDiskUsed', '—'); set('dataDiskFree', '—'); set('dataDiskRes', '—');
+        set('dataDiskUsed', '—'); set('dataDiskFree', '—');
         const src = $('#dataDiskSrc');
         if (src) src.textContent = '';
         const donut = $('#dataDiskDonut');
@@ -453,9 +462,8 @@ function renderDataDisk() {
     set('dataDiskTotal', fmtBytes(d.totalBytes));
     set('dataDiskUsed', fmtBytes(d.usedBytes));
     set('dataDiskFree', fmtBytes(d.freeBytes));
-    set('dataDiskRes', d.reservedBytes ? fmtBytes(d.reservedBytes) : '—');
     const src = $('#dataDiskSrc');
-    if (src) src.textContent = `${d.mount} · ${d.fsType || ''}${d.source === 'root' ? ' (fallback — no /run/mnt/data mount)' : ''}`;
+    if (src) src.textContent = d.fsType || '—';
     const donut = $('#dataDiskDonut');
     if (donut) {
         const p = Math.min(100, Math.max(0, d.usedPercent));
