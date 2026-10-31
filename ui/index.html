@@ -260,7 +260,35 @@
                     </div>
                     <div class="p-card" style="margin-top:1.2rem;">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Network activity</p></div>
-                        <dl class="ucm-kv" id="dashNetdev"><span class="ucm-skel" style="width:70%"></span></dl>
+                        <div class="ucm-netgraph">
+                            <div class="ucm-netgraph__row">
+                                <span class="ucm-netgraph__label">↓ in</span>
+                                <svg class="ucm-netgraph__svg" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+                                    <g class="ucm-cpu__grid">
+                                        <line x1="0" y1="15" x2="100" y2="15"></line>
+                                        <line x1="0" y1="0" x2="100" y2="0"></line>
+                                        <line x1="0" y1="30" x2="100" y2="30"></line>
+                                    </g>
+                                    <path id="netDownArea" class="ucm-netgraph__area ucm-netgraph__area--down"></path>
+                                    <path id="netDownLine" class="ucm-netgraph__line ucm-netgraph__line--down"></path>
+                                </svg>
+                                <span class="ucm-netgraph__now" id="netDownNow">—</span>
+                            </div>
+                            <div class="ucm-netgraph__row">
+                                <span class="ucm-netgraph__label">↑ out</span>
+                                <svg class="ucm-netgraph__svg" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+                                    <g class="ucm-cpu__grid">
+                                        <line x1="0" y1="15" x2="100" y2="15"></line>
+                                        <line x1="0" y1="0" x2="100" y2="0"></line>
+                                        <line x1="0" y1="30" x2="100" y2="30"></line>
+                                    </g>
+                                    <path id="netUpArea" class="ucm-netgraph__area ucm-netgraph__area--up"></path>
+                                    <path id="netUpLine" class="ucm-netgraph__line ucm-netgraph__line--up"></path>
+                                </svg>
+                                <span class="ucm-netgraph__now" id="netUpNow">—</span>
+                            </div>
+                            <div class="ucm-netgraph__src" id="netIfaceSrc"></div>
+                        </div>
                     </div>
                 </div>
             </div>

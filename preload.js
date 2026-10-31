@@ -102,6 +102,7 @@ const api = Object.freeze({
         model: invoke('sys:model'),             // model assertion headers { model, base, grade, 'brand-id', ... }
         dataDisk: invoke('sys:data-disk'),      // /run/mnt/data usage { mount, device, fsType, total/free/used/reservedBytes, usedPercent, source }
         cpu: invoke('sys:cpu'),                 // => number|null[] (oldest->newest, 0..100; null = pre-boot sample)
+        net: invoke('sys:net'),                 // => {r,x}|null[] oldest->newest, KiB/s (in=down r, out=up x)
         changes: invoke('sys:changes'),         // (select?) => change list
         change: invoke('sys:change'),           // (id) => one change (status poll for write ops)
         netplan: invoke('sys:netplan'),         // active netplan doc (parsed)

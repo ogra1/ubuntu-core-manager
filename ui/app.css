@@ -289,6 +289,42 @@ html, body {
 .ucm-datadisk__sw--used { background: var(--ucm-orange); }
 .ucm-datadisk__sw--free { background: #e9e9e9; }
 .ucm-datadisk-src { font-size: .8rem; }
+
+/* ---- Network activity card (in/out rate sparklines) ------------------- */
+.ucm-netgraph { display: flex; flex-direction: column; gap: .55rem; }
+.ucm-netgraph__row {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+}
+.ucm-netgraph__label {
+    flex: 0 0 auto;
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: #777;
+    width: 2.6rem;
+}
+.ucm-netgraph__svg { display: block; flex: 1 1 auto; height: 2rem; overflow: visible; }
+.ucm-netgraph__now {
+    flex: 0 0 auto;
+    font-size: .8rem;
+    color: var(--ucm-grey-dark);
+    min-width: 4.2rem;
+    text-align: right;
+}
+.ucm-netgraph__line { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.ucm-netgraph__line--down { stroke: var(--ucm-orange); }
+.ucm-netgraph__line--up { stroke: #777; }
+.ucm-netgraph__area { stroke: none; }
+.ucm-netgraph__area--down { fill: rgba(233, 84, 32, .10); }
+.ucm-netgraph__area--up { fill: rgba(0, 0, 0, .06); }
+.ucm-netgraph__src {
+    font-size: .72rem;
+    color: #999;
+    border-top: 1px solid #f0f0f0;
+    padding-top: .45rem;
+}
 @media (max-width: 900px) {
     .ucm-datadisk { grid-template-columns: 1fr; }
     .ucm-datadisk__donut { margin: 0 auto; }

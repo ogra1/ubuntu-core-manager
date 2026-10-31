@@ -934,6 +934,41 @@ function readProcNetDev() {
     } catch { return null; }
 }
 
+/* /proc/net/dev cumulative byte counters -> per-interval RATES (KiB/s)
+ * for the dashboard sparklines. Same sampler pattern as
+ * readCpuUtilization(): the main process is the only sampler, deltas are
+ * computed here (the renderer never sees raw counters or timestamps),
+ * and the ring buffer holds CPU_SAMPLES.. NET_SAMPLES pairs oldest->newest.
+ * 'lo' is excluded — loopback traffic is not network activity.
+ * First sample after boot/baseline has no interval yet -> r/x null.
+ */
+const NET_SAMPLES = 100;    // 2 s cadence => 3 min window (matches the CPU graph)
+let netPrev = null;         // { rx, tx, t }
+
+function readNetTraffic() {
+    let rx = 0, tx = 0;
+    for (const d of readProcNetDev() || []) {
+        if (d.name === 'lo') continue;
+        rx += d.rxBytes;
+        tx += d.txBytes;
+    }
+    const t = Date.now();
+    let r = null, x = null;
+    if (netPrev) {
+        const dt = (t - netPrev.t) / 1000;
+        if (dt > 0) {
+            // negative deltas can only mean a counter reset (new iface) — clamp
+            r = Math.max(0, (rx - netPrev.rx) / dt / 1024);
+            x = Math.max(0, (tx - netPrev.tx) / dt / 1024);
+            r = Math.round(r * 10) / 10;
+            x = Math.round(x * 10) / 10;
+        }
+    }
+    netPrev = { rx, tx, t };
+    readNetTraffic.buf = (readNetTraffic.buf || []).concat({ r, x }).slice(-NET_SAMPLES);
+    return readNetTraffic.buf.slice();
+}
+
 /* ------------------------------------------------------------------ *
  * 10. Public API (Electron entry AND headless test harness use this)
  * ------------------------------------------------------------------ */
@@ -943,7 +978,7 @@ const api = {
     SESSION_TIMEOUT_MS,
     validSnapName, validChannel,
     toYaml, fromYaml, buildNetplanIface,
-    readHostStats, readProcNetDev, readCpuUtilization,
+    readHostStats, readProcNetDev, readCpuUtilization, readNetTraffic,
 
     // local admin gate (the UI lock screen; offline)
     createLocalPassword, loginLocal, logoutLocal, resetLocalPassword, authStatus, detectInitialized,
@@ -1202,6 +1237,8 @@ function initElectron() {
     // CPU utilization history (sparkline). Read-only /proc sampling, so it
     // is open to the local gate like the other diagnostics — no write path.
     ipcMain.handle('sys:cpu', guard(() => readCpuUtilization()));
+    // Net traffic rates (sparklines). Same read-only /proc class as sys:cpu.
+    ipcMain.handle('sys:net', guard(() => readNetTraffic()));
     ipcMain.handle('sys:model', guard(() => getModelAssertion()));
     // Data partition usage (/run/mnt/data on core, / elsewhere). Read-only.
     ipcMain.handle('sys:data-disk', guard(getDataPartition));

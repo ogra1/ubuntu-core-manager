@@ -241,6 +241,17 @@ function ok(name, cond, extra = '') {
     ok('mounts table parsed (has a / row)',
         Array.isArray(mt) && mt.every((r) => r.length >= 3) && mt.some((r) => r[1] === '/'),
         JSON.stringify(mt[0]));
+    // net traffic sampler: /proc/net/dev cumulative -> rate ring buffer
+    const n1 = m.readNetTraffic();
+    ok('net series: first sample is a null baseline pair',
+        Array.isArray(n1) && n1.length === 1 && n1[0].r == null && n1[0].x == null,
+        JSON.stringify(n1));
+    await new Promise((r) => setTimeout(r, 60));
+    const n2 = m.readNetTraffic();
+    ok('net series: second sample has numeric rates >= 0',
+        n2.length === 2 && typeof n2[1].r === 'number' && typeof n2[1].x === 'number'
+        && n2[1].r >= 0 && n2[1].x >= 0,
+        JSON.stringify(n2));
     const nd = m.readProcNetDev();
     ok('proc netdev parsed', Array.isArray(nd) && nd.some((d) => d.name === 'lo'), JSON.stringify(nd && nd[0]));
 

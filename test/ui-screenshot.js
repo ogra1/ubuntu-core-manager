@@ -94,6 +94,7 @@ function mockFactoryJs() {
         let localSet = false;
         let localAuthed = false;
         let cpuCalls = 0;
+        let netCalls = 0;
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
@@ -165,6 +166,17 @@ function mockFactoryJs() {
                 // (system.disk bridge removed — the old /v2/system-info/storage
                 //  endpoint does not exist on live snapd; storage comes from
                 //  statfs via system.dataDisk now)
+                // net traffic mock: one {r,x} pair per call (main samples on
+                // its own 2 s clock); idle 0 until call 4, then a sine wave
+                // so both sparklines draw a recognizable shape in the shot.
+                async net() {
+                    netCalls++;
+                    const n = Math.min(100, netCalls);
+                    return Array.from({ length: n }, (_, i) => i < 4
+                        ? (i === 0 ? { r: null, x: null } : { r: 0, x: 0 })
+                        : { r: Math.round((60 + 40 * Math.sin((i - 3) / 2)) * 10) / 10,
+                           x: Math.round((12 + 8 * Math.cos((i - 3) / 2)) * 10) / 10 });
+                },
                 async change(id) {
                     const c = CHANGES[id];
                     if (!c) throw new Error('unknown change ' + id);
@@ -485,6 +497,34 @@ function mockFactoryJs() {
         if (dd.hole !== 'rgb(255, 255, 255)') console.log('PAGE ERROR: donut hole not white (' + dd.hole + ')');
     }
     await page.screenshot({ path: path.join(SHOTS, '3d-data-disk.png') });
+
+    // Net graphs guard (round 25): both sparklines drawn (multi-point paths,
+    // closed areas), current rates rendered, active-iface label set.
+    const ng = await page.evaluate(() => {
+        const ld = document.querySelector('#netDownLine');
+        const la = document.querySelector('#netDownArea');
+        const lu = document.querySelector('#netUpLine');
+        const ua = document.querySelector('#netUpArea');
+        const t = (id) => { const e = document.querySelector('#' + id); return e ? e.textContent : ''; };
+        const shape = (p) => { const d = p && p.getAttribute ? p.getAttribute('d') : ''; return d.startsWith('M') && /L/.test(d) ? 'multi' : 'bad:' + (d || 'empty').slice(0, 20); };
+        return {
+            downLine: shape(ld), downArea: la ? (la.getAttribute('d') || '').endsWith('Z') : false,
+            upLine: shape(lu), upArea: ua ? (ua.getAttribute('d') || '').endsWith('Z') : false,
+            downNow: t('netDownNow'), upNow: t('netUpNow'), src: t('netIfaceSrc'),
+            downStroke: ld ? getComputedStyle(ld).stroke : '',
+            upStroke: lu ? getComputedStyle(lu).stroke : '',
+        };
+    });
+    if (ng.downLine !== 'multi') console.log('PAGE ERROR: net down line not drawn (' + ng.downLine + ')');
+    if (ng.downArea !== true) console.log('PAGE ERROR: net down area not closed');
+    if (ng.upLine !== 'multi') console.log('PAGE ERROR: net up line not drawn (' + ng.upLine + ')');
+    if (ng.upArea !== true) console.log('PAGE ERROR: net up area not closed');
+    if (!/KiB\/s|MiB\/s$/.test(ng.downNow)) console.log('PAGE ERROR: net down rate missing (' + ng.downNow + ')');
+    if (!/KiB\/s|MiB\/s$/.test(ng.upNow)) console.log('PAGE ERROR: net up rate missing (' + ng.upNow + ')');
+    if (ng.src !== 'eth0 + enp3s0') console.log('PAGE ERROR: net iface label wrong (' + ng.src + ')');
+    if (ng.downStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: net down line not orange (' + ng.downStroke + ')');
+    if (ng.upStroke !== 'rgb(119, 119, 119)') console.log('PAGE ERROR: net up line not grey (' + ng.upStroke + ')');
+    await page.screenshot({ path: path.join(SHOTS, '3e-net-graphs.png') });
 
     // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
     await page.click('.ucm-side a[data-view="settings"]');

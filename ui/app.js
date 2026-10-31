@@ -128,6 +128,8 @@ const state = {
     warnings: [],
     netdev: null,
     dataDisk: null,    // /run/mnt/data usage (statfs) — main.js
+    netSeries: null,   // {r,x}[] rates in KiB/s (main.js sampler)
+    netPoll: null,
     snaps: [],
     connections: [],
     ifacesPendingOnly: true,
@@ -164,7 +166,7 @@ function switchView(name) {
     history.replaceState(null, '', '#' + name);
 
     ({
-        dashboard: () => { loadDashboard(); sampleCpu(); },
+        dashboard: () => { loadDashboard(); sampleCpu(); sampleNet(); },
         network: loadNetwork,
         snaps: loadSnaps,
         interfaces: loadInterfaces,
@@ -177,6 +179,7 @@ function enterApp() {
     startSessionTick();
     startDashPoll();
     startCpuPoll();
+    startNetPoll();
     const fromHash = (location.hash || '').replace('#', '');
     switchView(VIEWS.includes(fromHash) ? fromHash : 'dashboard');
 }
@@ -185,6 +188,7 @@ function exitApp() {
     stopSessionTick();
     stopDashPoll();
     stopCpuPoll();
+    stopNetPoll();
     $('#setupPassword').value = '';
     $('#setupConfirm').value = '';
     $('#loginPassword').value = '';
@@ -410,9 +414,12 @@ function renderDashboard() {
 
     renderDataDisk();
 
-    renderKV('#dashNetdev', (state.netdev || []).filter((d) => d.name !== 'lo').map((d) => [
-        d.name, `${fmtBytes(d.rxBytes)} ↓ · ${fmtBytes(d.txBytes)} ↑`,
-    ]));
+    // Network activity card: the per-interface cumulative counters
+    // (state.netdev) now feed the active-interface label; the graphs are
+    // driven by the 2 s rate sampler (state.netSeries).
+    const act = (state.netdev || []).filter((d) => d.name !== 'lo').map((d) => d.name);
+    $('#netIfaceSrc').textContent = act.length ? act.join(' + ') : 'all interfaces';
+    if (state.netSeries) renderNetGraph();
 
     const w = $('#dashWarnings');
     w.innerHTML = '';
@@ -522,6 +529,54 @@ async function sampleCpu() {
         state.cpuSeries = await core.system.cpu();
         renderCpuChart();
     } catch { /* non-fatal: next tick retries */ }
+}
+
+function startNetPoll() {
+    stopNetPoll();
+    state.netPoll = setInterval(() => {
+        if (state.view === 'dashboard' && state.authenticated) sampleNet();
+    }, 2000);
+}
+function stopNetPoll() {
+    if (state.netPoll) { clearInterval(state.netPoll); state.netPoll = null; }
+}
+async function sampleNet() {
+    try {
+        state.netSeries = await core.system.net();
+        renderNetGraph();
+    } catch { /* non-fatal: next tick retries */ }
+}
+
+/* Net in/out sparklines (KiB/s rates from the main-process sampler).
+ * Auto-scaled per graph to the window peak (floor 1 KiB/s so an idle
+ * line stays flat at the baseline instead of jittering at 0.01%). */
+function renderNetSpark(lineSel, areaSel, nowSel, key) {
+    const series = state.netSeries;
+    const line = $(lineSel), area = $(areaSel);
+    if (!line || !area || !Array.isArray(series) || !series.length) return;
+    const n = series.length, W = 100, H = 30;
+    const vals = series.map((p) => (p && p[key] != null ? p[key] : null));
+    const known = vals.filter((v) => v != null);
+    const mx = Math.max(1, ...known);
+    let d = '';
+    for (let i = 0; i < n; i++) {
+        const v = vals[i];
+        if (v == null) continue;
+        const x = (i / (n - 1 || 1)) * W;
+        const y = H - (v / mx) * H;
+        d += (d ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+    }
+    if (!d) return;
+    line.setAttribute('d', d);
+    area.setAttribute('d', d + 'L' + W + ' ' + H + 'L0 ' + H + 'Z');
+    const last = [...vals].reverse().find((v) => v != null);
+    $(nowSel).textContent = last != null ? fmtRate(last) : '—';
+}
+const fmtRate = (kib) =>
+    kib >= 1024 ? (kib / 1024).toFixed(1) + ' MiB/s' : kib.toFixed(1) + ' KiB/s';
+function renderNetGraph() {
+    renderNetSpark('#netDownLine', '#netDownArea', '#netDownNow', 'r');
+    renderNetSpark('#netUpLine', '#netUpArea', '#netUpNow', 'x');
 }
 
 function renderCpuChart() {
