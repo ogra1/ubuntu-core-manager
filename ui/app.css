@@ -294,6 +294,12 @@ html, body {
 .ucm-datadisk__sw--free { background: #e9e9e9; }
 .ucm-datadisk-src { font-size: .8rem; }
 
+/* Data partition header: Vanilla's .p-heading--5 carries padding-top
+   6.56px (stacked-heading typography). In the caption row that pushes the
+   title's glyphs ~4px below the fs-type span, so zero it here — the flex
+   row then centres both on identical 24px line boxes. */
+.ucm-card-datadisk .p-heading--5 { padding-top: 0; }
+
 /* ---- Network activity card (in/out rate sparklines) ------------------- */
 .ucm-netgraph { display: flex; flex-direction: column; gap: .55rem; }
 .ucm-netgraph__row {

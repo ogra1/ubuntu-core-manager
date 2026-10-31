@@ -532,6 +532,17 @@ function mockFactoryJs() {
             legend: !!document.querySelector('.ucm-datadisk__legend'),
             swatch: getComputedStyle(document.querySelector('.ucm-datadisk__sw--used')).backgroundColor,
             reservedGone: !document.querySelector('#dataDiskRes'),
+            // header alignment: heading and fs-type caption must share the
+            // same vertical centre (Vanilla heading padding-top is zeroed in
+            // .ucm-card-datadisk — without it the glyphs are ~4px off).
+            headerAlign: (() => {
+                const card = document.querySelector('.ucm-card-datadisk');
+                if (!card) return null;
+                const p = card.querySelector('.p-heading--5').getBoundingClientRect();
+                const sp = document.querySelector('#dataDiskSrc').getBoundingClientRect();
+                return Math.round((p.top + p.height / 2 - (sp.top + sp.height / 2)) * 10) / 10;
+            })(),
+            ddKeys: [...document.querySelectorAll('.ucm-card-datadisk .ucm-datadisk__k')].map((k) => k.textContent),
             bodyGap: (() => {
                 const card = document.querySelector('.ucm-datadisk').closest('.p-card');
                 const sep = card.querySelector('.p-card__header').getBoundingClientRect().bottom;
@@ -553,6 +564,11 @@ function mockFactoryJs() {
         if (dd.reservedGone !== true) console.log('PAGE ERROR: Reserved row still present');
         if (dd.bodyGap < 8) console.log('PAGE ERROR: data disk body touches the header separator (gap ' + dd.bodyGap + 'px)');
         if (dd.src !== 'ext4') console.log('PAGE ERROR: data disk source label (' + dd.src + ')');
+        if (dd.headerAlign == null) console.log('PAGE ERROR: data disk header alignment not measurable');
+        else if (Math.abs(dd.headerAlign) > 2)
+            console.log('PAGE ERROR: data disk header not vertically centred (delta ' + dd.headerAlign + 'px)');
+        if (!dd.ddKeys || !dd.ddKeys.includes('Free') || dd.ddKeys.includes('Free (user)'))
+            console.log('PAGE ERROR: Free row label wrong (' + JSON.stringify(dd.ddKeys) + ')');
         if (!dd.legend) console.log('PAGE ERROR: donut legend missing');
         if (dd.swatch !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: used swatch not orange (' + dd.swatch + ')');
         if (dd.hole !== 'rgb(255, 255, 255)') console.log('PAGE ERROR: donut hole not white (' + dd.hole + ')');
