@@ -257,16 +257,28 @@ function ok(name, cond, extra = '') {
         Array.isArray(mt) && mt.every((r) => r.length >= 3) && mt.some((r) => r[1] === '/'),
         JSON.stringify(mt[0]));
     // net traffic sampler: /proc/net/dev cumulative -> rate ring buffer
+    // default-route parser: picks the Dest-00000000 interface (this box has
+    // one, so it must resolve to a real non-lo device)
+    const def = m.defaultRouteIface();
+    ok('default route iface resolved from /proc/net/route',
+        typeof def === 'string' && def.length > 0 && def !== 'lo', String(def));
+
+    // net sampler returns { iface, series }; iface must be the default-route
+    // device (or a non-lo fallback when there is no route).
     const n1 = m.readNetTraffic();
-    ok('net series: first sample is a null baseline pair',
-        Array.isArray(n1) && n1.length === 1 && n1[0].r == null && n1[0].x == null,
-        JSON.stringify(n1));
+    ok('net sample: shape {iface, series} + null baseline first pair',
+        n1 && Array.isArray(n1.series) && n1.series.length === 1
+        && n1.series[0].r == null && n1.series[0].x == null
+        && (n1.iface == null || (typeof n1.iface === 'string' && n1.iface !== 'lo')),
+        JSON.stringify(n1).slice(0, 120));
+    if (def) ok('net sample: counted iface IS the default-route device', n1.iface === def, n1.iface + ' vs ' + def);
     await new Promise((r) => setTimeout(r, 60));
     const n2 = m.readNetTraffic();
     ok('net series: second sample has numeric rates >= 0',
-        n2.length === 2 && typeof n2[1].r === 'number' && typeof n2[1].x === 'number'
-        && n2[1].r >= 0 && n2[1].x >= 0,
-        JSON.stringify(n2));
+        n2.series.length === 2 && typeof n2.series[1].r === 'number' && typeof n2.series[1].x === 'number'
+        && n2.series[1].r >= 0 && n2.series[1].x >= 0,
+        JSON.stringify(n2).slice(0, 120));
+
     const nd = m.readProcNetDev();
     ok('proc netdev parsed', Array.isArray(nd) && nd.some((d) => d.name === 'lo'), JSON.stringify(nd && nd[0]));
 

@@ -934,24 +934,45 @@ function readProcNetDev() {
     } catch { return null; }
 }
 
+/** The interface that carries the default route (Destination
+ * 00000000 in /proc/net/route). The network graphs show THIS device's
+ * traffic only — on a multi-NIC machine aggregating every card would be
+ * misleading. null when no default route exists (e.g. booted with no
+ * connectivity yet). */
+function defaultRouteIface() {
+    try {
+        const rows = String(fs.readFileSync('/proc/net/route', 'utf8'))
+            .split('\n').slice(1).map((l) => l.trim().split(/\s+/))
+            .filter((f) => f.length >= 9);
+        for (const f of rows) if (f[1] === '00000000') return f[0];
+    } catch { /* route table unreadable */ }
+    return null;
+}
+
 /* /proc/net/dev cumulative byte counters -> per-interval RATES (KiB/s)
  * for the dashboard sparklines. Same sampler pattern as
  * readCpuUtilization(): the main process is the only sampler, deltas are
  * computed here (the renderer never sees raw counters or timestamps),
- * and the ring buffer holds CPU_SAMPLES.. NET_SAMPLES pairs oldest->newest.
- * 'lo' is excluded — loopback traffic is not network activity.
+ * and the ring buffer holds NET_SAMPLES pairs oldest->newest.
+ * Counted device: the DEFAULT-ROUTE interface only (loopback is never
+ * counted). When no default route exists yet, all non-lo interfaces are
+ * summed as a fallback so the graphs still show something.
+ * Returns { iface, series }: iface names the device the series is for (the
+ * renderer displays it — so the label always matches the data, even on a
+ * multi-NIC host where /proc/net/dev order != default route).
  * First sample after boot/baseline has no interval yet -> r/x null.
  */
 const NET_SAMPLES = 100;    // 2 s cadence => 3 min window (matches the CPU graph)
 let netPrev = null;         // { rx, tx, t }
 
 function readNetTraffic() {
+    const ifaces = readProcNetDev() || [];
+    const def = defaultRouteIface();
+    const counted = def
+        ? ifaces.filter((d) => d.name === def)
+        : ifaces.filter((d) => d.name !== 'lo');
     let rx = 0, tx = 0;
-    for (const d of readProcNetDev() || []) {
-        if (d.name === 'lo') continue;
-        rx += d.rxBytes;
-        tx += d.txBytes;
-    }
+    for (const d of counted) { rx += d.rxBytes; tx += d.txBytes; }
     const t = Date.now();
     let r = null, x = null;
     if (netPrev) {
@@ -966,8 +987,9 @@ function readNetTraffic() {
     }
     netPrev = { rx, tx, t };
     readNetTraffic.buf = (readNetTraffic.buf || []).concat({ r, x }).slice(-NET_SAMPLES);
-    return readNetTraffic.buf.slice();
+    return { iface: counted.length ? counted[0].name : null, series: readNetTraffic.buf.slice() };
 }
+
 
 /* ------------------------------------------------------------------ *
  * 10. Public API (Electron entry AND headless test harness use this)
@@ -986,7 +1008,7 @@ const api = {
     storeLogin, storeLogout,
 
     getSystemInfo, getModelAssertion, parseModelAssertion,
-    getDataPartition, mountsTable,
+    getDataPartition, mountsTable, defaultRouteIface,
     listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapConfig, getNetplan, listInterfaces,

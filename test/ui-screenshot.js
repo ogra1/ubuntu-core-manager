@@ -173,17 +173,20 @@ function mockFactoryJs() {
                 // (system.disk bridge removed — the old /v2/system-info/storage
                 //  endpoint does not exist on live snapd; storage comes from
                 //  statfs via system.dataDisk now)
-                // net traffic mock: one {r,x} pair per call (main samples on
-                // its own 2 s clock); idle 0 until call 4, then a sine wave
-                // so both sparklines draw a recognizable shape in the shot.
+                // net traffic mock: { iface, series } — one {r,x} pair per call
+                // (main samples on its own 2 s clock); idle 0 until call 4, then
+                // a sine wave so both sparklines draw a recognizable shape.
+                // iface = the default-route device (eth0 in the mock world).
                 async net() {
                     netCalls++;
                     const n = Math.min(100, netCalls);
-                    return Array.from({ length: n }, (_, i) => i < 4
+                    const series = Array.from({ length: n }, (_, i) => i < 4
                         ? (i === 0 ? { r: null, x: null } : { r: 0, x: 0 })
                         : { r: Math.round((60 + 40 * Math.sin((i - 3) / 2)) * 10) / 10,
                            x: Math.round((12 + 8 * Math.cos((i - 3) / 2)) * 10) / 10 });
+                    return { iface: 'eth0', series };
                 },
+
                 async change(id) {
                     const c = CHANGES[id];
                     if (!c) throw new Error('unknown change ' + id);
@@ -598,7 +601,8 @@ function mockFactoryJs() {
     if (ng.upArea !== true) console.log('PAGE ERROR: net up area not closed');
     if (!/KiB\/s|MiB\/s$/.test(ng.downNow)) console.log('PAGE ERROR: net down rate missing (' + ng.downNow + ')');
     if (!/KiB\/s|MiB\/s$/.test(ng.upNow)) console.log('PAGE ERROR: net up rate missing (' + ng.upNow + ')');
-    if (ng.src !== 'eth0 + enp3s0') console.log('PAGE ERROR: net iface label wrong (' + ng.src + ')');
+    // label = the default-route device only (the mock reports eth0)
+    if (ng.src !== 'eth0') console.log('PAGE ERROR: net iface label wrong (' + ng.src + ')');
     if (ng.downStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: net down line not orange (' + ng.downStroke + ')');
     if (ng.upStroke !== 'rgb(119, 119, 119)') console.log('PAGE ERROR: net up line not grey (' + ng.upStroke + ')');
     await page.screenshot({ path: path.join(SHOTS, '3e-net-graphs.png') });

@@ -125,6 +125,7 @@ const state = {
     netdev: null,
     dataDisk: null,    // /run/mnt/data usage (statfs) — main.js
     netSeries: null,   // {r,x}[] rates in KiB/s (main.js sampler)
+    netIface: null,    // device the net series is counted on (default-route iface)
     netPoll: null,
     snaps: [],
     connections: [],
@@ -418,12 +419,10 @@ function renderDashboard() {
 
     renderDataDisk();
 
-    // Network activity card: the per-interface cumulative counters
-    // (state.netdev) now feed the active-interface label; the graphs are
-    // driven by the 2 s rate sampler (state.netSeries).
-    const act = (state.netdev || []).filter((d) => d.name !== 'lo').map((d) => d.name);
-    $('#netIfaceSrc').textContent = act.length ? act.join(' + ') : 'all interfaces';
-    if (state.netSeries) renderNetGraph();
+    // Network activity card: the graphs count the DEFAULT-ROUTE interface
+    // (main.js readNetTraffic); the label is set by renderNetIface() from the
+    // sampler's own iface so it always matches the graphed device.
+    if (state.netSeries) { renderNetGraph(); renderNetIface(); }
 
     // Warnings: the card is small — show only the LATEST warning
     // (max 'last-seen' when present) and ellipsize long messages so the
@@ -564,10 +563,19 @@ function stopNetPoll() {
 }
 async function sampleNet() {
     try {
-        state.netSeries = await core.system.net();
+        const res = await core.system.net();
+        state.netSeries = res.series;
+        state.netIface = res.iface;
         renderNetGraph();
+        renderNetIface();
     } catch { /* non-fatal: next tick retries */ }
 }
+function renderNetIface() {
+    // the sampler names the device it counted (default-route iface) — show
+    // exactly that, so the label always matches the graphed data.
+    $('#netIfaceSrc').textContent = state.netIface || 'no default route';
+}
+
 
 /* Net in/out sparklines (KiB/s rates from the main-process sampler).
  * Auto-scaled per graph to the window peak (floor 1 KiB/s so an idle
