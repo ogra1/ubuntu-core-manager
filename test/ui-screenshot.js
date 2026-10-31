@@ -400,22 +400,30 @@ function mockFactoryJs() {
     const changes = await page.evaluate(() => {
         const trs = Array.from(document.querySelectorAll('#dashChangesBody tr'));
         if (!trs.length) return { error: 'no change rows' };
-        return trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim()));
+        return {
+            rows: trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim())),
+            refreshBtn: !!document.querySelector('#dashChangesRefresh'),
+        };
     });
     if (changes.error) console.log('PAGE ERROR: ' + changes.error);
     else {
-        if (changes.length !== 3) console.log('PAGE ERROR: changes row count (' + changes.length + ')');
-        if (!changes.every((r) => r.length === 4 && r.every((c) => c.length > 0)))
-            console.log('PAGE ERROR: change table has empty cells (' + JSON.stringify(changes) + ')');
+        const rows = changes.rows;
+        if (rows.length !== 3) console.log('PAGE ERROR: changes row count (' + rows.length + ')');
+        if (!rows.every((r) => r.length === 4 && r.every((c) => c.length > 0)))
+            console.log('PAGE ERROR: change table has empty cells (' + JSON.stringify(rows) + ')');
         // sorted newest-first: 09:30, 09:00, 08:12 (the mock is 08:12, 09:30, 09:00)
-        if (changes.length === 3 && changes[0][0] !== 'connect-plug')
-            console.log('PAGE ERROR: changes not sorted newest-first (' + JSON.stringify(changes.map((r) => r[0])) + ')');
-        // spawned column: a formatted date, not empty / em-dash (fmtDate uses
-        // locale-dependent toLocaleString, so assert presence not exact string)
-        if (changes[0] && (!changes[0][2] || changes[0][2] === '—'))
-            console.log('PAGE ERROR: spawned column empty (' + (changes[0] && changes[0][2]) + ')');
-        if (changes[0] && changes[0][3] !== 'Connect firefox:network to core24:network')
-            console.log('PAGE ERROR: summary column wrong (' + (changes[0] && changes[0][3]) + ')');
+        if (rows.length === 3 && rows[0][0] !== 'connect-plug')
+            console.log('PAGE ERROR: changes not sorted newest-first (' + JSON.stringify(rows.map((r) => r[0])) + ')');
+        // spawned column: 24h clock (no AM/PM, zero-padded hh:mm) — fmtDate is
+        // locale-dependent, so assert the 24h MARKERS, not the exact string.
+        const spawned = rows[0] ? rows[0][2] : '';
+        if (!spawned || spawned === '—') console.log('PAGE ERROR: spawned column empty (' + spawned + ')');
+        if (/\bAM\b|\bPM\b/i.test(spawned)) console.log('PAGE ERROR: spawned date uses 12h clock (' + spawned + ')');
+        if (!/\d{2}:\d{2}/.test(spawned)) console.log('PAGE ERROR: spawned date not 24h-formatted (' + spawned + ')');
+        if (rows[0] && rows[0][3] !== 'Connect firefox:network to core24:network')
+            console.log('PAGE ERROR: summary column wrong (' + (rows[0] && rows[0][3]) + ')');
+        // manual Refresh button removed — the 20 s auto-refresh supersedes it
+        if (changes.refreshBtn !== false) console.log('PAGE ERROR: changes Refresh button still present');
     }
 
     // System + Model cards (round 20): device identity moved from the System

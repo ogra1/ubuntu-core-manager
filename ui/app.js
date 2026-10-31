@@ -57,7 +57,9 @@ const fmtUptime = (s) => {
 };
 const fmtDate = (iso) => {
     if (!iso) return '—';
-    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    // 24h clock (hour12:false) — the kiosk is read by operators across time
+    // zones and AM/PM is noise in a monitoring table.
+    try { return new Date(iso).toLocaleString(undefined, { hour12: false }); } catch { return iso; }
 };
 // snapd timestamps (UTC ISO, e.g. refresh.last/next) -> local
 // 'dd.mm.yyyy hh:mm' (user preference). '—' on missing/invalid.
@@ -1258,7 +1260,6 @@ function wire() {
     });
 
     // dashboard
-    $('#dashChangesRefresh').addEventListener('click', loadChanges);
 
     // network
     $('#netModeDhcp').addEventListener('change', applyNetModeVisibility);
