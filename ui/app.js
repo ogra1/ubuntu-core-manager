@@ -341,6 +341,14 @@ async function loadDashboard() {
 async function loadChanges() {
     try {
         state.changes = await core.system.changes('all');
+        // /v2/changes returns NO stable order (snapd's internal map
+        // iteration) — sort newest-first by spawn-time ourselves, so the
+        // card doesn't reshuffle between 20 s refreshes.
+        state.changes = [...state.changes].sort((x, y) => {
+            const a = new Date(x['spawn-time'] || x.spawn_time || 0).getTime();
+            const b = new Date(y['spawn-time'] || y.spawn_time || 0).getTime();
+            return b - a;
+        });
         renderChanges();
     loadDataDisk();
     } catch { /* non-fatal */ }
@@ -483,11 +491,21 @@ function renderChanges() {
     };
     rows.forEach((c) => {
         const [tone, word] = label(c.status);
+        // LIVE snapd shape (verified 2.77): 'spawn-time' is HYPHENATED and
+        // 'summary' is a plain STRING — the stub used to feed 'spawn_time'
+        // + {summary:{message}} (round-19 class bug: two of the four columns
+        // rendered blank on real devices). Read the real fields, with the
+        // legacy forms as fallbacks.
+        const when = c['spawn-time'] != null ? c['spawn-time'] : c.spawn_time;
+        const text = (typeof c.summary === 'string' && c.summary)
+            || (c.summary && c.summary.message)
+            || (c.err && c.err.message)
+            || '';
         body.append(el('tr', {},
             el('td', { text: c.kind || '—' }),
             el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
-            el('td', { class: 'ucm-muted', text: fmtDate(c.spawn_time) }),
-            el('td', { class: 'ucm-wrap ucm-muted', text: (c.summary && c.summary.message) || (c.err && c.err.message) || '' }),
+            el('td', { class: 'ucm-muted', text: fmtDate(when) }),
+            el('td', { class: 'ucm-wrap ucm-muted', text }),
         ));
     });
 }

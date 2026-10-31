@@ -186,10 +186,12 @@ function mockFactoryJs() {
                     return c;
                 },
                 async changes() {
+                    // live snapd shape: string summary, hyphenated spawn-time,
+                    // and NO guaranteed order (the UI must sort newest-first).
                     return [
-                        { id: '14', kind: 'install-snap', summary: { message: 'Install snap "mosquitto"' }, status: 'Done', spawn_time: '2026-10-28T08:12:00Z' },
-                        { id: '15', kind: 'configure-snap', summary: { message: 'Configure snap "core24"' }, status: 'Ready', spawn_time: '2026-10-28T09:00:00Z' },
-                        { id: '16', kind: 'connect-plug', summary: { message: 'Connect firefox:network to core24:network' }, status: 'Done', spawn_time: '2026-10-28T09:30:00Z' },
+                        { id: '14', kind: 'install-snap', summary: 'Install snap "mosquitto"', status: 'Done', 'spawn-time': '2026-10-28T08:12:00Z' },
+                        { id: '16', kind: 'connect-plug', summary: 'Connect firefox:network to core24:network', status: 'Done', 'spawn-time': '2026-10-28T09:30:00Z' },
+                        { id: '15', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T09:00:00Z' },
                     ];
                 },
                 async netplan() { return NETPLAN; },
@@ -391,6 +393,30 @@ function mockFactoryJs() {
         if (cpu.lineStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: cpu line not orange (' + cpu.lineStroke + ')');
     }
     await page.screenshot({ path: path.join(SHOTS, '3b-cpu-graph.png') });
+
+    // Recent changes guard (round 27): all four columns populated from the
+    // LIVE snapd field names, rows sorted newest-first (mock is fed in a
+    // non-sorted order).
+    const changes = await page.evaluate(() => {
+        const trs = Array.from(document.querySelectorAll('#dashChangesBody tr'));
+        if (!trs.length) return { error: 'no change rows' };
+        return trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim()));
+    });
+    if (changes.error) console.log('PAGE ERROR: ' + changes.error);
+    else {
+        if (changes.length !== 3) console.log('PAGE ERROR: changes row count (' + changes.length + ')');
+        if (!changes.every((r) => r.length === 4 && r.every((c) => c.length > 0)))
+            console.log('PAGE ERROR: change table has empty cells (' + JSON.stringify(changes) + ')');
+        // sorted newest-first: 09:30, 09:00, 08:12 (the mock is 08:12, 09:30, 09:00)
+        if (changes.length === 3 && changes[0][0] !== 'connect-plug')
+            console.log('PAGE ERROR: changes not sorted newest-first (' + JSON.stringify(changes.map((r) => r[0])) + ')');
+        // spawned column: a formatted date, not empty / em-dash (fmtDate uses
+        // locale-dependent toLocaleString, so assert presence not exact string)
+        if (changes[0] && (!changes[0][2] || changes[0][2] === '—'))
+            console.log('PAGE ERROR: spawned column empty (' + (changes[0] && changes[0][2]) + ')');
+        if (changes[0] && changes[0][3] !== 'Connect firefox:network to core24:network')
+            console.log('PAGE ERROR: summary column wrong (' + (changes[0] && changes[0][3]) + ')');
+    }
 
     // System + Model cards (round 20): device identity moved from the System
     // card into the 'Model' stat card (snapd version left the strip; it

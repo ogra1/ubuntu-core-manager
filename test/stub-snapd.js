@@ -181,7 +181,7 @@ function makeServer(socketPath, state) {
                 const c = state.changes.find((x) => x.id === chRe[1]);
                 if (!c) return json(res, 404, { kind: 'not-found', message: `cannot find change ${chRe[1]}` });
                 // real snapd: result = { id, kind, summary: "<string>", status, tasks, ... }
-                return json(res, 200, { id: c.id, kind: c.kind, summary: (c.summary && c.summary.message) || c.summary, status: c.status });
+                return json(res, 200, { id: c.id, kind: c.kind, summary: (c.summary && c.summary.message) || c.summary, status: c.status, 'spawn-time': c['spawn-time'] });
             }
 
             // ---- snaps --------------------------------------------------------
@@ -213,12 +213,14 @@ function makeServer(socketPath, state) {
                     // list only reflects the result once the change settles. The
                     // UI must poll /v2/changes/{id} and reload AFTER that.
                     const id = String(state.changeSeq += 1);
+                    // LIVE-VERIFIED shape (snapd 2.77): 'summary' is a plain
+                    // STRING and the key is HYPHENATED 'spawn-time'.
                     const change = {
                         id,
                         kind: data.action + '-snap',
-                        summary: { message: `${data.action[0].toUpperCase() + data.action.slice(1)} snap "${name}"` },
+                        summary: `${data.action[0].toUpperCase() + data.action.slice(1)} snap "${name}"`,
                         status: 'Doing',
-                        spawn_time: new Date().toISOString(),
+                        'spawn-time': new Date().toISOString(),
                     };
                     state.changes.push(change);
                     // The list mutation and the terminal state land TOGETHER (snapd
@@ -329,8 +331,10 @@ module.exports = { makeServer };
 if (require.main === module) {
     const sock = process.argv[2] || '/tmp/stub-snapd.socket';
     const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, netplanYaml: NETPLAN_YAML, changes: [
-        { id: '1', kind: 'install-snap', summary: { message: 'Install snap "htop"' }, status: 'Done', spawn_time: '2026-10-28T09:00:00Z' },
-        { id: '2', kind: 'configure-snap', summary: { message: 'Configure snap "core24"' }, status: 'Ready', spawn_time: '2026-10-28T10:00:00Z' },
+        // seed changes: live shape (string summary, hyphenated spawn-time).
+        // Deliberately NOT in newest-first order — the UI must sort.
+        { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },
+        { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T10:00:00Z' },
     ] };
     makeServer(sock, state).then(() => {
         console.log('stub snapd listening on ' + sock);

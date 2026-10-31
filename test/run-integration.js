@@ -32,7 +32,14 @@ function ok(name, cond, extra = '') {
 }
 
 (async () => {
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, changes: [],
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0,
+        // seed changes in the LIVE shape (string summary, hyphenated spawn-time)
+        // and NOT in newest-first order — [4] asserts the field names and the
+        // renderer sorts; keep the stub honest.
+        changes: [
+            { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },
+            { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T10:00:00Z' },
+        ],
         netplanYaml: 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n' };
     await makeServer(SOCK, state);
     console.log('stub snapd up on ' + SOCK);
@@ -136,6 +143,14 @@ function ok(name, cond, extra = '') {
     ok('store search filters', Array.isArray(find) && find.length === 1 && find[0].name === 'firefox', JSON.stringify(find).slice(0, 80));
     const conns = await m.listInterfaces();
     ok('connections has established+plugs+slots', Array.isArray(conns.established) && Array.isArray(conns.plugs) && Array.isArray(conns.slots));
+    // /v2/changes list shape: LIVE snapd returns a plain STRING summary and
+    // HYPHENATED 'spawn-time' (the renderer was built against the old stub
+    // shape — round-19 class bug). Keep the stub honest.
+    const clist = await m.listChanges('all');
+    ok('changes list: live field names (string summary, hyphenated spawn-time)',
+        clist.length >= 1 && clist.every((c) => typeof c.summary === 'string'
+            && typeof c['spawn-time'] === 'string' && !('spawn_time' in c)),
+        JSON.stringify(clist[0]).slice(0, 120));
 
     console.log('\n[5] writes over the socket (store auth enforced)');
     let installErr = null;
