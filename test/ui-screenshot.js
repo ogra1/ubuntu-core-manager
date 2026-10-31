@@ -179,6 +179,16 @@ function mockFactoryJs() {
                     ];
                 },
                 async netplan() { return NETPLAN; },
+                // data partition mock: /run/mnt/data present (the core case),
+                // 33.3% of 8 GiB used, 409.6 MiB root reserve.
+                async dataDisk() {
+                    return {
+                        mount: '/run/mnt/data', device: '/dev/loop4', fsType: 'ext4',
+                        totalBytes: 8589934592, freeBytes: 5726623062,
+                        usedBytes: 2863311530, reservedBytes: 429496729,
+                        usedPercent: 33.3, source: 'data',
+                    };
+                },
                 // CPU sparkline mock: one delta per call (main samples on its own clock),
                 // deterministic wave so the drawn shape is stable in screenshots.
                 async cpu() {
@@ -439,6 +449,40 @@ function mockFactoryJs() {
         if (cards.snapdGone !== true) console.log('PAGE ERROR: old Snapd stat card still present');
     }
     await page.screenshot({ path: path.join(SHOTS, '3c-system-card.png') });
+
+    // Data partition guard (round 23): donut renders the used wedge as a
+    // conic-gradient at the mocked 33.3%, rows show df-consistent numbers.
+    const dd = await page.evaluate(() => {
+        const donut = document.querySelector('#dataDiskDonut');
+        if (!donut) return { error: 'donut missing' };
+        const cs = getComputedStyle(donut);
+        const txt = (id) => { const e = document.querySelector('#' + id); return e ? e.textContent : ''; };
+        return {
+            bg: cs.backgroundImage || cs.background,
+            radius: cs.borderRadius,
+            hole: getComputedStyle(donut, '::before').backgroundColor,
+            pct: txt('dataDiskPct'), total: txt('dataDiskTotal'),
+            used: txt('dataDiskUsed'), free: txt('dataDiskFree'), res: txt('dataDiskRes'),
+            src: txt('dataDiskSrc'),
+            legend: !!document.querySelector('.ucm-datadisk__legend'),
+            swatch: getComputedStyle(document.querySelector('.ucm-datadisk__sw--used')).backgroundColor,
+        };
+    });
+    if (dd.error) console.log('PAGE ERROR: ' + dd.error);
+    else {
+        if (!/conic-gradient/.test(dd.bg)) console.log('PAGE ERROR: donut has no conic-gradient (' + dd.bg.slice(0, 80) + ')');
+        if (!dd.bg.includes('33.3%')) console.log('PAGE ERROR: donut wedge not at 33.3% (' + dd.bg.slice(0, 120) + ')');
+        if (dd.pct !== '33%') console.log('PAGE ERROR: donut center pct (' + dd.pct + ')');
+        if (dd.total !== '8.0 GiB') console.log('PAGE ERROR: data disk total (' + dd.total + ')');
+        if (dd.used !== '2.7 GiB') console.log('PAGE ERROR: data disk used (' + dd.used + ')');
+        if (dd.free !== '5.3 GiB') console.log('PAGE ERROR: data disk free (' + dd.free + ')');
+        if (dd.res !== '410 MiB') console.log('PAGE ERROR: data disk reserved (' + dd.res + ')');
+        if (!dd.src.includes('/run/mnt/data')) console.log('PAGE ERROR: data disk source label (' + dd.src + ')');
+        if (!dd.legend) console.log('PAGE ERROR: donut legend missing');
+        if (dd.swatch !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: used swatch not orange (' + dd.swatch + ')');
+        if (dd.hole !== 'rgb(255, 255, 255)') console.log('PAGE ERROR: donut hole not white (' + dd.hole + ')');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '3d-data-disk.png') });
 
     // ---- 2. SETTINGS VIEW: guarded local-admin reset ----------------
     await page.click('.ucm-side a[data-view="settings"]');

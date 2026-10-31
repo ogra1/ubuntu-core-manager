@@ -225,6 +225,22 @@ function ok(name, cond, extra = '') {
 
     const hs = m.readHostStats();
     ok('host stats have hostname+mem', typeof hs.hostname === 'string' && hs.mem && hs.mem.total > 0, JSON.stringify(hs).slice(0, 80));
+    // data partition reader: statfs(/run/mnt/data) with root fallback.
+    // In this dev container /run/mnt/data is absent -> source 'root'.
+    const dp = await m.getDataPartition();
+    ok('data disk: consistent statfs shape',
+        dp && dp.totalBytes > 0 && dp.usedBytes + dp.freeBytes === dp.totalBytes
+        && dp.reservedBytes >= 0 && dp.reservedBytes <= dp.freeBytes
+        && dp.usedPercent >= 0 && dp.usedPercent <= 100,
+        JSON.stringify(dp).slice(0, 120));
+    ok('data disk: mount/source pair is valid',
+        (dp.source === 'data' && dp.mount === '/run/mnt/data')
+        || (dp.source === 'root' && dp.mount === '/'),
+        dp.mount + '/' + dp.source);
+    const mt = m.mountsTable();
+    ok('mounts table parsed (has a / row)',
+        Array.isArray(mt) && mt.every((r) => r.length >= 3) && mt.some((r) => r[1] === '/'),
+        JSON.stringify(mt[0]));
     const nd = m.readProcNetDev();
     ok('proc netdev parsed', Array.isArray(nd) && nd.some((d) => d.name === 'lo'), JSON.stringify(nd && nd[0]));
 

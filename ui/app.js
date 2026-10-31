@@ -127,6 +127,7 @@ const state = {
     changes: [],
     warnings: [],
     netdev: null,
+    dataDisk: null,    // /run/mnt/data usage (statfs) — main.js
     snaps: [],
     connections: [],
     ifacesPendingOnly: true,
@@ -337,6 +338,7 @@ async function loadChanges() {
     try {
         state.changes = await core.system.changes('all');
         renderChanges();
+    loadDataDisk();
     } catch { /* non-fatal */ }
 }
 
@@ -406,14 +408,7 @@ function renderDashboard() {
     ];
     renderKV('#dashSystem', sys);
 
-    const st = s.storage || {};
-    renderKV('#dashStorage', [
-        ['Used', fmtBytes(st.used)],
-        ['Total', fmtBytes(st.total)],
-        ['Used percent', st.used_percent != null ? st.used_percent + '%' : '—'],
-        ['Model', st.model],
-        ['Type', st.type],
-    ]);
+    renderDataDisk();
 
     renderKV('#dashNetdev', (state.netdev || []).filter((d) => d.name !== 'lo').map((d) => [
         d.name, `${fmtBytes(d.rxBytes)} ↓ · ${fmtBytes(d.txBytes)} ↑`,
@@ -425,6 +420,44 @@ function renderDashboard() {
     else state.warnings.forEach((x) => {
         w.append(el('p', { class: 'p-status-label p-status-label--caution', text: x.message || x.warn || JSON.stringify(x) }));
     });
+}
+
+/** Data partition: /run/mnt/data on Ubuntu Core (the writable
+ * space that actually belongs to the user), '/' elsewhere. The donut is
+ * used-vs-free of the whole partition (df arithmetic, incl. the small
+ * root-reserved wedge); the rows spell that out. */
+function renderDataDisk() {
+    const d = state.dataDisk;
+    const set = (id, v) => { const e = $('#' + id); if (e) e.textContent = v; };
+    if (!d) {
+        set('dataDiskPct', '—'); set('dataDiskTotal', '—');
+        set('dataDiskUsed', '—'); set('dataDiskFree', '—'); set('dataDiskRes', '—');
+        const src = $('#dataDiskSrc');
+        if (src) src.textContent = '';
+        const donut = $('#dataDiskDonut');
+        if (donut) donut.style.background = 'conic-gradient(#e9e9e9 0 360deg)';
+        return;
+    }
+    set('dataDiskPct', Math.round(d.usedPercent) + '%');
+    set('dataDiskTotal', fmtBytes(d.totalBytes));
+    set('dataDiskUsed', fmtBytes(d.usedBytes));
+    set('dataDiskFree', fmtBytes(d.freeBytes));
+    set('dataDiskRes', d.reservedBytes ? fmtBytes(d.reservedBytes) : '—');
+    const src = $('#dataDiskSrc');
+    if (src) src.textContent = `${d.mount} · ${d.fsType || ''}${d.source === 'root' ? ' (fallback — no /run/mnt/data mount)' : ''}`;
+    const donut = $('#dataDiskDonut');
+    if (donut) {
+        const p = Math.min(100, Math.max(0, d.usedPercent));
+        donut.style.background =
+            `conic-gradient(var(--ucm-orange) 0 ${p}%, #e9e9e9 ${p}% 100%)`;
+    }
+}
+
+async function loadDataDisk() {
+    try {
+        state.dataDisk = await core.system.dataDisk();
+        renderDataDisk();
+    } catch { /* non-fatal; card shows em-dashes */ }
 }
 
 function renderChanges() {

@@ -100,6 +100,7 @@ const api = Object.freeze({
     system: Object.freeze({
         info: invoke('sys:info'),               // { snapd, host, model, netdev, warnings }
         model: invoke('sys:model'),             // model assertion headers { model, base, grade, 'brand-id', ... }
+        dataDisk: invoke('sys:data-disk'),      // /run/mnt/data usage { mount, device, fsType, total/free/used/reservedBytes, usedPercent, source }
         disk: invoke('sys:disk'),               // storage/volumes
         cpu: invoke('sys:cpu'),                 // => number|null[] (oldest->newest, 0..100; null = pre-boot sample)
         changes: invoke('sys:changes'),         // (select?) => change list

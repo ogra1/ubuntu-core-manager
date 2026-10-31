@@ -213,8 +213,27 @@
                 </div>
                 <div class="col-6">
                     <div class="p-card">
-                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Storage</p></div>
-                        <dl class="ucm-kv" id="dashStorage"><span class="ucm-skel" style="width:60%"></span></dl>
+                        <div class="p-card__header">
+                            <div style="display:flex; align-items:center; gap:.6rem;">
+                                <p class="p-heading--5" style="margin:0;">Data partition</p>
+                                <span class="ucm-muted ucm-datadisk-src" id="dataDiskSrc"></span>
+                            </div>
+                        </div>
+                        <div class="ucm-datadisk">
+                            <div class="ucm-datadisk__donut" id="dataDiskDonut">
+                                <span class="ucm-datadisk__pct" id="dataDiskPct">—</span>
+                            </div>
+                            <div class="ucm-datadisk__kv">
+                                <div class="ucm-datadisk__row"><span class="ucm-datadisk__k">Total</span><span id="dataDiskTotal">—</span></div>
+                                <div class="ucm-datadisk__row"><span class="ucm-datadisk__k">Used</span><span id="dataDiskUsed">—</span></div>
+                                <div class="ucm-datadisk__row"><span class="ucm-datadisk__k">Free (user)</span><span id="dataDiskFree">—</span></div>
+                                <div class="ucm-datadisk__row"><span class="ucm-datadisk__k">Reserved (root)</span><span id="dataDiskRes">—</span></div>
+                                <div class="ucm-datadisk__legend">
+                                    <span><i class="ucm-datadisk__sw ucm-datadisk__sw--used"></i>used</span>
+                                    <span><i class="ucm-datadisk__sw ucm-datadisk__sw--free"></i>free</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

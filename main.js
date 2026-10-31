@@ -870,6 +870,62 @@ function readCpuUtilization() {
     return readCpuUtilization.buf.slice();
 }
 
+/**
+ * Data partition: on Ubuntu Core the user-writable storage is the
+ * /run/mnt/data overlay mount — the space that actually matters to the
+ * operator (the read-only / rootfs is not usable capacity).
+ *
+ * Source of truth: statfs(2) on the mount point (via Node's
+ * fs.promises.statfs — the same syscall df(1) uses), with the mount's
+ * device + fs type read from /proc/mounts. /proc/diskstats is NOT a
+ * source here (I/O counters only, no capacity), and mount-observe
+ * grants /proc/mounts reads (verified against snapd's builtin
+ * mount-observe interface: @{PROC}/mounts r + statmount/listmount;
+ * it does not list /proc/diskstats).
+ *
+ * Returns:
+ *   { mount: '/run/mnt/data', device, fsType, totalBytes, freeBytes
+ *     (user-usable = bavail), usedBytes, reservedBytes (root-only
+ *     headroom = bfree - bavail), usedPercent (1 dp),
+ *     source: 'data'|'root' }
+ * Falls back to '/' when /run/mnt/data is not mounted (classic dev
+ * container); null when statfs itself fails.
+ */
+const DATA_MOUNT = '/run/mnt/data';
+
+function mountsTable() {
+    try {
+        return String(fs.readFileSync('/proc/mounts', 'utf8'))
+            .split('\n').map((l) => l.trim().split(/\s+/))
+            .filter((f) => f.length >= 3);
+    } catch { return []; }
+}
+
+async function getDataPartition() {
+    const row = (want) =>
+        mountsTable().find((f) => f[1] === want) ||
+        mountsTable().find((f) => f[1] === want + '/');
+    const want = row(DATA_MOUNT) ? DATA_MOUNT : '/';
+    let st;
+    try { st = await fs.promises.statfs(want); } catch { return null; }
+    const r = row(want) || [];
+    const total = st.bsize * st.blocks;
+    const free = st.bsize * st.bavail;         // usable by the user (df "Avail")
+    const used = total - free;                 // used BY df's arithmetic (incl. root reserve)
+    const reserved = Math.max(0, st.bsize * st.bfree - free);
+    return {
+        mount: want,
+        device: r[0] || null,
+        fsType: r[2] || null,
+        totalBytes: total,
+        freeBytes: free,
+        usedBytes: used,
+        reservedBytes: reserved,
+        usedPercent: total ? Math.round((used / total) * 1000) / 10 : 0,
+        source: want === DATA_MOUNT ? 'data' : 'root',
+    };
+}
+
 function readProcNetDev() {
     try {
         const text = fs.readFileSync('/proc/net/dev', 'utf8');
@@ -899,6 +955,7 @@ const api = {
     storeLogin, storeLogout,
 
     getSystemInfo, getModelAssertion, parseModelAssertion,
+    getDataPartition, mountsTable,
     getDisk, listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapConfig, getNetplan, listInterfaces,
@@ -1150,6 +1207,8 @@ function initElectron() {
     // is open to the local gate like the other diagnostics — no write path.
     ipcMain.handle('sys:cpu', guard(() => readCpuUtilization()));
     ipcMain.handle('sys:model', guard(() => getModelAssertion()));
+    // Data partition usage (/run/mnt/data on core, / elsewhere). Read-only.
+    ipcMain.handle('sys:data-disk', guard(getDataPartition));
     ipcMain.handle('sys:disk', guard(() => getDisk()));
     ipcMain.handle('sys:changes', guard((select) => listChanges(select)));
     ipcMain.handle('sys:change', guard((id) => getChange(id)));
