@@ -32,34 +32,26 @@ const SNAPS = [
     },
 ];
 
-const CONNECTIONS = {
-    established: [
-        {
-            interface: 'network',
-            plug: { snap: 'firefox', plug: 'network' },
-            slot: { snap: 'core24', slot: 'network' },
-            manual: true, gadget: false,
-        },
-    ],
-    undesired: [
-        {
-            interface: 'home',
-            plug: { snap: 'snap-store', plug: 'home' },
-            slot: { snap: 'core24', slot: 'home' },
-            manual: true, gadget: false,
-        },
-    ],
+// LIVE-VERIFIED /v2/interfaces topology (snapd 2.77): the result carries
+// `plugs` + `slots` ONLY — no established/undesired, no manual/gadget.
+// Unconnected endpoints have `connections: null` (Go omitempty). This state
+// (not the module const) is what the handler serves, so connect/disconnect
+// writes mutate it and the next list reflects the change.
+const IFC_TOPO = {
     plugs: [
-        { snap: 'firefox', name: 'network', interface: 'network', connections: [{ snap: 'core24', slot: 'network' }] },
-        { snap: 'snap-store', name: 'home', interface: 'home', connections: [] },
-        { snap: 'firefox', name: 'browser', interface: 'browser', connections: [] },
+        { snap: 'firefox', plug: 'network', interface: 'network', apps: ['firefox'], connections: [{ snap: 'core24', slot: 'network' }] },
+        { snap: 'firefox', plug: 'browser', interface: 'browser', apps: ['firefox'], connections: null },
+        { snap: 'mosquitto', plug: 'network-bind', interface: 'network-bind', apps: ['mosquitto'], connections: [{ snap: 'core24', slot: 'network-bind' }] },
+        { snap: 'snap-store', plug: 'home', interface: 'home', apps: ['snap-store'], connections: null },
     ],
     slots: [
-        { snap: 'core24', name: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
-        { snap: 'core24', name: 'home', interface: 'home', connections: [] },
-        { snap: 'core24', name: 'browser', interface: 'browser', connections: [] },
+        { snap: 'core24', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
+        { snap: 'core24', slot: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
+        { snap: 'core24', slot: 'home', interface: 'home', connections: null },
+        { snap: 'snap-store', slot: 'browser', interface: 'browser', connections: null },
     ],
 };
+const ifcClone = (o) => JSON.parse(JSON.stringify(o));
 
 const NETPLAN_YAML = `network:
   version: 2
@@ -356,8 +348,17 @@ function makeServer(socketPath, state) {
             }
 
             // ---- interfaces ------------------------------------------------------
-            if (p === '/v2/connections' && req.method === 'GET') {
-                return json(res, 200, url.searchParams.get('select') === 'all' ? CONNECTIONS : { ...CONNECTIONS, undesired: [] });
+            // LIVE-VERIFIED (snapd 2.77):
+            //   GET /v2/interfaces -> { plugs, slots } — the FULL topology,
+            //     unconnected endpoints included with `connections: null`
+            //     (no established/undesired keys at all).
+            //   POST /v2/interfaces {action, plugs:[{snap,plug}],
+            //     slots:[{snap,slot}]} -> 202 ASYNC with the change id at the
+            //     envelope top level (result null). The singular {plug, slot}
+            //     body is a 400 on the live daemon — keep the stub honest.
+            if (p === '/v2/interfaces' && req.method === 'GET') {
+                const t = state.ifaces || (state.ifaces = ifcClone(IFC_TOPO));
+                return json(res, 200, ifcClone(t));
             }
             if (p === '/v2/interfaces' && req.method === 'POST') {
                 if (!auth.ok) return json(res, 401, { kind: 'unauthenticated', message: 'unauthenticated access' });
@@ -366,7 +367,52 @@ function makeServer(socketPath, state) {
                 if (data.action !== 'connect' && data.action !== 'disconnect') {
                     return json(res, 400, { kind: 'not-found', message: `unsupported action "${data.action}"` });
                 }
-                return json(res, 200, { interface: 'stub', plug: data.plug, slot: data.slot, status: 'Done' });
+                if (!Array.isArray(data.plugs) || !data.plugs.length || !Array.isArray(data.slots) || !data.slots.length) {
+                    return json(res, 400, { kind: 'not-found', message: 'at least one plug and slot is required' });
+                }
+                if (data.plugs.length > 1 || data.slots.length > 1) {
+                    return json(res, 501, { kind: 'not-implemented', message: 'many-to-many operations are not implemented' });
+                }
+                const plugRef = data.plugs[0];
+                const slotRef = data.slots[0];
+                const id = String(state.changeSeq += 1);
+                // LIVE-VERIFIED async shape: the change id sits at the envelope
+                // TOP (result null), exactly like the snap writes.
+                const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: id });
+                // the topology mutation and the terminal state land TOGETHER
+                // (snapd applies the change atomically on completion)
+                setTimeout(() => {
+                    const t = state.ifaces || (state.ifaces = ifcClone(IFC_TOPO));
+                    // apply the requested op to its actual endpoints (live snapd
+                    // mutates whatever pair you connect/disconnect). Guard so a
+                    // ref absent from the topology can never throw inside the
+                    // settle timeout and strand the change in Doing.
+                    const pg = t.plugs.find((x) => x.snap === plugRef.snap && x.plug === plugRef.plug);
+                    const sl = t.slots.find((x) => x.snap === slotRef.snap && x.slot === slotRef.slot);
+                    if (pg && sl) {
+                        if (data.action === 'connect') {
+                            pg.connections = [{ snap: sl.snap, slot: sl.slot }];
+                            sl.connections = [{ snap: pg.snap, plug: pg.plug }];
+                        } else {
+                            pg.connections = null;
+                            sl.connections = null;
+                        }
+                    }
+                    const c = state.changes.find((x) => x.id === id);
+                    if (c) c.status = 'Done';
+                }, 250);
+                state.changes.push({
+                    id,
+                    kind: data.action + '-snap',
+                    summary: `${data.action[0].toUpperCase() + data.action.slice(1)} ${plugRef.snap}:${plugRef.plug}`,
+                    status: 'Doing',
+                    'spawn-time': new Date().toISOString(),
+                });
+                return new Promise((resolve) => {
+                    res.writeHead(202, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
+                    res.end(payload);
+                    resolve();
+                });
             }
 
             return json(res, 404, { kind: 'not-found', message: `cannot find ${req.method} ${p}` });

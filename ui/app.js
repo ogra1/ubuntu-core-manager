@@ -128,8 +128,7 @@ const state = {
     netIface: null,    // device the net series is counted on (default-route iface)
     netPoll: null,
     snaps: [],
-    connections: [],
-    ifacesPendingOnly: true,
+    ifaces: null,
     manualLock: false,
     sessionTick: null,
     dashPoll: null,
@@ -1154,112 +1153,160 @@ function openConfigModal(name) {
 }
 
 /* ----------------------------- interfaces -------------------------------- */
-/* Verified snapd /v2/connections contract:
- *   GET /v2/connections            -> { established:[c], undesired:[c],
- *                                       plugs:[p], slots:[s] }
- *   c = { interface, plug:{snap,plug}, slot:{snap,slot}, manual, gadget }
- *   p = { snap, name, interface, connections:[{snap,slot}], label, apps }
- *   s = { snap, name, interface, connections:[{snap,plug}], label, apps }
- *   POST /v2/interfaces {action:"connect"|"disconnect",
- *                        plug:{snap,plug}, slot:{snap,slot}}
- */
+/* LIVE-VERIFIED snapd /v2/interfaces contract (snapd 2.77):
+ *   GET /v2/interfaces -> { plugs:[p], slots:[s] }  (the FULL topology —
+ *   unconnected endpoints are listed too, with `connections: null`)
+ *   p = { snap, plug, interface, apps, connections: [{snap,slot},...] | null }
+ *   s = { snap, slot, interface, connections: [{snap,plug},...] | null }
+ * The legacy GET /v2/connections ({established, undesired, plugs, slots})
+ * ONLY lists plugs/slots that have connections, so it cannot answer "what is
+ * unconnected" — it is NOT used. POST /v2/interfaces is ASYNC (202 + change id
+ * at the envelope top) and its body is the PLURAL form
+ * {action, plugs:[{snap,plug}], slots:[{snap,slot}]} (verified live: the
+ * singular {plug, slot} form is 400 "at least one plug and slot is required").
+ *
+ * UI shape (per user): one card per CONSUMING snap (a snap with plugs), sorted
+ * by snap name; that snap's CONNECTED interfaces (plugs with a connection) on
+ * top, its UNCONNECTED ones (plugs without) below. Pure providers (no plugs)
+ * are not cards — they surface as connection targets in the dropdowns. */
 
 async function loadInterfaces() {
-    const body = $('#ifacesBody');
     try {
-        state.connections = await core.interfaces.list();
-        renderInterfaces();
+        state.ifaces = await core.interfaces.list();
     } catch (e) {
         toastErr(e);
-        body.innerHTML = '';
-        body.append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'Could not load connections: ' + e.message })));
+        state.ifaces = null;
     }
+    renderInterfaces();
 }
 
-const plugTxt = (p) => p ? `${p.snap}:${p.plug}` : '—';
-const slotTxt = (s) => s ? `${s.snap}:${s.slot}` : '—';
+function ifacesRow(ifaceName, label, kind, ...actions) {
+    const tone = kind === 'connected' ? 'positive' : 'caution';
+    return el('div', { class: 'ucm-iface-row' },
+        el('span', { class: `p-status-label p-status-label--${tone} ucm-iface-row__name`, text: ifaceName || '—' }),
+        el('span', { class: 'ucm-iface-row__ref ucm-mono', text: label }),
+        el('div', { class: 'ucm-iface-row__actions' }, ...actions));
+}
+
+function ifacesCard(snap, conns, uncons) {
+    const card = el('div', { class: 'p-card ucm-ifaces-card' });
+    card.append(el('div', { class: 'p-card__header' },
+        el('div', { style: 'display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;' },
+            el('p', { class: 'p-heading--5 ucm-ifaces-card__title', style: 'margin:0;', text: snap }),
+            el('span', { class: 'ucm-muted ucm-ifaces-card__counts',
+                text: `${conns.length} connected · ${uncons.length} unconnected` }))));
+
+    if (conns.length) {
+        card.append(el('h4', { class: 'ucm-ifaces-sec', text: 'Connected interfaces' }));
+        conns.forEach((x) => {
+            card.append(ifacesRow(x.iface, x.label, 'connected',
+                rowBtn(`Disconnect ${x.iface} on ${snap}`, 'p-icon--delete', () => disconnectPlug(snap, x.plug, x.slotRef))));
+        });
+    }
+    if (uncons.length) {
+        if (conns.length) card.append(el('div', { class: 'ucm-ifaces-div' }));
+        card.append(el('h4', { class: 'ucm-ifaces-sec', text: 'Unconnected interfaces' }));
+        uncons.forEach((x) => {
+            const sel = el('select', { class: 'ucm-iface-select' },
+                el('option', { value: '', text: 'target slot…' }));
+            x.free.forEach((s) => sel.append(el('option', { value: s.key, text: s.label })));
+            const btn = rowBtn(`Connect ${x.iface} on ${snap}`, 'p-icon--plus', () => connectPlug(snap, x.plug, sel, btn));
+            card.append(ifacesRow(x.iface, x.label, 'unconnected', sel, btn));
+        });
+    }
+    return card;
+}
 
 function renderInterfaces() {
-    const body = $('#ifacesBody');
-    body.innerHTML = '';
-    const c = state.connections || {};
-    const established = c.established || [];
-    const undesired = c.undesired || [];
+    const wrap = $('#ifacesCards');
+    wrap.innerHTML = '';
+    const c = state.ifaces || {};
     const plugs = c.plugs || [];
     const slots = c.slots || [];
 
-    const rows = [];
-    established.forEach((x) => rows.push({ type: 'connected', iface: x.interface, plug: x.plug, slot: x.slot, manual: x.manual, gadget: x.gadget }));
-    undesired.forEach((x) => rows.push({ type: 'disconnected', iface: x.interface, plug: x.plug, slot: x.slot }));
-    plugs.forEach((p) => {
-        if (!p.connections || !p.connections.length) {
-            rows.push({ type: 'available', iface: p.interface, plug: { snap: p.snap, plug: p.name }, slot: null });
-        }
-    });
-    if (state.ifacesPendingOnly) {
-        rows.length = 0;
-        undesired.forEach((x) => rows.push({ type: 'disconnected', iface: x.interface, plug: x.plug, slot: x.slot }));
-        plugs.forEach((p) => {
-            if (!p.connections || !p.connections.length) {
-                rows.push({ type: 'available', iface: p.interface, plug: { snap: p.snap, plug: p.name }, slot: null });
-            }
-        });
-    }
-
-    $('#ifacesSummary').textContent = `${established.length} connected · ${undesired.length} pending · ${plugs.filter((p) => !p.connections || !p.connections.length).length} available plugs`;
-
-    if (!rows.length) {
-        body.append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'No interface connections to show.' })));
+    if (!plugs.length) {
+        $('#ifacesSummary').textContent = '';
+        wrap.append(el('div', { class: 'p-card' },
+            el('div', { class: 'ucm-muted', style: 'padding:.4rem 0;', text: 'No snap consumes any interface on this device.' })));
         return;
     }
 
-    rows.forEach((r) => {
-        const actions = el('div', { style: 'text-align:right;' });
-        if (r.type === 'connected') {
-            actions.append(rowBtn('Disconnect', 'p-icon--delete', () => ifaceOp('disconnect', r)));
+    const bySnap = new Map();
+    const entry = (snap) => {
+        if (!bySnap.has(snap)) bySnap.set(snap, { snap, conns: [], uncons: [] });
+        return bySnap.get(snap);
+    };
+    const slotByKey = new Map();
+    slots.forEach((s) => slotByKey.set(s.snap + '|' + s.slot, s));
+
+    // A plug is connected iff its `connections` list is non-empty (live snapd
+    // uses `null` for none — never rely on a missing/empty distinction).
+    plugs.forEach((p) => {
+        const cs = Array.isArray(p.connections) ? p.connections : [];
+        const e = entry(p.snap);
+        if (cs.length) {
+            cs.forEach((slotRef) => {
+                e.conns.push({
+                    iface: p.interface,
+                    label: `${p.plug} → ${slotRef.snap}:${slotRef.slot}`,
+                    plug: { snap: p.snap, plug: p.plug },
+                    slotRef: { snap: slotRef.snap, slot: slotRef.slot },
+                });
+            });
         } else {
-            const slotSel = el('select', { style: 'max-width:13rem; margin-right:.4rem;' }, el('option', { value: '', text: 'target slot…' }));
-            slots
-                .filter((s) => s.interface === r.iface)
-                .forEach((s) => slotSel.append(el('option', {
-                    value: s.snap + '|' + s.name,
-                    text: `${s.snap}:${s.name}`,
-                })));
-            if (r.slot) {
-                const pre = r.slot.snap + '|' + r.slot.slot;
-                if (Array.from(slotSel.options).some((o) => o.value === pre)) slotSel.value = pre;
-            }
-            const go = el('button', { class: 'p-button--positive p-button', type: 'button' }, 'Connect');
-            go.onclick = () => {
-                const [snap, name] = (slotSel.value || '').split('|');
-                if (!snap) { toast('caution', 'Connect', 'Pick a target slot.'); return; }
-                ifaceOp('connect', { plug: r.plug, slot: { snap, slot: name } });
-            };
-            actions.append(slotSel, go);
+            // free = same-interface slots with no connections yet, that are not
+            // this plug (a self-pair is never connectable)
+            const free = slots
+                .filter((s) => s.interface === p.interface
+                    && (!Array.isArray(s.connections) || !s.connections.length)
+                    && !(s.snap === p.snap && s.slot === p.plug))
+                .sort((a, b) => (a.snap + a.slot).localeCompare(b.snap + b.slot))
+                .map((s) => ({ key: s.snap + '|' + s.slot, label: `${s.snap}:${s.slot}` }));
+            e.uncons.push({ iface: p.interface, label: p.plug, plug: { snap: p.snap, plug: p.plug }, free });
         }
-
-        const tone = r.type === 'connected' ? 'positive' : 'caution';
-        const word = r.type === 'connected'
-            ? (r.gadget ? 'Gadget' : r.manual ? 'Manual' : 'Auto')
-            : (r.type === 'disconnected' ? 'Disconnected' : 'Available');
-
-        body.append(el('tr', {},
-            el('td', { text: r.iface || '—' }),
-            el('td', { class: 'ucm-mono', text: slotTxt(r.slot) }),
-            el('td', { class: 'ucm-mono', text: plugTxt(r.plug) }),
-            el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
-            actions,
-        ));
     });
+
+    // sorted by consuming snap (card order = snap name)
+    const cards = Array.from(bySnap.values()).sort((a, b) => a.snap.localeCompare(b.snap));
+    cards.forEach((d) => wrap.append(ifacesCard(d.snap, d.conns, d.uncons)));
+
+    const totalConns = plugs.reduce((n, p) => n + (Array.isArray(p.connections) ? p.connections.length : 0), 0);
+    const totalUncons = plugs.length - plugs.filter((p) => Array.isArray(p.connections) && p.connections.length).length;
+    $('#ifacesSummary').textContent = `${cards.length} snaps · ${totalConns} connected · ${totalUncons} unconnected`;
 }
 
-async function ifaceOp(op, item) {
+async function connectPlug(snap, plugRef, sel, btn) {
+    const val = sel ? sel.value : '';
+    if (!val) { toast('caution', 'Connect', 'Pick a target slot first.'); return; }
+    const [slotSnap, slotName] = val.split('|');
+    const slotRef = { snap: slotSnap, slot: slotName };
+    btn.classList.add('is-disabled');
     try {
-        if (op === 'connect') await core.interfaces.connect(item.plug, item.slot);
-        else await core.interfaces.disconnect(item.plug, item.slot);
-        toast('positive', op === 'connect' ? 'Connected' : 'Disconnected',
-            `${plugTxt(item.plug)} ↔ ${slotTxt(item.slot)} (${item.iface || 'interface'})`);
-        loadInterfaces();
+        const change = await core.interfaces.connect(plugRef, slotRef);
+        toast('positive', 'Connect started', `${snap}:${plugRef.plug} → ${slotSnap}:${slotName}`);
+        const done = await waitChangeSettled(change);
+        await loadInterfaces();
+        if (done && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
+            toastErr(new Error(`Connect finished with an error: ${done.status}`));
+        else
+            toast('positive', 'Connected', `${snap}:${plugRef.plug} → ${slotSnap}:${slotName}`);
+    } catch (e) {
+        toastErr(e);
+    } finally {
+        btn.classList.remove('is-disabled');
+    }
+}
+
+async function disconnectPlug(snap, plugRef, slotRef) {
+    try {
+        const change = await core.interfaces.disconnect(plugRef, slotRef);
+        toast('positive', 'Disconnect started', `${snap}:${plugRef.plug} ↔ ${slotRef.snap}:${slotRef.slot}`);
+        const done = await waitChangeSettled(change);
+        await loadInterfaces();
+        if (done && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
+            toastErr(new Error(`Disconnect finished with an error: ${done.status}`));
+        else
+            toast('positive', 'Disconnected', `${snap}:${plugRef.plug} ↔ ${slotRef.snap}:${slotRef.slot}`);
     } catch (e) { toastErr(e); }
 }
 
@@ -1347,11 +1394,6 @@ function wire() {
 
     // interfaces
     $('#ifacesRefresh').addEventListener('click', loadInterfaces);
-    $('#ifacesFilterBtn').addEventListener('click', () => {
-        state.ifacesPendingOnly = !state.ifacesPendingOnly;
-        $('#ifacesFilterBtn').textContent = state.ifacesPendingOnly ? 'Show: actionable (not connected)' : 'Show: all';
-        renderInterfaces();
-    });
 }
 
 /* -------------------------------- boot ----------------------------------- */

@@ -780,27 +780,48 @@ function validSlotRef(ref) {
         && typeof ref.slot === 'string' && RE_PLUG_SLOT.test(ref.slot);
 }
 
-/** GET /v2/connections — full plug/slot topology. */
+/**
+ * GET /v2/interfaces — the FULL plug/slot topology.
+ * LIVE-VERIFIED against snapd 2.77 (this container's daemon):
+ *   result = { plugs:[p], slots:[s] }
+ *   p = { snap, plug, interface, apps:[...], connections: [{snap,slot},...] | null }
+ *   s = { snap, slot, interface, connections: [{snap,plug},...] | null }
+ * Connections are NULL (not [] — the Go struct is omitempty) when an endpoint
+ * has none, and the endpoint carries NO established/undesired/manual/gadget
+ * keys at all (that is the legacy /v2/connections shape, which — worse — only
+ * lists plugs/slots that HAVE connections, so it cannot answer "what is
+ * unconnected"). The UI derives connected/unconnected purely from `connections`
+ * and never branches on the legacy fields.
+ */
 async function listInterfaces() {
-    return snapdRequest('GET', '/v2/connections', { auth: A() });
+    return snapdRequest('GET', '/v2/interfaces', { auth: A() });
 }
 
-/** POST /v2/interfaces {action:"connect", plug, slot}. */
+/**
+ * POST /v2/interfaces — LIVE-VERIFIED (snapd 2.77): the daemon decodes
+ * {action, plugs:[{snap,plug}], slots:[{snap,slot}]} (client/
+ * interfaces.go InterfaceAction). The SINGULAR {plug, slot} form is
+ * REJECTED with 400 "at least one plug and slot is required" — the old
+ * code sent that, so every Connect/Disconnect button was a silent no-op
+ * that surfaced a raw 400. The write is ASYNC: 202 with the change id at
+ * the envelope top level (result null); the topology only settles when
+ * the change completes, so the renderer must waitChangeSettled().
+ */
 async function connectInterface(plug, slot) {
     if (!validPlugRef(plug)) throw new Error('invalid plug reference');
     if (!validSlotRef(slot)) throw new Error('invalid slot reference');
     return snapdRequest('POST', '/v2/interfaces', {
-        body: { action: 'connect', plug, slot },
+        body: { action: 'connect', plugs: [plug], slots: [slot] },
         auth: A(),
     });
 }
 
-/** POST /v2/interfaces {action:"disconnect", plug, slot}. */
+/** POST /v2/interfaces {action:"disconnect", plugs:[...], slots:[...]}. */
 async function disconnectInterface(plug, slot) {
     if (!validPlugRef(plug)) throw new Error('invalid plug reference');
     if (!validSlotRef(slot)) throw new Error('invalid slot reference');
     return snapdRequest('POST', '/v2/interfaces', {
-        body: { action: 'disconnect', plug, slot },
+        body: { action: 'disconnect', plugs: [plug], slots: [slot] },
         auth: A(),
     });
 }

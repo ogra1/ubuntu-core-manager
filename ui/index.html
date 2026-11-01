@@ -417,31 +417,18 @@
             <div class="row">
                 <div class="col-12">
                     <div style="display:flex; gap:.8rem; align-items:center; margin-bottom:1.2rem; flex-wrap:wrap;">
-                        <button class="p-button--base p-button" id="ifacesFilterBtn" type="button">Show: actionable (not connected)</button>
                         <span class="ucm-muted" id="ifacesSummary"></span>
                         <button class="p-button--base p-button" id="ifacesRefresh" type="button" style="margin-left:auto;">Refresh</button>
                     </div>
+                    <div id="ifacesCards" style="display:flex; flex-direction:column; gap:1.2rem;">
+                        <div class="p-card">
+                            <div class="ucm-muted" style="padding:.4rem 0;">Loading connections…</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="ucm-table-wrap">
-                <table class="p-table">
-                    <thead>
-                        <tr>
-                            <th>Interface</th>
-                            <th>Provider (slot)</th>
-                            <th>Consumer (plug)</th>
-                            <th>Status</th>
-                            <th style="text-align:right;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ifacesBody">
-                        <tr><td colspan="5" class="ucm-muted">Loading connections…</td></tr>
-                    </tbody>
-                </table>
-            </div>
         </section>
-
-        <!-- ================= SETTINGS VIEW ================= -->
+<!-- ================= SETTINGS VIEW ================= -->
         <section class="ucm-view ucm-hidden" id="view-settings" data-view="settings">
             <div class="row">
                 <div class="col-8">

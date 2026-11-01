@@ -646,3 +646,44 @@ html, body {
 
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }
+
+/* ---- interfaces page (round 36): per-snap cards --------------------------
+   One card per snap; connected interfaces on top, unconnected below. The
+   connected row's status label doubles as the interface name (green when
+   linked, amber when loose) so the column reads left-to-right:
+   interface -> plug/slot reference -> action. */
+.ucm-ifaces-card__title { font-size: 1.05rem; }
+.ucm-ifaces-sec {
+    margin: .2rem 0 .5rem;
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #757575;
+}
+.ucm-ifaces-div {
+    height: 1px;
+    background: #f0f0f0;
+    margin: .9rem 0;
+}
+.ucm-iface-row {
+    display: flex;
+    align-items: center;
+    gap: .8rem;
+    padding: .5rem 0;
+}
+.ucm-iface-row__name { flex: 0 0 auto; }
+.ucm-iface-row__ref {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ucm-iface-row__actions { flex: 0 0 auto; display: flex; align-items: center; gap: .3rem; }
+.ucm-iface-select {
+    max-width: 13rem;
+    margin: 0;
+    font-family: "Ubuntu Mono variable", monospace;
+    font-size: .82rem;
+}

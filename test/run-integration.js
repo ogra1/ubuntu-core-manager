@@ -142,7 +142,16 @@ function ok(name, cond, extra = '') {
     const find = await m.searchSnaps('fire');
     ok('store search filters', Array.isArray(find) && find.length === 1 && find[0].name === 'firefox', JSON.stringify(find).slice(0, 80));
     const conns = await m.listInterfaces();
-    ok('connections has established+plugs+slots', Array.isArray(conns.established) && Array.isArray(conns.plugs) && Array.isArray(conns.slots));
+    ok('interfaces list has plugs+slots (live /v2/interfaces shape)',
+        Array.isArray(conns.plugs) && Array.isArray(conns.slots),
+        Object.keys(conns).join(','));
+    ok('interfaces list has NO legacy established/undesired keys',
+        !('established' in conns) && !('undesired' in conns),
+        Object.keys(conns).join(','));
+    ok('unconnected plug carries null connections and a `plug` key (not `name`)',
+        conns.plugs.some((p) => p.connections === null)
+        && conns.plugs.every((p) => typeof p.plug === 'string' && !('name' in p)),
+        JSON.stringify(conns.plugs[0]).slice(0, 100));
     // /v2/changes list shape: LIVE snapd returns a plain STRING summary and
     // HYPHENATED 'spawn-time' (the renderer was built against the old stub
     // shape — round-19 class bug). Keep the stub honest.
@@ -170,11 +179,8 @@ function ok(name, cond, extra = '') {
     try { await m.installSnap('mosquitto', 'stable | reboot'); } catch (e) { chErr = e; }
     ok('reject injected channel before socket', !!chErr && /invalid channel/.test(chErr.message), chErr && chErr.message);
 
-    const ifop = await m.connectInterface(
-        { snap: 'snap-store', plug: 'home' },
-        { snap: 'core24', slot: 'home' });
-    ok('connect plug->slot ok', ifop.status === 'Done', JSON.stringify(ifop));
-    ok('socket received connect payload', state.ifaceOps.some((o) => o.action === 'connect' && o.plug && o.plug.plug === 'home'));
+
+
 
     console.log('\n[6] netplan via snapd external config (core.system.network.netplan)');
     const before = await m.getNetplan();
@@ -273,6 +279,36 @@ function ok(name, cond, extra = '') {
     if (rev2) { await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(rev2.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })(); }
     ok('revert restored the previous revision', (await m.listSnaps()).find((x) => x.name === 'mosquitto').revision == mosqRev, JSON.stringify(mosq2 && mosq2.revision));
 
+
+    // LIVE-VERIFIED (snapd 2.77): POST /v2/interfaces is an ASYNC write — 202
+    // with the change id at the envelope TOP (result null) — and its body is
+    // the PLURAL plugs[]/slots[] form; the singular {plug, slot} body the old
+    // code sent is a 400 "at least one plug and slot is required".
+    const ifop = await m.connectInterface(
+        { snap: 'firefox', plug: 'browser' },
+        { snap: 'snap-store', slot: 'browser' });
+    ok('connect returns a change id (async envelope)', typeof ifop.id === 'string', JSON.stringify(ifop));
+    ok('socket received the PLURAL connect payload', state.ifaceOps.some((o) =>
+        o.action === 'connect'
+        && Array.isArray(o.plugs) && o.plugs.length === 1 && o.plugs[0].snap === 'firefox' && o.plugs[0].plug === 'browser'
+        && Array.isArray(o.slots) && o.slots.length === 1 && o.slots[0].snap === 'snap-store' && o.slots[0].slot === 'browser'),
+        JSON.stringify(state.ifaceOps[state.ifaceOps.length - 1]));
+    await new Promise((r) => setTimeout(r, 400)); // the stub settles its change at 250ms
+    const conns2 = await m.listInterfaces();
+    const browserPlug = conns2.plugs.find((p) => p.snap === 'firefox' && p.plug === 'browser');
+    ok('topology reflects the connect after settle',
+        browserPlug && JSON.stringify(browserPlug.connections) === JSON.stringify([{ snap: 'snap-store', slot: 'browser' }]),
+        JSON.stringify(browserPlug && browserPlug.connections));
+    const dfop = await m.disconnectInterface(
+        { snap: 'firefox', plug: 'network' },
+        { snap: 'core24', slot: 'network' });
+    ok('disconnect returns a change id (async envelope)', typeof dfop.id === 'string', JSON.stringify(dfop));
+    await new Promise((r) => setTimeout(r, 400));
+    const conns3 = await m.listInterfaces();
+    const netPlug = conns3.plugs.find((p) => p.snap === 'firefox' && p.plug === 'network');
+    ok('topology reflects the disconnect after settle (connections null)',
+        netPlug && netPlug.connections === null,
+        JSON.stringify(netPlug && netPlug.connections));
 
     const hs = m.readHostStats();
     ok('host stats have hostname+mem', typeof hs.hostname === 'string' && hs.mem && hs.mem.total > 0, JSON.stringify(hs).slice(0, 80));

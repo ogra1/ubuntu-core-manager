@@ -40,28 +40,19 @@ const SNAP_CONF = {
     htop: { port: '8080', 'logging.level': 'info' },
 };
 
-const CONNECTIONS = {
-    established: [
-        { interface: 'network', plug: { snap: 'firefox', plug: 'network' }, slot: { snap: 'core24', slot: 'network' }, manual: true, gadget: false },
-        { interface: 'network-bind', plug: { snap: 'mosquitto', plug: 'network-bind' }, slot: { snap: 'core24', slot: 'network-bind' }, manual: false, gadget: false },
-        { interface: 'browser', plug: { snap: 'firefox', plug: 'browser' }, slot: { snap: 'snap-store', slot: 'browser' }, manual: false, gadget: false },
-    ],
-    undesired: [
-        { interface: 'home', plug: { snap: 'snap-store', plug: 'home' }, slot: { snap: 'core24', slot: 'home' }, manual: true, gadget: false },
-    ],
+const IFACES = {
     plugs: [
-        { snap: 'firefox', name: 'network', interface: 'network', connections: [{ snap: 'core24', slot: 'network' }] },
-        { snap: 'mosquitto', name: 'network-bind', interface: 'network-bind', connections: [{ snap: 'core24', slot: 'network-bind' }] },
-        { snap: 'snap-store', name: 'home', interface: 'home', connections: [] },
-        { snap: 'firefox', name: 'browser', interface: 'browser', connections: [{ snap: 'snap-store', slot: 'browser' }] },
-        { snap: 'htop', name: 'home', interface: 'home', connections: [] },
+        { snap: 'firefox', plug: 'network', interface: 'network', apps: ['firefox'], connections: [{ snap: 'core24', slot: 'network' }] },
+        { snap: 'firefox', plug: 'browser', interface: 'browser', apps: ['firefox'], connections: null },
+        { snap: 'mosquitto', plug: 'network-bind', interface: 'network-bind', apps: ['mosquitto'], connections: [{ snap: 'core24', slot: 'network-bind' }] },
+        { snap: 'snap-store', plug: 'home', interface: 'home', apps: ['snap-store'], connections: null },
+        { snap: 'htop', plug: 'home', interface: 'home', apps: ['htop'], connections: null },
     ],
     slots: [
-        { snap: 'core24', name: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
-        { snap: 'core24', name: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
-        { snap: 'snap-store', name: 'browser', interface: 'browser', connections: [{ snap: 'firefox', plug: 'browser' }] },
-        { snap: 'core24', name: 'home', interface: 'home', connections: [] },
-        { snap: 'core24', name: 'removable-media', interface: 'removable-media', connections: [] },
+        { snap: 'core24', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
+        { snap: 'core24', slot: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
+        { snap: 'core24', slot: 'home', interface: 'home', connections: null },
+        { snap: 'snap-store', slot: 'browser', interface: 'browser', connections: null },
     ],
 };
 
@@ -88,7 +79,7 @@ function mockFactoryJs() {
         let SNAPS = ${JSON.stringify(SNAPS)};
         const CONF = ${JSON.stringify(SNAP_CONF)};
         const CHANGES = {};
-        const CONNECTIONS = ${JSON.stringify(CONNECTIONS)};
+        let IFC = ${JSON.stringify(IFACES)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
         const LOCAL_PW = 'correct-horse';
         let localSet = false;
@@ -279,9 +270,34 @@ function mockFactoryJs() {
             },
             network: { async apply() { return {}; } },
             interfaces: {
-                async list() { return CONNECTIONS; },
-                async connect() { return { status: 'Done' }; },
-                async disconnect() { return { status: 'Done' }; },
+                // LIVE-VERIFIED (snapd 2.77): GET /v2/interfaces -> {plugs, slots}
+                // (unconnected endpoints carry connections: null); POST is an
+                // ASYNC 202 write whose body is the PLURAL plugs[]/slots[] form.
+                async list() { return JSON.parse(JSON.stringify(IFC)); },
+                async connect(plugRef, slotRef) {
+                    const id = String(200 + ((CHANGES['ifaceSeq'] = (CHANGES['ifaceSeq'] || 0) + 1)));
+                    CHANGES[id] = { id, status: 'Doing', kind: 'connect-snap', t0: Date.now() };
+                    setTimeout(() => {
+                        const pg = IFC.plugs.find((x) => x.snap === plugRef.snap && x.plug === plugRef.plug);
+                        const sl = IFC.slots.find((x) => x.snap === slotRef.snap && x.slot === slotRef.slot);
+                        if (pg) pg.connections = [{ snap: sl.snap, slot: sl.slot }];
+                        if (sl) sl.connections = [{ snap: pg.snap, plug: pg.plug }];
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 400);
+                    return { id, change: id };
+                },
+                async disconnect(plugRef, slotRef) {
+                    const id = String(200 + ((CHANGES['ifaceSeq'] = (CHANGES['ifaceSeq'] || 0) + 1)));
+                    CHANGES[id] = { id, status: 'Doing', kind: 'disconnect-snap', t0: Date.now() };
+                    setTimeout(() => {
+                        const pg = IFC.plugs.find((x) => x.snap === plugRef.snap && x.plug === plugRef.plug);
+                        const sl = IFC.slots.find((x) => x.snap === slotRef.snap && x.slot === slotRef.slot);
+                        if (pg) pg.connections = null;
+                        if (sl) sl.connections = null;
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 400);
+                    return { id, change: id };
+                },
             },
             ping: async () => 'pong',
         };
@@ -305,6 +321,11 @@ function mockFactoryJs() {
         if (!u.startsWith('file://') && !u.startsWith('data:')) errors.push('requestfailed: ' + u + ' ' + (r.failure() && r.failure().errorText));
     });
 
+    // Validate the GENERATED mock (a syntax error in the template literal —
+    // e.g. an apostrophe inside a string, or an invalid assignment — is SILENT
+    // to node --check of this file; it would kill the mock, leave __mockCore
+    // unset, and break the very first setup click). Compile it here.
+    new Function(mockFactoryJs());
     // Inject the mock bridge BEFORE the page's own scripts run.
     await page.evaluateOnNewDocument(mockFactoryJs());
     await page.goto('file://' + path.join(ROOT, 'ui', 'index.html'), { waitUntil: 'networkidle2', timeout: 60000 });
@@ -849,13 +870,104 @@ function mockFactoryJs() {
     const stray = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);
     if (stray) console.log('PAGE ERROR: stray modal left open before interfaces view');
 
-    // ---- 5. interfaces view ----
+    // ---- 5. interfaces view (round 36: per-snap cards) ----
+    // The page defaults to showing ALL interfaces (connected + unconnected);
+    // the old "actionable only" toggle — which read an endpoint that can never
+    // list unconnected plugs — is gone. One card per consuming snap, sorted by
+    // snap name; a snap's connected interfaces on top, unconnected below.
     await page.click('.ucm-side a[data-view="interfaces"]');
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
-    await page.click('#ifacesFilterBtn');
-    await wait(300);
-    await page.screenshot({ path: path.join(SHOTS, '15-interfaces-all.png'), fullPage: true });
+    const ifv = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll('#ifacesCards .p-card'));
+        const titles = cards.map((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim());
+        const ff = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'firefox');
+        const mo = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'mosquitto');
+        const ss = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'snap-store');
+        const ht = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'htop');
+        const rows = (c) => (c ? Array.from(c.querySelectorAll('.ucm-iface-row')).map((r) => ({
+            name: r.querySelector('.ucm-iface-row__name').textContent.trim(),
+            ref: r.querySelector('.ucm-iface-row__ref').textContent.trim(),
+            tone: r.querySelector('.ucm-iface-row__name').className,
+        })) : null);
+        const ffRows = ff ? rows(ff) : null;
+        const hasSec = (c, t) => !!(c && Array.from(c.querySelectorAll('.ucm-ifaces-sec')).some((h) => h.textContent.trim() === t));
+        // the unconnected firefox:browser row's connect control
+        const unconn = ff && Array.from(ff.querySelectorAll('.ucm-iface-row')).find((r) =>
+            r.querySelector('.ucm-iface-row__ref').textContent.includes('browser'));
+        const sel = unconn && unconn.querySelector('.ucm-iface-select');
+        const opts = sel ? Array.from(sel.options).map((o) => o.value) : [];
+        const connectBtn = unconn && unconn.querySelector('.ucm-iconbtn');
+        const counts = cards.map((c) => c.querySelector('.ucm-ifaces-card__counts').textContent.trim());
+        return {
+            titles, counts,
+            ff: ffRows, mo: mo && rows(mo), ss: ss && rows(ss), ht: ht && rows(ht),
+            ffConnSec: hasSec(ff, 'Connected interfaces'), ffUnSec: hasSec(ff, 'Unconnected interfaces'),
+            selOpts: opts, hasSelect: !!sel, hasBtn: !!connectBtn,
+        };
+    });
+    if (!ifv.titles || JSON.stringify(ifv.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'snap-store']))
+        console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(ifv.titles));
+    if (!ifv.ff || !ifv.ffConnSec || !ifv.ffUnSec) console.log('PAGE ERROR: firefox card missing Connected/Unconnected sections');
+    const ffNames = (ifv.ff || []).map((r) => r.name);
+    if (ffNames.indexOf('network') !== 0 || ffNames.indexOf('browser') !== 1)
+        console.log('PAGE ERROR: firefox rows not connected-first: ' + JSON.stringify(ffNames));
+    if (ifv.ff && ifv.ff[0] && !/positive/.test(ifv.ff[0].tone))
+        console.log('PAGE ERROR: firefox connected row must be positive tone: ' + ifv.ff[0].tone);
+    if (ifv.ff && ifv.ff[0] && ifv.ff[0].ref !== 'network → core24:network')
+        console.log('PAGE ERROR: firefox connected ref wrong: ' + ifv.ff[0].ref);
+    if (ifv.ff && ifv.ff[1] && !/caution/.test(ifv.ff[1].tone))
+        console.log('PAGE ERROR: firefox unconnected row must be caution tone: ' + ifv.ff[1].tone);
+    if (ifv.ff && ifv.ff[1] && ifv.ff[1].ref !== 'browser')
+        console.log('PAGE ERROR: firefox unconnected ref wrong: ' + ifv.ff[1].ref);
+    if (!ifv.hasSelect || JSON.stringify(ifv.selOpts) !== JSON.stringify(['', 'snap-store|browser']))
+        console.log('PAGE ERROR: firefox:browser target-slot options wrong: ' + JSON.stringify(ifv.selOpts));
+    if (ifv.ss && !(ifv.ss.length === 1 && ifv.ss[0].name === 'home' && /caution/.test(ifv.ss[0].tone) && ifv.ss[0].ref === 'home'))
+        console.log('PAGE ERROR: snap-store card wrong (home must be unconnected): ' + JSON.stringify(ifv.ss));
+    if (ifv.ht && !(ifv.ht.length === 1 && ifv.ht[0].name === 'home' && ifv.ht[0].ref === 'home'))
+        console.log('PAGE ERROR: htop card wrong: ' + JSON.stringify(ifv.ht));
+    if (ifv.mo && !(ifv.mo.length === 1 && ifv.mo[0].name === 'network-bind' && /positive/.test(ifv.mo[0].tone) && ifv.mo[0].ref === 'network-bind → core24:network-bind'))
+        console.log('PAGE ERROR: mosquitto card wrong: ' + JSON.stringify(ifv.mo));
+    const ifSummary = await page.evaluate(() => document.querySelector('#ifacesSummary').textContent.trim());
+    if (ifSummary !== '4 snaps · 2 connected · 3 unconnected')
+        console.log('PAGE ERROR: ifaces summary wrong: ' + ifSummary);
+    // element shot of the firefox card (VLM layout check)
+    const ffCard = await page.$('#ifacesCards .p-card');
+    if (ffCard) await ffCard.screenshot({ path: '/root/shots/14b-iface-card-firefox.png', scale: 2 });
+    // drive one real connect: pick the slot, click Connect, wait the mock's
+    // 400ms settle + reload, and assert the card re-renders with it connected.
+    await page.evaluate(() => {
+        const ff = Array.from(document.querySelectorAll('#ifacesCards .p-card')).find((c) =>
+            c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'firefox');
+        const row = Array.from(ff.querySelectorAll('.ucm-iface-row')).find((r) =>
+            r.querySelector('.ucm-iface-row__ref').textContent.includes('browser'));
+        row.querySelector('.ucm-iface-select').value = 'snap-store|browser';
+        row.querySelector('.ucm-iconbtn').click();
+    });
+    await wait(1200);
+    const ifv2 = await page.evaluate(() => {
+        const ff = Array.from(document.querySelectorAll('#ifacesCards .p-card')).find((c) =>
+            c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'firefox');
+        const rows = Array.from(ff.querySelectorAll('.ucm-iface-row')).map((r) => ({
+            name: r.querySelector('.ucm-iface-row__name').textContent.trim(),
+            ref: r.querySelector('.ucm-iface-row__ref').textContent.trim(),
+            tone: r.querySelector('.ucm-iface-row__name').className,
+        }));
+        return {
+            rows,
+            counts: ff.querySelector('.ucm-ifaces-card__counts').textContent.trim(),
+            hasUnsec: Array.from(ff.querySelectorAll('.ucm-ifaces-sec')).some((h) => h.textContent.trim() === 'Unconnected interfaces'),
+        };
+    });
+    const ffBrowser = ifv2.rows.find((r) => r.name === 'browser');
+    if (!ffBrowser || !/positive/.test(ffBrowser.tone) || ffBrowser.ref !== 'browser → snap-store:browser')
+        console.log('PAGE ERROR: connect did not move firefox:browser to connected: ' + JSON.stringify(ifv2.rows));
+    if (ifv2.rows.length !== 2 || !/positive/.test(ifv2.rows[0].tone) || !/positive/.test(ifv2.rows[1].tone))
+        console.log('PAGE ERROR: firefox should have 2 connected rows after connect: ' + JSON.stringify(ifv2.rows));
+    if (ifv2.counts !== '2 connected · 0 unconnected')
+        console.log('PAGE ERROR: firefox counts after connect wrong: ' + ifv2.counts);
+    if (ifv2.hasUnsec) console.log('PAGE ERROR: stale Unconnected section after connect');
+    await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });
 
     // ---- 6. lock -> local sign-in view ----
     await page.click('#lockBtn');
