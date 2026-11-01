@@ -47,6 +47,7 @@ const IFACES = {
         { snap: 'mosquitto', plug: 'network-bind', interface: 'network-bind', apps: ['mosquitto'], connections: [{ snap: 'core', slot: 'network-bind' }] },
         { snap: 'snap-store', plug: 'home', interface: 'home', apps: ['snap-store'], connections: null },
         { snap: 'htop', plug: 'home', interface: 'home', apps: ['htop'], connections: null },
+        { snap: 'radio', plug: 'pps', interface: 'pps', apps: ['radio'], connections: null },
     ],
     slots: [
         { snap: 'core', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
@@ -885,15 +886,20 @@ function mockFactoryJs() {
         const readCard = (card) => {
             const rows = Array.from(card.querySelectorAll('tr.ucm-iface')).map((tr) => {
                 const tds = Array.from(tr.querySelectorAll('td'));
+                const sel = tr.querySelector('.ucm-iface-select');
+                const btn = tr.querySelector('.ucm-iface-btn');
+                const gap = (sel && btn) ? Math.round(btn.getBoundingClientRect().left - sel.getBoundingClientRect().right) : null;
                 return {
                     iface: tds[0].textContent.trim(),
                     plug: tds[1].textContent.trim(),
                     slot: tds[2].textContent.trim(),
                     tone: tr.className,
-                    hasSelect: !!tr.querySelector('.ucm-iface-select'),
-                    hasBtn: !!tr.querySelector('.ucm-iconbtn'),
-                    btnLabel: (tr.querySelector('.ucm-iconbtn') || {}).getAttribute && tr.querySelector('.ucm-iconbtn').getAttribute('aria-label'),
-                    selOpts: tr.querySelector('.ucm-iface-select') ? Array.from(tr.querySelector('.ucm-iface-select').options).map((o) => o.value) : null,
+                    hasSelect: !!sel,
+                    hasBtn: !!btn,
+                    btnLabel: btn ? btn.textContent.trim() : null,
+                    btnDisabled: btn ? (btn.disabled || btn.getAttribute('aria-disabled') === 'true') : null,
+                    selToBtnGap: gap,
+                    selOpts: sel ? Array.from(sel.options).map((o) => o.value) : null,
                 };
             });
             const secs = Array.from(card.querySelectorAll('thead th')).map((t) => t.textContent.trim());
@@ -908,13 +914,14 @@ function mockFactoryJs() {
             mo: findCard('mosquitto') ? readCard(findCard('mosquitto')) : null,
             ss: findCard('snap-store') ? readCard(findCard('snap-store')) : null,
             ht: findCard('htop') ? readCard(findCard('htop')) : null,
+            rd: findCard('radio') ? readCard(findCard('radio')) : null,
         };
     });
     const ifCardBtn = (title, iface) => page.evaluate(([title, iface]) => {
         const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
             .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === title);
         const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
-        row.querySelector('.ucm-iconbtn').click();
+        row.querySelector('.ucm-iface-btn').click();
     }, [title, iface]);
     const ifSelectThenConnect = (title, iface, value) => page.evaluate(([title, iface, value]) => {
         const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
@@ -922,13 +929,13 @@ function mockFactoryJs() {
         const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
         const sel = row.querySelector('.ucm-iface-select');
         sel.value = value;
-        row.querySelector('.ucm-iconbtn').click();
+        row.querySelector('.ucm-iface-btn').click();
     }, [title, iface, value]);
 
     let v = await ifRead();
-    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'snap-store']))
+    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'radio', 'snap-store']))
         console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
-    if (v.summary !== '4 snaps · 2 connected · 3 unconnected')
+    if (v.summary !== '5 snaps · 2 connected · 4 unconnected')
         console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
     // firefox: connected(network,system ":network",green) on top, unconnected(browser,app "snap-store:browser",amber) below
     if (!v.ff || v.ff.rows.length !== 2) console.log('PAGE ERROR: firefox should have 2 rows: ' + JSON.stringify(v.ff && v.ff.rows));
@@ -952,6 +959,28 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: htop row wrong (unconnected "—", amber; BARE connect pre-fills :home): ' + JSON.stringify(v.ht && v.ht.rows));
     else if (v.ht.rows[0].hasSelect !== false || v.ht.rows[0].hasBtn !== true)
         console.log('PAGE ERROR: htop unconnected system row must be a BARE connect (no dropdown): ' + JSON.stringify(v.ht.rows[0]));
+    // THE FIX GUARD: on a dropdown row the Connect(+) must be PRESENT and sit
+    // NEXT TO the dropdown (the regression was a ~200px right-align gap that made
+    // it look absent). selToBtnGap = button.left - select.right, must be small.
+    if (v.ff && v.ff.rows[1]) {
+        const brow = v.ff.rows[1];
+        if (brow.hasBtn !== true) console.log('PAGE ERROR: firefox dropdown row is missing its Connect button: ' + JSON.stringify(brow));
+        else if (brow.selToBtnGap == null || brow.selToBtnGap < 0 || brow.selToBtnGap > 16)
+            console.log('PAGE ERROR: firefox Connect not adjacent to the dropdown (gap=' + brow.selToBtnGap + 'px, want 0..12): ' + JSON.stringify(brow));
+    }
+    // NO-TARGET case: radio:pps has no connectable slot -> no empty pulldown and
+    // a visually + functionally disabled Connect.
+    if (!v.rd || v.rd.rows.length !== 1) console.log('PAGE ERROR: radio card should have 1 row: ' + JSON.stringify(v.rd && v.rd.rows));
+    else {
+        const rr = v.rd.rows[0];
+        if (rr.iface !== 'pps' || rr.slot !== '—' || !/caution/.test(rr.tone))
+            console.log('PAGE ERROR: radio pps row wrong (unconnected "—", amber): ' + JSON.stringify(rr));
+        if (rr.hasSelect !== false) console.log('PAGE ERROR: radio pps must NOT show an empty pulldown (no targets): ' + JSON.stringify(rr));
+        if (rr.hasBtn !== true || rr.btnDisabled !== true)
+            console.log('PAGE ERROR: radio pps Connect must be present but disabled (no targets): ' + JSON.stringify(rr));
+        else if (rr.btnLabel !== 'Connect')
+            console.log('PAGE ERROR: radio pps disabled Connect label wrong: ' + rr.btnLabel);
+    }
     // element shot of the firefox card (VLM layout check)
     const ffCardEl = await page.$('#ifacesCards .p-card');
     if (ffCardEl) await ffCardEl.screenshot({ path: '/root/shots/14b-iface-card-firefox.png', scale: 2 });

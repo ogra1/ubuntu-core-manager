@@ -864,16 +864,36 @@ function renderSnaps() {
    row tight in the Actions cell. NOTE: the tooltip message element keeps the
    raw label as its TEXT so it is visible in CSS-less contexts (the
    screenshot harness) — in-app the bundle hides it until :hover/:focus. */
-function rowBtn(label, icon, onClick) {
-    return el('button', {
-        class: 'p-button--base p-button ucm-rowbtn ucm-iconbtn p-tooltip--top-right',
+function rowBtn(label, icon, onClick, opts = {}) {
+    const btn = el('button', {
+        class: 'p-button--base p-button ucm-rowbtn ucm-iconbtn p-tooltip--top-right' + (opts.disabled ? ' is-disabled' : ''),
         type: 'button',
-        'aria-label': label,
-        'data-tooltip': label,
-        onclick: (e) => onClick(e.currentTarget),
+        'aria-label': opts.ariaLabel || label,
+        'data-tooltip': opts.tooltip || label,
+        disabled: opts.disabled || false,
+        'aria-disabled': opts.disabled ? 'true' : 'false',
+        onclick: opts.disabled ? null : ((e) => onClick(e.currentTarget)),
     },
         el('i', { class: icon }),
-        el('span', { class: 'p-tooltip__message', text: label }));
+        el('span', { class: 'p-tooltip__message', text: opts.tooltip || label }));
+    return btn;
+}
+
+/* Compact labeled action button for the interfaces tables. A data-URI SVG
+   glyph (the old p-icon--plus) is exactly the kind of tiny asset that can fail
+   to paint / be undiscoverable in the kiosk; a "Connect"/"Disconnect" label is
+   unambiguous and always renders. Matches the app's labeled p-button--base
+   idiom (Clear, Refresh, Search store). */
+function ifaceBtn(label, onClick, opts = {}) {
+    const b = el('button', {
+        class: 'p-button--base p-button ucm-iface-btn' + (opts.disabled ? ' is-disabled' : ''),
+        type: 'button',
+        disabled: opts.disabled || false,
+        'aria-disabled': opts.disabled ? 'true' : 'false',
+        title: opts.title || label,
+        onclick: opts.disabled ? null : ((e) => onClick(e.currentTarget)),
+    }, label);
+    return b;
 }
 
 function confirmRemove(name) {
@@ -1200,21 +1220,33 @@ function ifacesRow(r) {
     const slotCell = r.slotRef
         ? el('td', { class: 'ucm-mono', text: slotDisplay(r.slotRef) })
         : el('td', { class: 'ucm-muted', text: '—' });
+    // The action controls sit in one inline-flex group so the dropdown and its
+    // Connect button are ALWAYS adjacent (fixed .3rem gap). Labeled buttons
+    // (not a tiny SVG icon) so the action can't be invisible/undiscoverable.
+    const ctrl = (...kids) => el('div', { class: 'ucm-ifaces-ctrl' }, ...kids);
     let actionCell;
     if (r.connected) {
-        actionCell = el('td', { class: 'ucm-ifaces-action' },
-            rowBtn(`Disconnect ${r.iface} on ${r.snap}`, 'p-icon--delete', () => disconnectPlug(r.snap, r.plug, r.slotRef)));
+        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(
+            ifaceBtn('Disconnect', () => disconnectPlug(r.snap, r.plug, r.slotRef),
+                { title: `Disconnect ${r.iface} on ${r.snap}` })));
     } else if (r.sysSlot) {
         // unconnected SYSTEM slot: connect needs no target selection (pre-filled)
-        actionCell = el('td', { class: 'ucm-ifaces-action' },
-            rowBtn(`Connect ${r.iface} on ${r.snap}`, 'p-icon--plus', (btn) => connectPlug(r, btn)));
-    } else {
-        // unconnected APP slot: pick the target
+        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(
+            ifaceBtn('Connect', (btn) => connectPlug(r, btn), { title: `Connect ${r.iface} on ${r.snap}` })));
+    } else if (r.free.length) {
+        // unconnected APP slot with connectable targets: pick one, then connect
         const sel = el('select', { class: 'ucm-iface-select' },
             el('option', { value: '', text: 'target slot…' }));
-        r.free.forEach((s) => sel.append(el('option', { value: s.key, text: s.label })));
-        actionCell = el('td', { class: 'ucm-ifaces-action' }, sel,
-            rowBtn(`Connect ${r.iface} on ${r.snap}`, 'p-icon--plus', (btn) => connectPlug(r, btn)));
+        r.free.forEach((f) => sel.append(el('option', { value: f.key, text: f.label })));
+        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(sel,
+            ifaceBtn('Connect', (btn) => connectPlug(r, btn), { title: `Connect ${r.iface} on ${r.snap}` })));
+    } else {
+        // unconnected APP slot with NO connectable target: no empty pulldown,
+        // and a visually + functionally disabled Connect.
+        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(ifaceBtn('Connect', (btn) => connectPlug(r, btn), {
+            disabled: true,
+            title: `Connect ${r.iface} on ${r.snap} — no target slots available`,
+        })));
     }
     return el('tr', { class: `ucm-iface ucm-iface--${tone}` },
         el('td', { class: 'ucm-iface__iface', text: r.iface || '—' }),

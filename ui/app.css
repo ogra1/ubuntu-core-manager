@@ -647,7 +647,7 @@ html, body {
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }
 
-/* ---- interfaces page (round 37): per-snap cards, snap-connections table ---
+/* ---- interfaces page: per-snap cards, snap-connections tables ------
    Each card is one <snap> and holds a table (Interface | Plug | Slot |
    Actions) that mirrors `snap connections <snap>`: that snap's connected
    interfaces on top, a divider row, then its unconnected ones. The table
@@ -672,15 +672,32 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* tone tint matches the bundle status-label greens/ambers (positive #0e8420) */
 .ucm-iface--positive .ucm-iface__iface { color: #0e8420; }
 .ucm-iface--caution .ucm-iface__iface { color: #b36b00; }
+/* the Actions cell is wide (the table fills the card). The controls are wrapped
+   in one inline-flex group (.ucm-ifaces-ctrl) with a fixed .3rem gap, so the
+   dropdown and its Connect button are ALWAYS adjacent — previously they were
+   two separate right-aligned inline items with a big empty gap BETWEEN them,
+   which made the Connect look "missing" next to the dropdown. The group is
+   right-aligned in the cell, matching the right-aligned "Actions" header. */
 .ucm-ifaces-action { text-align: right; white-space: nowrap; }
-.ucm-ifaces-action .p-button { display: inline-block; }
-.ucm-ifaces-action .p-button { margin: 0 .2rem 0 0; }
+.ucm-ifaces-ctrl { display: inline-flex; align-items: center; gap: .3rem; }
 .ucm-iface-select {
     max-width: 13rem;
-    margin: 0 .4rem 0 0;
+    margin: 0;
     font-family: "Ubuntu Mono variable", monospace;
     font-size: .82rem;
 }
+/* labeled Connect/Disconnect (not a tiny data-URI SVG icon): compact base
+   buttons sized for a table row; the label can't be invisible or overlooked. */
+.ucm-iface-btn {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    padding: 0 .6rem;
+    min-height: 0;
+    height: 1.9rem;
+    font-size: .82rem;
+}
+.ucm-iface-btn:disabled { color: #a8a8a8; border-color: #e0e0e0; background: #fafafa; }
 .ucm-ifaces-div td {
     border: 0;
     border-top: 1px solid #f0f0f0;
