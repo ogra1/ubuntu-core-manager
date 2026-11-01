@@ -647,43 +647,43 @@ html, body {
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }
 
-/* ---- interfaces page (round 36): per-snap cards --------------------------
-   One card per snap; connected interfaces on top, unconnected below. The
-   connected row's status label doubles as the interface name (green when
-   linked, amber when loose) so the column reads left-to-right:
-   interface -> plug/slot reference -> action. */
+/* ---- interfaces page (round 37): per-snap cards, snap-connections table ---
+   Each card is one <snap> and holds a table (Interface | Plug | Slot |
+   Actions) that mirrors `snap connections <snap>`: that snap's connected
+   interfaces on top, a divider row, then its unconnected ones. The table
+   keeps rows vertically aligned (the old flex rows looked jumpy because each
+   row's controls had different widths). System slots render ":name" and their
+   unconnected rows carry a BARE Connect (target pre-filled); app slots render
+   "snap:name" and keep a target-slot dropdown. The interface name is a single
+   plain (subtly tinted) cell — no status box — so it is not redundant with
+   the Plug/Slot columns, exactly like the CLI. */
 .ucm-ifaces-card__title { font-size: 1.05rem; }
-.ucm-ifaces-sec {
-    margin: .2rem 0 .5rem;
-    font-size: .68rem;
-    font-weight: 600;
-    letter-spacing: .06em;
+.ucm-ifaces-table { margin: 0; table-layout: auto; }
+.ucm-ifaces-table th {
+    font-size: .7rem;
     text-transform: uppercase;
+    letter-spacing: .04em;
     color: #757575;
-}
-.ucm-ifaces-div {
-    height: 1px;
-    background: #f0f0f0;
-    margin: .9rem 0;
-}
-.ucm-iface-row {
-    display: flex;
-    align-items: center;
-    gap: .8rem;
-    padding: .5rem 0;
-}
-.ucm-iface-row__name { flex: 0 0 auto; }
-.ucm-iface-row__ref {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
-.ucm-iface-row__actions { flex: 0 0 auto; display: flex; align-items: center; gap: .3rem; }
+.ucm-ifaces-table td { vertical-align: middle; white-space: nowrap; }
+.ucm-ifaces-table .ucm-mono { font-size: .85rem; }
+.ucm-iface__iface { font-weight: 600; }
+/* tone tint matches the bundle status-label greens/ambers (positive #0e8420) */
+.ucm-iface--positive .ucm-iface__iface { color: #0e8420; }
+.ucm-iface--caution .ucm-iface__iface { color: #b36b00; }
+.ucm-ifaces-action { text-align: right; white-space: nowrap; }
+.ucm-ifaces-action .p-button { display: inline-block; }
+.ucm-ifaces-action .p-button { margin: 0 .2rem 0 0; }
 .ucm-iface-select {
     max-width: 13rem;
-    margin: 0;
+    margin: 0 .4rem 0 0;
     font-family: "Ubuntu Mono variable", monospace;
     font-size: .82rem;
+}
+.ucm-ifaces-div td {
+    border: 0;
+    border-top: 1px solid #f0f0f0;
+    padding: .15rem 0;
+    height: 0;
 }

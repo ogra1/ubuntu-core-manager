@@ -42,16 +42,16 @@ const SNAP_CONF = {
 
 const IFACES = {
     plugs: [
-        { snap: 'firefox', plug: 'network', interface: 'network', apps: ['firefox'], connections: [{ snap: 'core24', slot: 'network' }] },
+        { snap: 'firefox', plug: 'network', interface: 'network', apps: ['firefox'], connections: [{ snap: 'core', slot: 'network' }] },
         { snap: 'firefox', plug: 'browser', interface: 'browser', apps: ['firefox'], connections: null },
-        { snap: 'mosquitto', plug: 'network-bind', interface: 'network-bind', apps: ['mosquitto'], connections: [{ snap: 'core24', slot: 'network-bind' }] },
+        { snap: 'mosquitto', plug: 'network-bind', interface: 'network-bind', apps: ['mosquitto'], connections: [{ snap: 'core', slot: 'network-bind' }] },
         { snap: 'snap-store', plug: 'home', interface: 'home', apps: ['snap-store'], connections: null },
         { snap: 'htop', plug: 'home', interface: 'home', apps: ['htop'], connections: null },
     ],
     slots: [
-        { snap: 'core24', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
-        { snap: 'core24', slot: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
-        { snap: 'core24', slot: 'home', interface: 'home', connections: null },
+        { snap: 'core', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
+        { snap: 'core', slot: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
+        { snap: 'core', slot: 'home', interface: 'home', connections: null },
         { snap: 'snap-store', slot: 'browser', interface: 'browser', connections: null },
     ],
 };
@@ -870,103 +870,113 @@ function mockFactoryJs() {
     const stray = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);
     if (stray) console.log('PAGE ERROR: stray modal left open before interfaces view');
 
-    // ---- 5. interfaces view (round 36: per-snap cards) ----
-    // The page defaults to showing ALL interfaces (connected + unconnected);
-    // the old "actionable only" toggle — which read an endpoint that can never
-    // list unconnected plugs — is gone. One card per consuming snap, sorted by
-    // snap name; a snap's connected interfaces on top, unconnected below.
+    // ---- 5. interfaces view (round 37: per-snap cards, snap-connections tables) ----
+    // The page shows ALL interfaces (connected + unconnected). One card per
+    // consuming snap (sorted by name), each a table (Interface | Plug | Slot |
+    // Actions) mirroring `snap connections <snap>`: connected rows on top,
+    // unconnected below. System slots (core/snapd/system) render ":name" and
+    // their unconnected rows get a BARE Connect (target pre-filled); app slots
+    // render "snap:name" and keep a target-slot dropdown.
     await page.click('.ucm-side a[data-view="interfaces"]');
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
-    const ifv = await page.evaluate(() => {
-        const cards = Array.from(document.querySelectorAll('#ifacesCards .p-card'));
-        const titles = cards.map((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim());
-        const ff = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'firefox');
-        const mo = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'mosquitto');
-        const ss = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'snap-store');
-        const ht = cards.find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'htop');
-        const rows = (c) => (c ? Array.from(c.querySelectorAll('.ucm-iface-row')).map((r) => ({
-            name: r.querySelector('.ucm-iface-row__name').textContent.trim(),
-            ref: r.querySelector('.ucm-iface-row__ref').textContent.trim(),
-            tone: r.querySelector('.ucm-iface-row__name').className,
-        })) : null);
-        const ffRows = ff ? rows(ff) : null;
-        const hasSec = (c, t) => !!(c && Array.from(c.querySelectorAll('.ucm-ifaces-sec')).some((h) => h.textContent.trim() === t));
-        // the unconnected firefox:browser row's connect control
-        const unconn = ff && Array.from(ff.querySelectorAll('.ucm-iface-row')).find((r) =>
-            r.querySelector('.ucm-iface-row__ref').textContent.includes('browser'));
-        const sel = unconn && unconn.querySelector('.ucm-iface-select');
-        const opts = sel ? Array.from(sel.options).map((o) => o.value) : [];
-        const connectBtn = unconn && unconn.querySelector('.ucm-iconbtn');
-        const counts = cards.map((c) => c.querySelector('.ucm-ifaces-card__counts').textContent.trim());
+
+    const ifRead = () => page.evaluate(() => {
+        const readCard = (card) => {
+            const rows = Array.from(card.querySelectorAll('tr.ucm-iface')).map((tr) => {
+                const tds = Array.from(tr.querySelectorAll('td'));
+                return {
+                    iface: tds[0].textContent.trim(),
+                    plug: tds[1].textContent.trim(),
+                    slot: tds[2].textContent.trim(),
+                    tone: tr.className,
+                    hasSelect: !!tr.querySelector('.ucm-iface-select'),
+                    hasBtn: !!tr.querySelector('.ucm-iconbtn'),
+                    btnLabel: (tr.querySelector('.ucm-iconbtn') || {}).getAttribute && tr.querySelector('.ucm-iconbtn').getAttribute('aria-label'),
+                    selOpts: tr.querySelector('.ucm-iface-select') ? Array.from(tr.querySelector('.ucm-iface-select').options).map((o) => o.value) : null,
+                };
+            });
+            const secs = Array.from(card.querySelectorAll('thead th')).map((t) => t.textContent.trim());
+            return { rows, head: secs, counts: card.querySelector('.ucm-ifaces-card__counts').textContent.trim() };
+        };
+        const findCard = (t) => Array.from(document.querySelectorAll('#ifacesCards .p-card'))
+            .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === t);
         return {
-            titles, counts,
-            ff: ffRows, mo: mo && rows(mo), ss: ss && rows(ss), ht: ht && rows(ht),
-            ffConnSec: hasSec(ff, 'Connected interfaces'), ffUnSec: hasSec(ff, 'Unconnected interfaces'),
-            selOpts: opts, hasSelect: !!sel, hasBtn: !!connectBtn,
+            titles: Array.from(document.querySelectorAll('#ifacesCards .p-card .ucm-ifaces-card__title')).map((t) => t.textContent.trim()),
+            summary: document.querySelector('#ifacesSummary').textContent.trim(),
+            ff: findCard('firefox') ? readCard(findCard('firefox')) : null,
+            mo: findCard('mosquitto') ? readCard(findCard('mosquitto')) : null,
+            ss: findCard('snap-store') ? readCard(findCard('snap-store')) : null,
+            ht: findCard('htop') ? readCard(findCard('htop')) : null,
         };
     });
-    if (!ifv.titles || JSON.stringify(ifv.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'snap-store']))
-        console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(ifv.titles));
-    if (!ifv.ff || !ifv.ffConnSec || !ifv.ffUnSec) console.log('PAGE ERROR: firefox card missing Connected/Unconnected sections');
-    const ffNames = (ifv.ff || []).map((r) => r.name);
-    if (ffNames.indexOf('network') !== 0 || ffNames.indexOf('browser') !== 1)
-        console.log('PAGE ERROR: firefox rows not connected-first: ' + JSON.stringify(ffNames));
-    if (ifv.ff && ifv.ff[0] && !/positive/.test(ifv.ff[0].tone))
-        console.log('PAGE ERROR: firefox connected row must be positive tone: ' + ifv.ff[0].tone);
-    if (ifv.ff && ifv.ff[0] && ifv.ff[0].ref !== 'network → core24:network')
-        console.log('PAGE ERROR: firefox connected ref wrong: ' + ifv.ff[0].ref);
-    if (ifv.ff && ifv.ff[1] && !/caution/.test(ifv.ff[1].tone))
-        console.log('PAGE ERROR: firefox unconnected row must be caution tone: ' + ifv.ff[1].tone);
-    if (ifv.ff && ifv.ff[1] && ifv.ff[1].ref !== 'browser')
-        console.log('PAGE ERROR: firefox unconnected ref wrong: ' + ifv.ff[1].ref);
-    if (!ifv.hasSelect || JSON.stringify(ifv.selOpts) !== JSON.stringify(['', 'snap-store|browser']))
-        console.log('PAGE ERROR: firefox:browser target-slot options wrong: ' + JSON.stringify(ifv.selOpts));
-    if (ifv.ss && !(ifv.ss.length === 1 && ifv.ss[0].name === 'home' && /caution/.test(ifv.ss[0].tone) && ifv.ss[0].ref === 'home'))
-        console.log('PAGE ERROR: snap-store card wrong (home must be unconnected): ' + JSON.stringify(ifv.ss));
-    if (ifv.ht && !(ifv.ht.length === 1 && ifv.ht[0].name === 'home' && ifv.ht[0].ref === 'home'))
-        console.log('PAGE ERROR: htop card wrong: ' + JSON.stringify(ifv.ht));
-    if (ifv.mo && !(ifv.mo.length === 1 && ifv.mo[0].name === 'network-bind' && /positive/.test(ifv.mo[0].tone) && ifv.mo[0].ref === 'network-bind → core24:network-bind'))
-        console.log('PAGE ERROR: mosquitto card wrong: ' + JSON.stringify(ifv.mo));
-    const ifSummary = await page.evaluate(() => document.querySelector('#ifacesSummary').textContent.trim());
-    if (ifSummary !== '4 snaps · 2 connected · 3 unconnected')
-        console.log('PAGE ERROR: ifaces summary wrong: ' + ifSummary);
-    // element shot of the firefox card (VLM layout check)
-    const ffCard = await page.$('#ifacesCards .p-card');
-    if (ffCard) await ffCard.screenshot({ path: '/root/shots/14b-iface-card-firefox.png', scale: 2 });
-    // drive one real connect: pick the slot, click Connect, wait the mock's
-    // 400ms settle + reload, and assert the card re-renders with it connected.
-    await page.evaluate(() => {
-        const ff = Array.from(document.querySelectorAll('#ifacesCards .p-card')).find((c) =>
-            c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'firefox');
-        const row = Array.from(ff.querySelectorAll('.ucm-iface-row')).find((r) =>
-            r.querySelector('.ucm-iface-row__ref').textContent.includes('browser'));
-        row.querySelector('.ucm-iface-select').value = 'snap-store|browser';
+    const ifCardBtn = (title, iface) => page.evaluate(([title, iface]) => {
+        const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
+            .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === title);
+        const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
         row.querySelector('.ucm-iconbtn').click();
-    });
+    }, [title, iface]);
+    const ifSelectThenConnect = (title, iface, value) => page.evaluate(([title, iface, value]) => {
+        const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
+            .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === title);
+        const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
+        const sel = row.querySelector('.ucm-iface-select');
+        sel.value = value;
+        row.querySelector('.ucm-iconbtn').click();
+    }, [title, iface, value]);
+
+    let v = await ifRead();
+    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'snap-store']))
+        console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
+    if (v.summary !== '4 snaps · 2 connected · 3 unconnected')
+        console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
+    // firefox: connected(network,system ":network",green) on top, unconnected(browser,app "snap-store:browser",amber) below
+    if (!v.ff || v.ff.rows.length !== 2) console.log('PAGE ERROR: firefox should have 2 rows: ' + JSON.stringify(v.ff && v.ff.rows));
+    else {
+        if (!v.ff.head || v.ff.head[0] !== 'Interface' || v.ff.head[1] !== 'Plug' || v.ff.head[2] !== 'Slot' || v.ff.head[3] !== 'Actions')
+            console.log('PAGE ERROR: firefox table headers wrong: ' + JSON.stringify(v.ff.head));
+        const a = v.ff.rows[0], b = v.ff.rows[1];
+        if (a.iface !== 'network' || a.plug !== 'firefox:network' || a.slot !== ':network' || !/positive/.test(a.tone))
+            console.log('PAGE ERROR: firefox network row wrong (system slot must be ":network", green, no action select): ' + JSON.stringify(a));
+        if (b.iface !== 'browser' || b.plug !== 'firefox:browser' || b.slot !== '—' || !/caution/.test(b.tone))
+            console.log('PAGE ERROR: firefox browser row wrong (unconnected -> "—", amber; target via dropdown): ' + JSON.stringify(b));
+        if (b.hasSelect !== true || JSON.stringify(b.selOpts) !== JSON.stringify(['', 'snap-store|browser']))
+            console.log('PAGE ERROR: firefox browser row dropdown options wrong: ' + JSON.stringify(b.selOpts));
+        if (a.hasSelect !== false) console.log('PAGE ERROR: firefox connected row must not have a select: ' + JSON.stringify(a));
+    }
+    // mosquitto: single connected system row ":network-bind"
+    if (!v.mo || v.mo.rows.length !== 1 || v.mo.rows[0].iface !== 'network-bind' || v.mo.rows[0].slot !== ':network-bind' || !/positive/.test(v.mo.rows[0].tone))
+        console.log('PAGE ERROR: mosquitto row wrong: ' + JSON.stringify(v.mo && v.mo.rows));
+    // htop: single unconnected system row, slot ":home", BARE connect (no select)
+    if (!v.ht || v.ht.rows.length !== 1 || v.ht.rows[0].iface !== 'home' || v.ht.rows[0].slot !== '—' || !/caution/.test(v.ht.rows[0].tone))
+        console.log('PAGE ERROR: htop row wrong (unconnected "—", amber; BARE connect pre-fills :home): ' + JSON.stringify(v.ht && v.ht.rows));
+    else if (v.ht.rows[0].hasSelect !== false || v.ht.rows[0].hasBtn !== true)
+        console.log('PAGE ERROR: htop unconnected system row must be a BARE connect (no dropdown): ' + JSON.stringify(v.ht.rows[0]));
+    // element shot of the firefox card (VLM layout check)
+    const ffCardEl = await page.$('#ifacesCards .p-card');
+    if (ffCardEl) await ffCardEl.screenshot({ path: '/root/shots/14b-iface-card-firefox.png', scale: 2 });
+
+    // (a) BARE connect on a system slot (snap-store:home -> :home), no dropdown
+    await ifCardBtn('snap-store', 'home');
     await wait(1200);
-    const ifv2 = await page.evaluate(() => {
-        const ff = Array.from(document.querySelectorAll('#ifacesCards .p-card')).find((c) =>
-            c.querySelector('.ucm-ifaces-card__title').textContent.trim() === 'firefox');
-        const rows = Array.from(ff.querySelectorAll('.ucm-iface-row')).map((r) => ({
-            name: r.querySelector('.ucm-iface-row__name').textContent.trim(),
-            ref: r.querySelector('.ucm-iface-row__ref').textContent.trim(),
-            tone: r.querySelector('.ucm-iface-row__name').className,
-        }));
-        return {
-            rows,
-            counts: ff.querySelector('.ucm-ifaces-card__counts').textContent.trim(),
-            hasUnsec: Array.from(ff.querySelectorAll('.ucm-ifaces-sec')).some((h) => h.textContent.trim() === 'Unconnected interfaces'),
-        };
-    });
-    const ffBrowser = ifv2.rows.find((r) => r.name === 'browser');
-    if (!ffBrowser || !/positive/.test(ffBrowser.tone) || ffBrowser.ref !== 'browser → snap-store:browser')
-        console.log('PAGE ERROR: connect did not move firefox:browser to connected: ' + JSON.stringify(ifv2.rows));
-    if (ifv2.rows.length !== 2 || !/positive/.test(ifv2.rows[0].tone) || !/positive/.test(ifv2.rows[1].tone))
-        console.log('PAGE ERROR: firefox should have 2 connected rows after connect: ' + JSON.stringify(ifv2.rows));
-    if (ifv2.counts !== '2 connected · 0 unconnected')
-        console.log('PAGE ERROR: firefox counts after connect wrong: ' + ifv2.counts);
-    if (ifv2.hasUnsec) console.log('PAGE ERROR: stale Unconnected section after connect');
+    v = await ifRead();
+    if (!v.ss || v.ss.rows.length !== 1 || v.ss.rows[0].iface !== 'home' || v.ss.rows[0].slot !== ':home' || !/positive/.test(v.ss.rows[0].tone))
+        console.log('PAGE ERROR: bare system connect did not move snap-store:home to connected (":home"): ' + JSON.stringify(v.ss && v.ss.rows));
+    else if (v.ss.counts !== '1 connected · 0 unconnected') console.log('PAGE ERROR: snap-store counts after bare connect wrong: ' + v.ss.counts);
+    // restore state for the next drive: disconnect it again
+    await ifCardBtn('snap-store', 'home');
+    await wait(1200);
+    v = await ifRead();
+    if (!v.ss || v.ss.rows.length !== 1 || v.ss.rows[0].slot !== '—' || !/caution/.test(v.ss.rows[0].tone))
+        console.log('PAGE ERROR: disconnect did not restore snap-store:home to unconnected ("—"): ' + JSON.stringify(v.ss && v.ss.rows));
+
+    // (b) DROPDOWN connect on an app slot (firefox:browser -> snap-store:browser)
+    await ifSelectThenConnect('firefox', 'browser', 'snap-store|browser');
+    await wait(1200);
+    v = await ifRead();
+    if (!v.ff || v.ff.rows.length !== 2 || v.ff.rows[0].slot !== ':network' || v.ff.rows[1].slot !== 'snap-store:browser' || !/positive/.test(v.ff.rows[1].tone))
+        console.log('PAGE ERROR: dropdown connect did not move firefox:browser to connected: ' + JSON.stringify(v.ff && v.ff.rows));
+    else if (v.ff.counts !== '2 connected · 0 unconnected') console.log('PAGE ERROR: firefox counts after dropdown connect wrong: ' + v.ff.counts);
     await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });
 
     // ---- 6. lock -> local sign-in view ----

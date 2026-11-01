@@ -870,7 +870,7 @@ function rowBtn(label, icon, onClick) {
         type: 'button',
         'aria-label': label,
         'data-tooltip': label,
-        onclick: onClick,
+        onclick: (e) => onClick(e.currentTarget),
     },
         el('i', { class: icon }),
         el('span', { class: 'p-tooltip__message', text: label }));
@@ -1165,10 +1165,23 @@ function openConfigModal(name) {
  * {action, plugs:[{snap,plug}], slots:[{snap,slot}]} (verified live: the
  * singular {plug, slot} form is 400 "at least one plug and slot is required").
  *
- * UI shape (per user): one card per CONSUMING snap (a snap with plugs), sorted
- * by snap name; that snap's CONNECTED interfaces (plugs with a connection) on
- * top, its UNCONNECTED ones (plugs without) below. Pure providers (no plugs)
- * are not cards — they surface as connection targets in the dropdowns. */
+ * UI shape (per user, mirrors `snap connections <snap>`): one card per
+ * CONSUMING snap (a snap with plugs), sorted by snap name; a single table
+ * Interface | Plug | Slot | Actions; that snap's CONNECTED interfaces on top,
+ * a divider row, then its UNCONNECTED ones. The Slot column shows the current
+ * connection target — ":name" for a system slot (core/snapd/system, per
+ * snapd's own cmd_connections.go isSystemSnap), "snap:name" for an app slot,
+ * and "—" when the plug is unconnected (exactly like the CLI's "-").
+ * Unconnected SYSTEM-slot rows get a BARE Connect (target pre-filled, like
+ * `snap connect http:home` which sends an empty slot ref); unconnected
+ * APP-slot rows keep a target-slot dropdown. Pure providers (no plugs) are
+ * not cards. */
+
+const UCM_SYSTEM_SNAPS = ['core', 'snapd', 'system'];
+const isSystemSnap = (n) => UCM_SYSTEM_SNAPS.indexOf(n) !== -1;
+// snapd's cmd_connections.go endpoint(): system snaps render as ":name",
+// everything else as "snap:name".
+const slotDisplay = (slotRef) => (isSystemSnap(slotRef.snap) ? `:${slotRef.slot}` : `${slotRef.snap}:${slotRef.slot}`);
 
 async function loadInterfaces() {
     try {
@@ -1180,12 +1193,34 @@ async function loadInterfaces() {
     renderInterfaces();
 }
 
-function ifacesRow(ifaceName, label, kind, ...actions) {
-    const tone = kind === 'connected' ? 'positive' : 'caution';
-    return el('div', { class: 'ucm-iface-row' },
-        el('span', { class: `p-status-label p-status-label--${tone} ucm-iface-row__name`, text: ifaceName || '—' }),
-        el('span', { class: 'ucm-iface-row__ref ucm-mono', text: label }),
-        el('div', { class: 'ucm-iface-row__actions' }, ...actions));
+function ifacesRow(r) {
+    const tone = r.connected ? 'positive' : 'caution';
+    // Slot column = the current connection target, or "—" when unconnected
+    // (the CLI shows "-" for a loose plug).
+    const slotCell = r.slotRef
+        ? el('td', { class: 'ucm-mono', text: slotDisplay(r.slotRef) })
+        : el('td', { class: 'ucm-muted', text: '—' });
+    let actionCell;
+    if (r.connected) {
+        actionCell = el('td', { class: 'ucm-ifaces-action' },
+            rowBtn(`Disconnect ${r.iface} on ${r.snap}`, 'p-icon--delete', () => disconnectPlug(r.snap, r.plug, r.slotRef)));
+    } else if (r.sysSlot) {
+        // unconnected SYSTEM slot: connect needs no target selection (pre-filled)
+        actionCell = el('td', { class: 'ucm-ifaces-action' },
+            rowBtn(`Connect ${r.iface} on ${r.snap}`, 'p-icon--plus', (btn) => connectPlug(r, btn)));
+    } else {
+        // unconnected APP slot: pick the target
+        const sel = el('select', { class: 'ucm-iface-select' },
+            el('option', { value: '', text: 'target slot…' }));
+        r.free.forEach((s) => sel.append(el('option', { value: s.key, text: s.label })));
+        actionCell = el('td', { class: 'ucm-ifaces-action' }, sel,
+            rowBtn(`Connect ${r.iface} on ${r.snap}`, 'p-icon--plus', (btn) => connectPlug(r, btn)));
+    }
+    return el('tr', { class: `ucm-iface ucm-iface--${tone}` },
+        el('td', { class: 'ucm-iface__iface', text: r.iface || '—' }),
+        el('td', { class: 'ucm-mono', text: r.snap + ':' + r.plug }),
+        slotCell,
+        actionCell);
 }
 
 function ifacesCard(snap, conns, uncons) {
@@ -1196,24 +1231,18 @@ function ifacesCard(snap, conns, uncons) {
             el('span', { class: 'ucm-muted ucm-ifaces-card__counts',
                 text: `${conns.length} connected · ${uncons.length} unconnected` }))));
 
-    if (conns.length) {
-        card.append(el('h4', { class: 'ucm-ifaces-sec', text: 'Connected interfaces' }));
-        conns.forEach((x) => {
-            card.append(ifacesRow(x.iface, x.label, 'connected',
-                rowBtn(`Disconnect ${x.iface} on ${snap}`, 'p-icon--delete', () => disconnectPlug(snap, x.plug, x.slotRef))));
-        });
-    }
-    if (uncons.length) {
-        if (conns.length) card.append(el('div', { class: 'ucm-ifaces-div' }));
-        card.append(el('h4', { class: 'ucm-ifaces-sec', text: 'Unconnected interfaces' }));
-        uncons.forEach((x) => {
-            const sel = el('select', { class: 'ucm-iface-select' },
-                el('option', { value: '', text: 'target slot…' }));
-            x.free.forEach((s) => sel.append(el('option', { value: s.key, text: s.label })));
-            const btn = rowBtn(`Connect ${x.iface} on ${snap}`, 'p-icon--plus', () => connectPlug(snap, x.plug, sel, btn));
-            card.append(ifacesRow(x.iface, x.label, 'unconnected', sel, btn));
-        });
-    }
+    const body = el('tbody');
+    conns.forEach((r) => body.append(ifacesRow(r)));
+    if (conns.length && uncons.length) body.append(el('tr', { class: 'ucm-ifaces-div' }, el('td', { colspan: '4' })));
+    uncons.forEach((r) => body.append(ifacesRow(r)));
+
+    card.append(el('table', { class: 'p-table ucm-ifaces-table' },
+        el('thead', {}, el('tr', {},
+            el('th', { text: 'Interface' }),
+            el('th', { text: 'Plug' }),
+            el('th', { text: 'Slot' }),
+            el('th', { class: 'ucm-ifaces-action', style: 'text-align:right;', text: 'Actions' }))),
+        body));
     return card;
 }
 
@@ -1236,8 +1265,6 @@ function renderInterfaces() {
         if (!bySnap.has(snap)) bySnap.set(snap, { snap, conns: [], uncons: [] });
         return bySnap.get(snap);
     };
-    const slotByKey = new Map();
-    slots.forEach((s) => slotByKey.set(s.snap + '|' + s.slot, s));
 
     // A plug is connected iff its `connections` list is non-empty (live snapd
     // uses `null` for none — never rely on a missing/empty distinction).
@@ -1246,23 +1273,23 @@ function renderInterfaces() {
         const e = entry(p.snap);
         if (cs.length) {
             cs.forEach((slotRef) => {
-                e.conns.push({
-                    iface: p.interface,
-                    label: `${p.plug} → ${slotRef.snap}:${slotRef.slot}`,
-                    plug: { snap: p.snap, plug: p.plug },
-                    slotRef: { snap: slotRef.snap, slot: slotRef.slot },
-                });
+                e.conns.push({ snap: p.snap, plug: p.plug, iface: p.interface, connected: true,
+                    slotRef: { snap: slotRef.snap, slot: slotRef.slot } });
             });
         } else {
-            // free = same-interface slots with no connections yet, that are not
-            // this plug (a self-pair is never connectable)
+            // system slot for this interface (the pre-filled `snap connect
+            // http:home` target — invisible in the Slot cell, used by Connect)
+            const sysSlot = slots.find((s) => s.interface === p.interface && isSystemSnap(s.snap));
+            // app-owned free slots (same interface, no connections, not self)
             const free = slots
                 .filter((s) => s.interface === p.interface
                     && (!Array.isArray(s.connections) || !s.connections.length)
+                    && !isSystemSnap(s.snap)
                     && !(s.snap === p.snap && s.slot === p.plug))
                 .sort((a, b) => (a.snap + a.slot).localeCompare(b.snap + b.slot))
-                .map((s) => ({ key: s.snap + '|' + s.slot, label: `${s.snap}:${s.slot}` }));
-            e.uncons.push({ iface: p.interface, label: p.plug, plug: { snap: p.snap, plug: p.plug }, free });
+                .map((s) => ({ key: s.snap + '|' + s.slot, label: slotDisplay(s) }));
+            e.uncons.push({ snap: p.snap, plug: p.plug, iface: p.interface, connected: false,
+                slotRef: null, sysSlot: sysSlot ? { snap: sysSlot.snap, slot: sysSlot.slot } : null, free });
         }
     });
 
@@ -1275,38 +1302,40 @@ function renderInterfaces() {
     $('#ifacesSummary').textContent = `${cards.length} snaps · ${totalConns} connected · ${totalUncons} unconnected`;
 }
 
-async function connectPlug(snap, plugRef, sel, btn) {
-    const val = sel ? sel.value : '';
-    if (!val) { toast('caution', 'Connect', 'Pick a target slot first.'); return; }
-    const [slotSnap, slotName] = val.split('|');
-    const slotRef = { snap: slotSnap, slot: slotName };
-    btn.classList.add('is-disabled');
+async function connectPlug(r, btn) {
+    // target = the pre-filled system slot, else the dropdown selection
+    const sel = btn ? btn.parentElement.querySelector('.ucm-iface-select') : null;
+    const target = r.sysSlot
+        ? { snap: r.sysSlot.snap, slot: r.sysSlot.slot }
+        : (sel && sel.value ? sel.value.split('|').reduce((o, k, i) => { o[i === 0 ? 'snap' : 'slot'] = k; return o; }, {}) : null);
+    if (!target || !target.snap || !target.slot) { toast('caution', 'Connect', 'Pick a target slot first.'); return; }
+    if (btn) btn.classList.add('is-disabled');
     try {
-        const change = await core.interfaces.connect(plugRef, slotRef);
-        toast('positive', 'Connect started', `${snap}:${plugRef.plug} → ${slotSnap}:${slotName}`);
+        const change = await core.interfaces.connect({ snap: r.snap, plug: r.plug }, target);
+        toast('positive', 'Connect started', `${r.snap}:${r.plug} → ${slotDisplay(target)}`);
         const done = await waitChangeSettled(change);
         await loadInterfaces();
         if (done && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
             toastErr(new Error(`Connect finished with an error: ${done.status}`));
         else
-            toast('positive', 'Connected', `${snap}:${plugRef.plug} → ${slotSnap}:${slotName}`);
+            toast('positive', 'Connected', `${r.snap}:${r.plug} → ${slotDisplay(target)}`);
     } catch (e) {
         toastErr(e);
     } finally {
-        btn.classList.remove('is-disabled');
+        if (btn) btn.classList.remove('is-disabled');
     }
 }
 
 async function disconnectPlug(snap, plugRef, slotRef) {
     try {
-        const change = await core.interfaces.disconnect(plugRef, slotRef);
-        toast('positive', 'Disconnect started', `${snap}:${plugRef.plug} ↔ ${slotRef.snap}:${slotRef.slot}`);
+        const change = await core.interfaces.disconnect({ snap, plug: plugRef }, slotRef);
+        toast('positive', 'Disconnect started', `${snap}:${plugRef} ↔ ${slotDisplay(slotRef)}`);
         const done = await waitChangeSettled(change);
         await loadInterfaces();
         if (done && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
             toastErr(new Error(`Disconnect finished with an error: ${done.status}`));
         else
-            toast('positive', 'Disconnected', `${snap}:${plugRef.plug} ↔ ${slotRef.snap}:${slotRef.slot}`);
+            toast('positive', 'Disconnected', `${snap}:${plugRef} ↔ ${slotDisplay(slotRef)}`);
     } catch (e) { toastErr(e); }
 }
 
