@@ -32,7 +32,7 @@ const SNAPS = [
     { name: 'htop', version: '3.3.0', revision: 5533, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'mosquitto', version: '2.0.19', revision: 14077, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
-    { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', 'tracking-channel': 'latest/candidate', status: 'disabled', type: 'app', confinement: 'devmode' },
+    { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', 'tracking-channel': 'latest/candidate', status: 'installed', type: 'app', confinement: 'devmode' },
 ];
 
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
@@ -249,10 +249,17 @@ function mockFactoryJs() {
                 },
                 async action(n, a) {
                     if (a === 'remove' && n === 'core24') throw new Error('cannot remove snap "core24": system snap');
+                    const cur = SNAPS.find((x) => x.name === n);
+                    if (a === 'revert' && (!cur || !cur.prevRev || cur.prevRev === cur.revision))
+                        throw new Error('cannot revert "' + n + '": no revision to revert to');
                     const id = '18';
                     CHANGES[id] = { id, status: 'Doing', kind: a + '-snap', t0: Date.now() };
                     setTimeout(() => {
                         if (a === 'remove') SNAPS = SNAPS.filter((x) => x.name !== n);
+                        else if (a === 'disable' && cur) cur.status = 'installed'; // live snapd: not-active == "installed"
+                        else if (a === 'enable' && cur) cur.status = 'active';
+                        else if (a === 'revert' && cur) { cur.status = 'active'; cur.revision = cur.prevRev; }
+                        else if (cur) { cur.prevRev = cur.revision; cur.revision = String(Number(cur.revision) + 1); cur.status = 'active'; }
                         CHANGES[id] = { id, status: 'Done' };
                     }, 1200); // slow settle: keeps the confirm card visible for the shot
                     return { id, change: id };
@@ -708,7 +715,7 @@ function mockFactoryJs() {
         const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
         const htop = rows.find((r) => r.textContent.includes('htop'));
         if (!htop) throw new Error('htop row missing');
-        const btn = Array.from(htop.querySelectorAll('button')).find((b) => b.textContent.trim().startsWith('Config'));
+        const btn = htop.querySelector('.ucm-iconbtn[aria-label^="Configure"]'); // icon-only: no text to match
         if (!btn) throw new Error('Config button missing');
         btn.click();
     });
@@ -741,7 +748,7 @@ function mockFactoryJs() {
         const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
         const htop = rows.find((r) => r.textContent.includes('htop'));
         if (!htop) throw new Error('htop row missing');
-        const btn = Array.from(htop.querySelectorAll('button')).find((b) => b.textContent.trim().startsWith('Remove'));
+        const btn = htop.querySelector('.ucm-iconbtn[aria-label^="Remove"]'); // icon-only: no text to match
         if (!btn) throw new Error('Remove button missing');
         btn.click();
     });
@@ -783,6 +790,53 @@ function mockFactoryJs() {
     else if (cw.status > 140 || cw.type > 140)
         console.log(`PAGE ERROR: snaps table Status/Type too wide (status=${cw.status}px type=${cw.type}px, want <=140px)`);
 
+    // ---- 4d. Round 34: icon-only actions column (suru glyphs + Vanilla
+    // tooltips) ---- every action is a textless icon button (label lives in
+    // data-tooltip / aria-label; the CSS-only .p-tooltip__message child is
+    // display:none until hover/focus). Active snap htop -> 5 icons in order
+    // gear/refresh/revert/power-black/trash; disabled snap old-tool (live
+    // status "installed") -> red power + "Enable" + red disabled badge.
+    const col = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const getRow = (n) => rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === n);
+        const h = getRow('htop'); const o = getRow('old-tool');
+        if (!h || !o) return { error: 'htop/old-tool row missing' };
+        const hbtns = Array.from(h.querySelectorAll('.ucm-iconbtn'));
+        const obtns = Array.from(o.querySelectorAll('.ucm-iconbtn'));
+        const strip = (b) => { const c = b.cloneNode(true); const m = c.querySelector('.p-tooltip__message'); if (m) m.remove(); return c.textContent.trim(); };
+        const bg = (b, cls) => { const i = b && b.querySelector('i.' + cls); return i ? getComputedStyle(i).backgroundImage : null; };
+        const hPow = hbtns.find((b) => b.querySelector('i.p-icon--power'));
+        const oPow = obtns.find((b) => b.querySelector('i.p-icon--power'));
+        const oEn = obtns.find((b) => (b.getAttribute('aria-label') || '').startsWith('Enable'));
+        return {
+            hCount: hbtns.length, oCount: obtns.length,
+            hTextless: hbtns.length > 0 && hbtns.every((b) => strip(b) === ''),
+            hTooltips: hbtns.map((b) => (b.getAttribute('data-tooltip') || '').length > 0),
+            hAria: hbtns.map((b) => (b.getAttribute('aria-label') || '').length > 0),
+            hIcons: hbtns.map((b) => { const i = b.querySelector('i'); return i ? i.className : ''; }),
+            hPowerImg: bg(hPow, 'p-icon--power'),
+            oPowerImg: bg(oPow, 'p-icon--power'),
+            oEnableLabel: oEn ? oEn.getAttribute('aria-label') : null,
+            oBadge: (o.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null,
+            msgDisplay: hbtns[0] ? getComputedStyle(hbtns[0].querySelector('.p-tooltip__message')).display : null,
+            btnPadL: hbtns[0] ? getComputedStyle(hbtns[0]).paddingLeft : null,
+        };
+    });
+    if (col.error) console.log('PAGE ERROR: ' + col.error);
+    else {
+        if (col.hCount !== 5 || col.oCount !== 5) console.log('PAGE ERROR: actions count (htop=' + col.hCount + ' old-tool=' + col.oCount + ', want 5/5)');
+        if (!col.hTextless) console.log('PAGE ERROR: action button still carries text (icon-only violated)');
+        if (!col.hTooltips.every(Boolean) || !col.hAria.every(Boolean)) console.log('PAGE ERROR: an action is missing its tooltip/aria label');
+        const wantIcons = ['p-icon--settings', 'p-icon--refresh', 'p-icon--revert', 'p-icon--power', 'p-icon--delete'];
+        if (JSON.stringify(col.hIcons) !== JSON.stringify(wantIcons)) console.log('PAGE ERROR: action icons wrong or out of order (' + col.hIcons + ')');
+        if (!(col.hPowerImg || '').includes('suru-power.svg')) console.log('PAGE ERROR: enabled power icon is not the black suru-power.svg (' + col.hPowerImg + ')');
+        if (!(col.oPowerImg || '').includes('suru-power-red.svg')) console.log('PAGE ERROR: disabled power icon is not the red suru-power-red.svg (' + col.oPowerImg + ')');
+        if (!(col.oEnableLabel || '').startsWith('Enable')) console.log('PAGE ERROR: disabled snap action is not Enable (' + col.oEnableLabel + ')');
+        if (col.oBadge !== 'disabled') console.log('PAGE ERROR: disabled snap badge is not red disabled (' + col.oBadge + ')');
+        if (col.msgDisplay !== 'none') console.log('PAGE ERROR: tooltip message visible before hover (display=' + col.msgDisplay + ')');
+        if (col.btnPadL !== '0px') console.log('PAGE ERROR: icon button horizontal padding not zeroed (' + col.btnPadL + ')');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '13b-snaps-actions.png'), fullPage: true });
     // defensive: no modal may still be covering the UI (a stuck modal would
     // mask later clicks and mask real layout in the shots)
     const stray = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);

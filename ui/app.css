@@ -545,6 +545,69 @@ html, body {
     height: 1.5rem; width: 1.5rem;
     background-image: url("../build/images/suru-clock.svg");
 }
+/* ---- Round 34: per-row snap action icons (suru) --------------------------
+   The offline Vanilla bundle ships NO refresh/gear/power glyphs (it has
+   p-icon--delete, p-icon--spinner, p-icon--code, p-icon--success [a green
+   check], ...), so the snap-row actions use suru (actions category) glyphs
+   cleaned + shipped from build/images, the SAME pattern as .p-icon--clock /
+   .p-icon--lock above. Each class defines a 1rem inline-block background-image
+   box; the glyph is solid black in the asset. The DISABLED power state uses a
+   dedicated red asset (#c7162b, Vanilla negative) rather than a filter hack so
+   the red is exact. See each file's header for provenance/license. */
+.p-icon--settings{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-settings.svg");
+}
+.p-icon--refresh{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-refresh.svg");
+}
+.p-icon--revert{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-revert.svg");
+}
+.p-icon--power{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-power.svg");
+}
+/* disabled-snap power glyph = exact Vanilla negative red (#c7162b); on a
+   button :hover (light-grey bg) the #c7162b asset alone drops contrast, so
+   the red asset is deepened to the brand's own active-red #a11223 on hover
+   (a filter on .p-icon--power-red only — never on .p-icon--power, which is
+   black). */
+.p-icon--power-red{
+    background-image: url("../build/images/suru-power-red.svg");
+}
+.ucm-iconbtn:hover .p-icon--power-red{
+    filter: brightness(0.72);
+}
+
+/* icon-only row action buttons. The bundle .p-button is text-sized (padding
+   .41rem 1rem, margin-right 1rem), far too wide for a 16px glyph column. The
+   button is also its own Vanilla .p-tooltip--top-right trigger, so the message
+   must not leak a 1rem icon box: the <i> is the only visible box (1rem), the
+   .p-tooltip__message child is display:none until hover/focus. Zero the
+   horizontal padding + right margin so five icons sit tight in the Actions
+   cell. (position:relative is already set by .p-tooltip--top-right.) */
+.ucm-iconbtn { padding-left: 0; padding-right: 0; margin-right: 0; }
+.ucm-iconbtn .p-tooltip__message { display: none; }
+
 
 /* session countdown chip */
 .ucm-session-chip {

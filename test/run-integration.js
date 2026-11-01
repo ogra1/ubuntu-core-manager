@@ -32,7 +32,7 @@ function ok(name, cond, extra = '') {
 }
 
 (async () => {
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0,
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {},
         // seed changes in the LIVE shape (string summary, hyphenated spawn-time)
         // and NOT in newest-first order — [4] asserts the field names and the
         // renderer sorts; keep the stub honest.
@@ -237,6 +237,42 @@ function ok(name, cond, extra = '') {
     ok('remove change passed through the "Do" transient', rmPoll.has('Do'), `[${Array.from(rmPoll).join(', ')}]`);
     ok('remove settled to Done despite the transient', rmFinal && rmFinal.status === 'Done', JSON.stringify(rmFinal));
     ok('htop gone from the list after settle', !(await m.listSnaps()).some((x) => x.name === 'htop'));
+
+    // Round 34: disable / enable / revert / refresh write contracts, LIVE snapd 2.77
+    // (probe34b over the real /run/snapd.socket): disable+enable are async 202
+    // changes that flip status installed<->active (a DISABLED snap reports status
+    // "installed" - there is no "disabled" string and no `active` field;
+    // daemon/snap.go mapLocal). revert with no previous revision is a SYNCHRONOUS
+    // 400 {message:"cannot revert ... no revision to revert to"}; after a refresh
+    // (new revision) revert restores the prior one.
+    // normalize revision history: sections [5]+[7] installed mosquitto twice,
+    // so it already carries a prevRev target - drop it so the 400 path below
+    // is deterministic (a truly pristine install would have no target either).
+    delete state.prevRev.mosquitto;
+    const mosq = (await m.listSnaps()).find((x) => x.name === 'mosquitto');
+    const mosqRev = mosq && mosq.revision;
+    const dis = await m.snapAction('mosquitto', 'disable');
+    ok('disable returns a snapd change id', dis && /^[0-9]+$/.test(String(dis.id)), JSON.stringify(dis));
+    await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(dis.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })();
+    ok('disable -> status flips to "installed" (live snapd: no "disabled" word)', (await m.listSnaps()).find((x) => x.name === 'mosquitto').status === 'installed');
+    const en = await m.snapAction('mosquitto', 'enable');
+    ok('enable returns a snapd change id', en && /^[0-9]+$/.test(String(en.id)), JSON.stringify(en));
+    await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(en.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })();
+    ok('enable -> status back to "active"', (await m.listSnaps()).find((x) => x.name === 'mosquitto').status === 'active');
+    let revErr = null;
+    try { await m.snapAction('mosquitto', 'revert'); } catch (e) { revErr = e; }
+    ok('revert with no revision target -> synchronous 400 (not an async change)', !!revErr && /no revision to revert to/.test(revErr.message), revErr && revErr.message);
+    const refr = await m.snapAction('mosquitto', 'refresh');
+    ok('refresh returns a snapd change id', refr && /^[0-9]+$/.test(String(refr.id)), JSON.stringify(refr));
+    await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(refr.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })();
+    const mosq2 = (await m.listSnaps()).find((x) => x.name === 'mosquitto');
+    ok('refresh advanced the revision', mosq2 && String(mosq2.revision) !== String(mosqRev), mosqRev + '->' + (mosq2 && mosq2.revision));
+    let rev2 = null;
+    try { rev2 = await m.snapAction('mosquitto', 'revert'); } catch (e) { revErr = e; }
+    ok('revert allowed once a previous revision exists (after a refresh)', rev2 && /^[0-9]+$/.test(String(rev2.id)), JSON.stringify(rev2));
+    if (rev2) { await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(rev2.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })(); }
+    ok('revert restored the previous revision', (await m.listSnaps()).find((x) => x.name === 'mosquitto').revision == mosqRev, JSON.stringify(mosq2 && mosq2.revision));
+
 
     const hs = m.readHostStats();
     ok('host stats have hostname+mem', typeof hs.hostname === 'string' && hs.mem && hs.mem.total > 0, JSON.stringify(hs).slice(0, 80));

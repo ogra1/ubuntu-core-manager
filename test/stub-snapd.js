@@ -218,7 +218,20 @@ function makeServer(socketPath, state) {
                     // Real snapd semantics: the write returns a change id; the snap
                     // list only reflects the result once the change settles. The
                     // UI must poll /v2/changes/{id} and reload AFTER that.
+                    // LIVE snapd 2.77: revert with NO previous revision is a
+                    // SYNCHRONOUS 400 {type:"error", statuscode:400,
+                    // result:{message:"cannot revert \\"X\\": no revision to revert to"}}
+                    // - not an async change. prevRev is tracked per snap; a snap
+                    // only becomes revertable after a refresh that moves its
+                    // revision (the old one becomes the revert target).
+                    if (data.action === 'revert') {
+                        const cur = SNAPS.find((x) => x.name === name);
+                        if (!cur || state.prevRev[name] === undefined || state.prevRev[name] === cur.revision) {
+                            return json(res, 400, { message: `cannot revert "${name}": no revision to revert to` });
+                        }
+                    }
                     const id = String(state.changeSeq += 1);
+
                     // LIVE-VERIFIED shape (snapd 2.77): 'summary' is a plain
                     // STRING and the key is HYPHENATED 'spawn-time'.
                     const change = {
@@ -243,11 +256,44 @@ function makeServer(socketPath, state) {
                             if (i >= 0) SNAPS.splice(i, 1);
                             change.status = 'Done';
                         }, 320);
-                    } else {
+                    } else if (data.action === 'disable') {
+                        // LIVE snapd 2.77 (daemon/snap.go mapLocal): a disabled snap
+                        // reports status "installed" (NOT "disabled") and the REST
+                        // response carries no `active` field. Keep the stub honest.
                         setTimeout(() => {
-                            SNAPS.push({ name, version: '9.9.9', revision: 1, channel: 'stable',
-                                'tracking-channel': (data.channel && data.channel.includes('/')) ? data.channel : 'latest/stable',
-                                status: 'active', type: 'app', confinement: 'strict' });
+                            const s = SNAPS.find((x) => x.name === name);
+                            if (s) s.status = 'installed';
+                            change.status = 'Done';
+                        }, 200);
+                    } else if (data.action === 'enable') {
+                        setTimeout(() => {
+                            const s = SNAPS.find((x) => x.name === name);
+                            if (s) s.status = 'active';
+                            change.status = 'Done';
+                        }, 200);
+                    } else if (data.action === 'revert') {
+                        // restore the previous revision (it stays as prevRev so a
+                        // second refresh+revert cycle is possible).
+                        setTimeout(() => {
+                            const s = SNAPS.find((x) => x.name === name);
+                            if (s) { s.status = 'active'; s.revision = state.prevRev[name]; }
+                            change.status = 'Done';
+                        }, 200);
+                    } else {
+                        // install / refresh / switch: a fresh revision lands (the old
+                        // one becomes the revert target).
+                        setTimeout(() => {
+                            if (SNAPS.some((x) => x.name === name)) {
+                                const s = SNAPS.find((x) => x.name === name);
+                                state.prevRev[name] = s.revision;
+                                s.revision = String(Number(s.revision || 0) + 1);
+                                s.status = 'active';
+                            } else {
+                                SNAPS.push({ name, version: '9.9.9', revision: 1, channel: 'stable',
+                                    'tracking-channel': (data.channel && data.channel.includes('/')) ? data.channel : 'latest/stable',
+                                    status: 'active', type: 'app', confinement: 'strict',
+                                    prevRev: 0 }); // 0 = first install: no revision to revert to
+                            }
                             change.status = 'Done';
                         }, 300);
                     }
@@ -336,7 +382,7 @@ module.exports = { makeServer };
 
 if (require.main === module) {
     const sock = process.argv[2] || '/tmp/stub-snapd.socket';
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, netplanYaml: NETPLAN_YAML, changes: [
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {}, netplanYaml: NETPLAN_YAML, changes: [
         // seed changes: live shape (string summary, hyphenated spawn-time).
         // Deliberately NOT in newest-first order — the UI must sort.
         { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },

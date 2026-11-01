@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><!-- Suru power (standby) icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru-icon-theme package:
+     /usr/share/icons/suru/actions/scalable/system-shutdown.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata, namedview and grid/guides
+     stripped; all glyph paths kept verbatim (verified pixel-identical
+     to the original render); glyph fill set to #000000 - the original
+     #808080 is too faint for a 16px table-row icon. --><g  id="layer1" transform="translate(67.857146,-78.50504)">
+    <rect style="fill:none;stroke:none;stroke-width:4" transform="rotate(90)" y="-28.142857" x="78.505051" height="96" width="96" id="rect4782" />
+    <path style="fill:#000000;fill-opacity:1;stroke:none;stroke-width:9" id="rect4747-4" d="m -21.857145,84.50504 3.999999,-1.000018 0,35.000008 -4.000008,0 z" />
+    <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:4" d="m -37.851562,95.302734 c -14.098548,8.144236 -20.982744,24.771426 -16.769532,40.503906 4.213212,15.73248 18.483706,26.6875 34.763672,26.6875 16.2799664,0 30.550459,-10.95502 34.763672,-26.6875 4.213213,-15.73248 -2.669031,-32.35967 -16.7675781,-40.503906 l -2.0019531,3.462891 C 8.6839213,106.0137 14.793066,120.76832 11.042969,134.77148 c -3.7500971,14.00317 -16.4124947,23.72266 -30.900391,23.72266 -14.487896,0 -27.148341,-9.71949 -30.898437,-23.72266 -3.750097,-14.00316 2.357094,-28.75778 14.904297,-36.005855 l -2,-3.462891 z" id="path4145" />
+  </g>
+</svg>

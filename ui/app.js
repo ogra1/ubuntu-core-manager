@@ -780,6 +780,38 @@ async function loadSnaps() {
     }
 }
 
+/* Round 34: per-row snap actions — ICON-ONLY with Vanilla tooltips.
+   The old column showed "Config / Refresh / Remove" as icon+text each (crowded);
+   the bundle has no refresh/gear/power icons and p-icon--success is a green
+   checkmark (wrong semantic for Refresh), so the actions now use the suru
+   glyphs shipped in build/images (see .p-icon--settings/refresh/revert/power
+   in app.css):
+     Config   = gear (suru settings)
+     Refresh  = circular reload arrow (suru view-refresh)
+     Revert   = backward-curving undo arrow (suru revert)
+     Disable  = power switch, BLACK when the snap is enabled
+     Enable   = power switch, RED when the snap is disabled (toggles to Enable)
+     Remove   = trash can (bundle p-icon--delete, unchanged)
+   Each button IS its own Vanilla .p-tooltip--top-right trigger: the
+   .p-tooltip__message child (CSS-only, shown on :hover/:focus) carries the
+   label, so the tooltip also appears for keyboard focus (a wrapper span would
+   only match :focus on the span itself, which is not focusable). top-right is
+   used because the Actions column is right-aligned — the tooltip extends left
+   over the table instead of being clipped at the table-wrap's right edge.
+   Disabled detection — LIVE snapd 2.77 contract (probe34b over the real
+   /run/snapd.socket; daemon/snap.go mapLocal): a DISABLED snap reports
+   status "installed" (there is no "disabled" status string) and the REST
+   response carries NO `active` field; an ENABLED snap reports status "active".
+   So "not active" = disabled. The legacy "disabled" status (pre-2.7x fixtures)
+   is still treated as disabled. Consequence for the Status badge column: a
+   live-disabled snap shows "installed", which is indistinguishable from an
+   active one — the badge is re-derived through the same detector so it reads
+   "disabled" (red) instead of a misleading green "installed". */
+function snapDisabled(s) {
+    const st = String(s.status || '').toLowerCase();
+    return !s.active && (st === 'installed' || st === 'disabled');
+}
+
 function renderSnaps() {
     const body = $('#snapsBody');
     body.innerHTML = '';
@@ -791,35 +823,58 @@ function renderSnaps() {
         const sk = String(s.status || '').toLowerCase();
         const statusTone =
             s.installed === null ? ['negative', 'Removed'] :
-            ['disabled', 'failed', 'jailview', 'held', 'frozen'].includes(sk) ? ['negative', s.status] :
+            ['failed', 'jailview', 'held', 'frozen'].includes(sk) ? ['negative', s.status] :
             ['activating', 'installing', 'refreshing', 'removing', 'reverting', 'switching'].includes(sk) ? ['caution', s.status] :
             ['positive', s.status || 'installed'];
         const [tone, word] = statusTone;
+        // A snap that reports "installed" (live snapd: not-active == disabled)
+        // or the legacy "disabled" status gets the red badge, never a green
+        // "installed" — otherwise it would contradict the red Enable power icon.
+        const disabled = snapDisabled(s);
+        const dispTone = disabled ? 'negative' : tone;
+        const dispWord = disabled ? 'disabled' : word;
 
         const isSystem = s.type === 'core' || s.type === 'gadget' || s.type === 'kernel' || s.type === 'os' || s.name === 'snapd';
-        const actions = el('div', { class: 'p-table__cell-action', style: 'text-align:right;' });
+        const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
 
         if (!isSystem && s.installed !== null) {
             actions.append(
-                rowBtn('Config', 'p-icon--code', () => openConfigModal(s.name)),
-                rowBtn('Refresh', 'p-icon--success', () => snapOp(s.name, 'refresh')),
-                rowBtn('Remove', 'p-icon--delete', () => confirmRemove(s.name)),
+                rowBtn('Configure ' + s.name, 'p-icon--settings', () => openConfigModal(s.name)),
+                rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
+                rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
+                rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
+                    disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
+                    () => snapOp(s.name, disabled ? 'enable' : 'disable')),
+                rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
             );
         }
         body.append(el('tr', {},
             el('td', { text: s.name, class: 'ucm-mono' }),
-            el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
+            el('td', {}, el('span', { class: `p-status-label p-status-label--${dispTone}`, text: dispWord })),
             el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
             el('td', { class: 'ucm-mono', text: fmtTrackChannel(s), title: `${s.tracking_channel || s.channel || '—'}` }),
             el('td', { text: s.type || 'app' }),
-            actions,
+            el('td', { style: 'text-align:right;' }, actions),
         ));
     });
 }
 
+/* Icon-only row action button: the button itself is the Vanilla tooltip
+   trigger (p-tooltip--top-right) so the label shows on hover AND keyboard
+   focus; the label is also the aria-label. Compact padding keeps a five-icon
+   row tight in the Actions cell. NOTE: the tooltip message element keeps the
+   raw label as its TEXT so it is visible in CSS-less contexts (the
+   screenshot harness) — in-app the bundle hides it until :hover/:focus. */
 function rowBtn(label, icon, onClick) {
-    return el('button', { class: 'p-button--base p-button ucm-rowbtn', type: 'button', onclick: onClick },
-        el('i', { class: 'p-icon ' + icon }), label);
+    return el('button', {
+        class: 'p-button--base p-button ucm-rowbtn ucm-iconbtn p-tooltip--top-right',
+        type: 'button',
+        'aria-label': label,
+        'data-tooltip': label,
+        onclick: onClick,
+    },
+        el('i', { class: icon }),
+        el('span', { class: 'p-tooltip__message', text: label }));
 }
 
 function confirmRemove(name) {

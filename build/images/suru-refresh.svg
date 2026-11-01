@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><!-- Suru refresh/reload icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru-icon-theme package:
+     /usr/share/icons/suru/actions/scalable/view-refresh.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata, namedview and grid/guides
+     stripped; all glyph paths kept verbatim (verified pixel-identical
+     to the original render); glyph fill set to #000000 - the original
+     #808080 is too faint for a 16px table-row icon. --><g  id="layer1" transform="translate(67.857146,-78.50504)">
+    <rect style="fill:none;stroke:none;stroke-width:3.99920893" transform="rotate(90)" y="-28.142855" x="78.505035" height="96" width="96.000008" id="rect4782-83" />
+    <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:2.99940658" d="M 15.07272,88.463069 -1.8924798,105.43901 c 3.76101,1.40099 7.7088,2.70822 11.84258,3.92477 4.1121998,1.18791 8.1765198,2.23608 12.1927598,3.14139 -0.93642,-3.98509 -1.99907,-8.03497 -3.18698,-12.14717 -1.21723,-4.13605 -2.51123,-8.100101 -3.88214,-11.893911 z" id="path5588-9-2-96-57" />
+    <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:4" d="m -19.416016,84.511719 c -6.44911,-0.06917 -12.961891,1.343271 -19.011718,4.326172 -16.132874,7.9544 -25.416302,25.317299 -23.06836,43.148439 2.347943,17.83113 15.808959,32.20232 33.451172,35.71094 17.642214,3.50861 35.5781776,-4.61799 44.572266,-20.19336 l -3.462891,-2 c -8.1445821,14.10425 -24.351627,21.44687 -40.328125,18.26953 -15.976497,-3.17735 -28.139476,-16.16184 -30.265625,-32.3086 -2.126149,-16.14675 6.259602,-31.835747 20.869141,-39.039059 14.609538,-7.203312 32.1653321,-4.305219 43.6835935,7.210938 l 2.828125,-2.828125 C 1.9018877,88.860371 -8.667498,84.627 -19.416016,84.511719 Z" id="path4228" />
+  </g>
+</svg>
