@@ -777,18 +777,25 @@ function mockFactoryJs() {
     });
 
     // Regression guard: Status/Type columns must hug their content (the 100%-wide
-    // table used to stretch every nowrap column, making them "way too wide").
+    // table used to stretch every nowrap column, making them "way too wide"), AND
+    // the table must fill its scroll parent (round-35: the old max-content table
+    // left a big right-side gap between the Actions column and the scrollbar).
     const cw = await page.evaluate(() => {
         const tbl = document.querySelector('.ucm-snaps-table table');
+        const wrap = document.querySelector('.ucm-snaps-table');
         if (!tbl) return { error: 'no snaps table' };
         const heads = Array.from(tbl.querySelectorAll('thead th')).map((th) => th.textContent.trim());
         const wi = (label) => heads.indexOf(label);
         const w = (i) => (i >= 0 ? Math.round(tbl.querySelectorAll('thead th')[i].getBoundingClientRect().width) : -1);
-        return { status: w(wi('Status')), type: w(wi('Type')) };
+        const tr = tbl.getBoundingClientRect();
+        const wr = wrap.getBoundingClientRect();
+        return { status: w(wi('Status')), type: w(wi('Type')), gap: Math.round(wr.right - tr.right) };
     });
     if (cw.error) console.log('PAGE ERROR: ' + cw.error);
     else if (cw.status > 140 || cw.type > 140)
         console.log(`PAGE ERROR: snaps table Status/Type too wide (status=${cw.status}px type=${cw.type}px, want <=140px)`);
+    else if (cw.gap > 4)
+        console.log(`PAGE ERROR: snaps table does not fill its scroll parent (right gap=${cw.gap}px, want <=4px)`);
 
     // ---- 4d. Round 34: icon-only actions column (suru glyphs + Vanilla
     // tooltips) ---- every action is a textless icon button (label lives in

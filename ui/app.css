@@ -411,12 +411,20 @@ html, body {
 .ucm-login__head i {
     filter: brightness(0) invert(1);
 }
-/* installed-snaps table: the default `table{width:100%}` + 6 nowrap columns makes
-   table-layout:auto stretch EVERY column (Status/Type become far wider than
-   their content). Sizing the table to its max-content instead makes each
-   column exactly as wide as its widest cell (Status ~'activating', Type
-   ~'gadget'), with the table capped at the container so it never overflows. */
-.ucm-snaps-table .p-table { width: max-content; max-width: 100%; }
+/* installed-snaps table: the bundle's table-layout:fixed + width:100% equalizes
+   every nowrap column (Status/Type become far too wide). A max-content table
+   hugs each column but then leaves a big right-side gap to the scroll parent
+   (round 34's icon-only Actions narrowed it, exposing the gap). Fix = the same
+   round-29 changes-table idiom: table-layout:auto + width:100% so the table
+   FILLS the scroll parent, with width:1% shrink-to-fit hints on the narrow
+   content columns (2-6). Under auto layout a 1% nowrap column grows to its
+   content and the width-less Snap column absorbs the whole remainder. Measured
+   @1440: [540, 79, 159, 159, 67, 122], 1px to the scrollbar (no gap), and the
+   actions icons end ~9px from the scroll edge. Status/Type stay content-hugging
+   (<=140px, round-8 guard). */
+.ucm-snaps-table .p-table { width: 100%; table-layout: auto; }
+.ucm-snaps-table .p-table th:nth-child(n+2),
+.ucm-snaps-table .p-table td:nth-child(n+2) { width: 1%; }
 
 /* remove-confirm row: single centred line (question icon + message + buttons).
    NOTE: the bundle's .p-notification__message is display:inline — an inline box
