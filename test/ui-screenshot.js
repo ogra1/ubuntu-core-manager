@@ -48,12 +48,21 @@ const IFACES = {
         { snap: 'snap-store', plug: 'home', interface: 'home', apps: ['snap-store'], connections: null },
         { snap: 'htop', plug: 'home', interface: 'home', apps: ['htop'], connections: null },
         { snap: 'radio', plug: 'pps', interface: 'pps', apps: ['radio'], connections: null },
+        { snap: 'ucm', plug: 'icon-themes', interface: 'icon-themes', apps: ['ucm'], connections: null },
     ],
     slots: [
         { snap: 'core', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
         { snap: 'core', slot: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
         { snap: 'core', slot: 'home', interface: 'home', connections: null },
-        { snap: 'snap-store', slot: 'browser', interface: 'browser', connections: null },
+        { snap: 'snap-store', slot: 'browser-remote', interface: 'browser', connections: null },
+        { snap: 'snap-store', slot: 'browser-view', interface: 'browser', connections: null },
+        // content interfaces: gtk-common-themes and ubuntu-frame both expose
+        // icon-themes — but only the same-NAMED slot qualifies for the ucm
+        // icon-themes plug (namespacing), so no pulldown is needed. The
+        // gtk-2-themes / ubuntu-frame-diagnostic slots are decoys with other names.
+        { snap: 'gtk-common-themes', slot: 'gtk-2-themes', interface: 'icon-themes', connections: null },
+        { snap: 'gtk-common-themes', slot: 'icon-themes', interface: 'icon-themes', connections: null },
+        { snap: 'ubuntu-frame', slot: 'ubuntu-frame-diagnostic', interface: 'icon-themes', connections: null },
     ],
 };
 
@@ -882,24 +891,37 @@ function mockFactoryJs() {
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
 
+    // Round 39: icon-only Connect/Disconnect (suru add/close, the snaps-table
+    // rowBtn idiom) + the target-slot pulldown lives in the SLOT column
+    // ("—" when no target; a single same-named target renders as plain text).
+    await page.click('.ucm-side a[data-view="interfaces"]');
+    await wait(700);
+    await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
+
     const ifRead = () => page.evaluate(() => {
         const readCard = (card) => {
             const rows = Array.from(card.querySelectorAll('tr.ucm-iface')).map((tr) => {
                 const tds = Array.from(tr.querySelectorAll('td'));
-                const sel = tr.querySelector('.ucm-iface-select');
-                const btn = tr.querySelector('.ucm-iface-btn');
-                const gap = (sel && btn) ? Math.round(btn.getBoundingClientRect().left - sel.getBoundingClientRect().right) : null;
+                const sel = tds[2].querySelector('.ucm-iface-select');
+                const btn = tr.querySelector('.ucm-ifaces-action .ucm-iconbtn');
+                const slotText = sel
+                    ? (sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '')
+                    : tds[2].textContent.trim();
+                const ic = btn ? btn.querySelector('i') : null;
+                const tip = btn ? btn.querySelector('.p-tooltip__message') : null;
                 return {
                     iface: tds[0].textContent.trim(),
                     plug: tds[1].textContent.trim(),
-                    slot: tds[2].textContent.trim(),
+                    slot: slotText,
                     tone: tr.className,
                     hasSelect: !!sel,
-                    hasBtn: !!btn,
-                    btnLabel: btn ? btn.textContent.trim() : null,
-                    btnDisabled: btn ? (btn.disabled || btn.getAttribute('aria-disabled') === 'true') : null,
-                    selToBtnGap: gap,
                     selOpts: sel ? Array.from(sel.options).map((o) => o.value) : null,
+                    hasBtn: !!btn,
+                    btnAria: btn ? btn.getAttribute('aria-label') : null,
+                    btnIconClass: ic ? ic.className : null,
+                    btnIconBg: ic ? getComputedStyle(ic).backgroundImage : null,
+                    btnDisabled: btn ? (btn.disabled || btn.getAttribute('aria-disabled') === 'true') : null,
+                    tipMsg: tip ? tip.textContent.trim() : null,
                 };
             });
             const secs = Array.from(card.querySelectorAll('thead th')).map((t) => t.textContent.trim());
@@ -908,6 +930,7 @@ function mockFactoryJs() {
         const findCard = (t) => Array.from(document.querySelectorAll('#ifacesCards .p-card'))
             .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === t);
         return {
+            refreshBtn: !!document.querySelector('#ifacesRefresh'),
             titles: Array.from(document.querySelectorAll('#ifacesCards .p-card .ucm-ifaces-card__title')).map((t) => t.textContent.trim()),
             summary: document.querySelector('#ifacesSummary').textContent.trim(),
             ff: findCard('firefox') ? readCard(findCard('firefox')) : null,
@@ -915,13 +938,14 @@ function mockFactoryJs() {
             ss: findCard('snap-store') ? readCard(findCard('snap-store')) : null,
             ht: findCard('htop') ? readCard(findCard('htop')) : null,
             rd: findCard('radio') ? readCard(findCard('radio')) : null,
+            uc: findCard('ucm') ? readCard(findCard('ucm')) : null,
         };
     });
     const ifCardBtn = (title, iface) => page.evaluate(([title, iface]) => {
         const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
             .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === title);
         const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
-        row.querySelector('.ucm-iface-btn').click();
+        row.querySelector('.ucm-ifaces-action .ucm-iconbtn').click();
     }, [title, iface]);
     const ifSelectThenConnect = (title, iface, value) => page.evaluate(([title, iface, value]) => {
         const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
@@ -929,57 +953,78 @@ function mockFactoryJs() {
         const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
         const sel = row.querySelector('.ucm-iface-select');
         sel.value = value;
-        row.querySelector('.ucm-iface-btn').click();
+        row.querySelector('.ucm-ifaces-action .ucm-iconbtn').click();
     }, [title, iface, value]);
 
     let v = await ifRead();
-    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'radio', 'snap-store']))
+    // The page-top Refresh button is gone (round 39) — the dashboard's 20 s
+    // poll pattern is the idiom; the interfaces view reloads on entry.
+    if (v.refreshBtn !== false) console.log('PAGE ERROR: interfaces page still has its top Refresh button');
+    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'radio', 'snap-store', 'ucm']))
         console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
-    if (v.summary !== '5 snaps · 2 connected · 4 unconnected')
+    if (v.summary !== '6 snaps · 2 connected · 5 unconnected')
         console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
-    // firefox: connected(network,system ":network",green) on top, unconnected(browser,app "snap-store:browser",amber) below
+    // firefox: connected(network, system ":network", green, X icon) on top,
+    // unconnected(browser, app pulldown in the Slot column, amber, + icon) below
     if (!v.ff || v.ff.rows.length !== 2) console.log('PAGE ERROR: firefox should have 2 rows: ' + JSON.stringify(v.ff && v.ff.rows));
     else {
         if (!v.ff.head || v.ff.head[0] !== 'Interface' || v.ff.head[1] !== 'Plug' || v.ff.head[2] !== 'Slot' || v.ff.head[3] !== 'Actions')
             console.log('PAGE ERROR: firefox table headers wrong: ' + JSON.stringify(v.ff.head));
         const a = v.ff.rows[0], b = v.ff.rows[1];
         if (a.iface !== 'network' || a.plug !== 'firefox:network' || a.slot !== ':network' || !/positive/.test(a.tone))
-            console.log('PAGE ERROR: firefox network row wrong (system slot must be ":network", green, no action select): ' + JSON.stringify(a));
-        if (b.iface !== 'browser' || b.plug !== 'firefox:browser' || b.slot !== '—' || !/caution/.test(b.tone))
-            console.log('PAGE ERROR: firefox browser row wrong (unconnected -> "—", amber; target via dropdown): ' + JSON.stringify(b));
-        if (b.hasSelect !== true || JSON.stringify(b.selOpts) !== JSON.stringify(['', 'snap-store|browser']))
+            console.log('PAGE ERROR: firefox network row wrong (system slot must be ":network", green): ' + JSON.stringify(a));
+        else if (a.hasBtn !== true || a.btnIconClass !== 'p-icon--window-close' || a.hasSelect !== false)
+            console.log('PAGE ERROR: firefox network connected row must be an icon-only Disconnect (X, no pulldown): ' + JSON.stringify(a));
+        if (b.iface !== 'browser' || b.plug !== 'firefox:browser' || b.slot !== 'target slot…' || !/caution/.test(b.tone))
+            console.log('PAGE ERROR: firefox browser row wrong (unconnected -> pulldown in Slot column, amber): ' + JSON.stringify(b));
+        else if (b.hasSelect !== true || JSON.stringify(b.selOpts) !== JSON.stringify(['', 'snap-store|browser-remote', 'snap-store|browser-view']))
             console.log('PAGE ERROR: firefox browser row dropdown options wrong: ' + JSON.stringify(b.selOpts));
-        if (a.hasSelect !== false) console.log('PAGE ERROR: firefox connected row must not have a select: ' + JSON.stringify(a));
+        else if (b.hasBtn !== true || b.btnIconClass !== 'p-icon--add' || b.btnDisabled !== false)
+            console.log('PAGE ERROR: firefox browser row must be an enabled icon-only Connect (+): ' + JSON.stringify(b));
+        else if (b.tipMsg !== b.btnAria)
+            console.log('PAGE ERROR: firefox browser tooltip must mirror the aria-label: ' + JSON.stringify({ tip: b.tipMsg, aria: b.btnAria }));
+        // suru-file pattern: the glyph must be the shipped SVG, not a data-URI
+        if (b.btnIconBg.indexOf('suru-add.svg') === -1)
+            console.log('PAGE ERROR: firefox Connect glyph is not the suru-add file (got ' + b.btnIconBg + ')');
+        if ((a.btnIconBg || '').indexOf('suru-close.svg') === -1)
+            console.log('PAGE ERROR: firefox Disconnect glyph is not the suru-close file (got ' + a.btnIconBg + ')');
     }
-    // mosquitto: single connected system row ":network-bind"
+    // mosquitto: single connected system row ":network-bind" + X icon
     if (!v.mo || v.mo.rows.length !== 1 || v.mo.rows[0].iface !== 'network-bind' || v.mo.rows[0].slot !== ':network-bind' || !/positive/.test(v.mo.rows[0].tone))
         console.log('PAGE ERROR: mosquitto row wrong: ' + JSON.stringify(v.mo && v.mo.rows));
-    // htop: single unconnected system row, slot ":home", BARE connect (no select)
+    else if (v.mo.rows[0].hasBtn !== true || v.mo.rows[0].btnIconClass !== 'p-icon--window-close')
+        console.log('PAGE ERROR: mosquitto connected row must be an icon-only Disconnect (X): ' + JSON.stringify(v.mo.rows[0]));
+    // htop: single unconnected SYSTEM-slot row: Slot stays "—" (pre-fill is
+    // inside the bare Connect, like the CLI), enabled + icon
     if (!v.ht || v.ht.rows.length !== 1 || v.ht.rows[0].iface !== 'home' || v.ht.rows[0].slot !== '—' || !/caution/.test(v.ht.rows[0].tone))
-        console.log('PAGE ERROR: htop row wrong (unconnected "—", amber; BARE connect pre-fills :home): ' + JSON.stringify(v.ht && v.ht.rows));
-    else if (v.ht.rows[0].hasSelect !== false || v.ht.rows[0].hasBtn !== true)
-        console.log('PAGE ERROR: htop unconnected system row must be a BARE connect (no dropdown): ' + JSON.stringify(v.ht.rows[0]));
-    // THE FIX GUARD: on a dropdown row the Connect(+) must be PRESENT and sit
-    // NEXT TO the dropdown (the regression was a ~200px right-align gap that made
-    // it look absent). selToBtnGap = button.left - select.right, must be small.
-    if (v.ff && v.ff.rows[1]) {
-        const brow = v.ff.rows[1];
-        if (brow.hasBtn !== true) console.log('PAGE ERROR: firefox dropdown row is missing its Connect button: ' + JSON.stringify(brow));
-        else if (brow.selToBtnGap == null || brow.selToBtnGap < 0 || brow.selToBtnGap > 16)
-            console.log('PAGE ERROR: firefox Connect not adjacent to the dropdown (gap=' + brow.selToBtnGap + 'px, want 0..12): ' + JSON.stringify(brow));
+        console.log('PAGE ERROR: htop row wrong (unconnected "—", amber): ' + JSON.stringify(v.ht && v.ht.rows));
+    else if (v.ht.rows[0].hasSelect !== false || v.ht.rows[0].hasBtn !== true || v.ht.rows[0].btnIconClass !== 'p-icon--add' || v.ht.rows[0].btnDisabled !== false)
+        console.log('PAGE ERROR: htop unconnected system row must be a BARE enabled + connect (no dropdown, slot stays "—"): ' + JSON.stringify(v.ht.rows[0]));
+    // ucm: the user's real case — icon-themes plug, 3 same-interface content
+    // slots but only ONE same-named -> Slot column shows that target as plain
+    // text, NO pulldown, enabled + icon.
+    if (!v.uc || v.uc.rows.length !== 1) console.log('PAGE ERROR: ucm card should have 1 row: ' + JSON.stringify(v.uc && v.uc.rows));
+    else {
+        const ur = v.uc.rows[0];
+        if (ur.iface !== 'icon-themes' || ur.plug !== 'ucm:icon-themes' || !/caution/.test(ur.tone))
+            console.log('PAGE ERROR: ucm icon-themes row wrong: ' + JSON.stringify(ur));
+        else if (ur.slot !== 'gtk-common-themes:icon-themes')
+            console.log('PAGE ERROR: ucm same-named target must be shown in the Slot column (got "' + ur.slot + '")');
+        else if (ur.hasSelect !== false)
+            console.log('PAGE ERROR: ucm same-named target must NOT show a pulldown: ' + JSON.stringify(ur));
+        else if (ur.hasBtn !== true || ur.btnIconClass !== 'p-icon--add' || ur.btnDisabled !== false)
+            console.log('PAGE ERROR: ucm same-named row must be an enabled icon-only Connect (+): ' + JSON.stringify(ur));
     }
-    // NO-TARGET case: radio:pps has no connectable slot -> no empty pulldown and
-    // a visually + functionally disabled Connect.
+    // NO-TARGET case: radio:pps has no connectable slot -> Slot "—", NO empty
+    // pulldown, and a visually + functionally disabled + icon.
     if (!v.rd || v.rd.rows.length !== 1) console.log('PAGE ERROR: radio card should have 1 row: ' + JSON.stringify(v.rd && v.rd.rows));
     else {
         const rr = v.rd.rows[0];
         if (rr.iface !== 'pps' || rr.slot !== '—' || !/caution/.test(rr.tone))
             console.log('PAGE ERROR: radio pps row wrong (unconnected "—", amber): ' + JSON.stringify(rr));
         if (rr.hasSelect !== false) console.log('PAGE ERROR: radio pps must NOT show an empty pulldown (no targets): ' + JSON.stringify(rr));
-        if (rr.hasBtn !== true || rr.btnDisabled !== true)
-            console.log('PAGE ERROR: radio pps Connect must be present but disabled (no targets): ' + JSON.stringify(rr));
-        else if (rr.btnLabel !== 'Connect')
-            console.log('PAGE ERROR: radio pps disabled Connect label wrong: ' + rr.btnLabel);
+        if (rr.hasBtn !== true || rr.btnDisabled !== true || rr.btnIconClass !== 'p-icon--add')
+            console.log('PAGE ERROR: radio pps Connect must be present but disabled (+ icon): ' + JSON.stringify(rr));
     }
     // element shot of the firefox card (VLM layout check)
     const ffCardEl = await page.$('#ifacesCards .p-card');
@@ -999,11 +1044,27 @@ function mockFactoryJs() {
     if (!v.ss || v.ss.rows.length !== 1 || v.ss.rows[0].slot !== '—' || !/caution/.test(v.ss.rows[0].tone))
         console.log('PAGE ERROR: disconnect did not restore snap-store:home to unconnected ("—"): ' + JSON.stringify(v.ss && v.ss.rows));
 
-    // (b) DROPDOWN connect on an app slot (firefox:browser -> snap-store:browser)
-    await ifSelectThenConnect('firefox', 'browser', 'snap-store|browser');
+    // (b) SINGLE-TARGET connect via the same-named slot (ucm:icon-themes ->
+    // gtk-common-themes:icon-themes), no dropdown involved
+    await ifCardBtn('ucm', 'icon-themes');
     await wait(1200);
     v = await ifRead();
-    if (!v.ff || v.ff.rows.length !== 2 || v.ff.rows[0].slot !== ':network' || v.ff.rows[1].slot !== 'snap-store:browser' || !/positive/.test(v.ff.rows[1].tone))
+    if (!v.uc || v.uc.rows.length !== 1 || v.uc.rows[0].slot !== 'gtk-common-themes:icon-themes' || !/positive/.test(v.uc.rows[0].tone))
+        console.log('PAGE ERROR: same-named connect did not move ucm:icon-themes to connected: ' + JSON.stringify(v.uc && v.uc.rows));
+    else if (v.uc.rows[0].hasBtn !== true || v.uc.rows[0].btnIconClass !== 'p-icon--window-close')
+        console.log('PAGE ERROR: ucm connected row must now be an icon-only Disconnect (X): ' + JSON.stringify(v.uc.rows[0]));
+    // restore: disconnect it again -> back to the same-named plain-text target
+    await ifCardBtn('ucm', 'icon-themes');
+    await wait(1200);
+    v = await ifRead();
+    if (!v.uc || v.uc.rows.length !== 1 || v.uc.rows[0].slot !== 'gtk-common-themes:icon-themes' || !/caution/.test(v.uc.rows[0].tone) || v.uc.rows[0].hasSelect !== false)
+        console.log('PAGE ERROR: disconnect did not restore ucm:icon-themes to its same-named plain-text target: ' + JSON.stringify(v.uc && v.uc.rows));
+
+    // (c) DROPDOWN connect on an app slot (firefox:browser -> snap-store:browser-view)
+    await ifSelectThenConnect('firefox', 'browser', 'snap-store|browser-view');
+    await wait(1200);
+    v = await ifRead();
+    if (!v.ff || v.ff.rows.length !== 2 || v.ff.rows[0].slot !== ':network' || v.ff.rows[1].slot !== 'snap-store:browser-view' || !/positive/.test(v.ff.rows[1].tone))
         console.log('PAGE ERROR: dropdown connect did not move firefox:browser to connected: ' + JSON.stringify(v.ff && v.ff.rows));
     else if (v.ff.counts !== '2 connected · 0 unconnected') console.log('PAGE ERROR: firefox counts after dropdown connect wrong: ' + v.ff.counts);
     await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });

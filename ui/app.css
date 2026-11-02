@@ -672,32 +672,42 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* tone tint matches the bundle status-label greens/ambers (positive #0e8420) */
 .ucm-iface--positive .ucm-iface__iface { color: #0e8420; }
 .ucm-iface--caution .ucm-iface__iface { color: #b36b00; }
-/* the Actions cell is wide (the table fills the card). The controls are wrapped
-   in one inline-flex group (.ucm-ifaces-ctrl) with a fixed .3rem gap, so the
-   dropdown and its Connect button are ALWAYS adjacent — previously they were
-   two separate right-aligned inline items with a big empty gap BETWEEN them,
-   which made the Connect look "missing" next to the dropdown. The group is
-   right-aligned in the cell, matching the right-aligned "Actions" header. */
 .ucm-ifaces-action { text-align: right; white-space: nowrap; }
-.ucm-ifaces-ctrl { display: inline-flex; align-items: center; gap: .3rem; }
+/* target-slot pulldown (round 39 moved it from the Actions cell into the
+   Slot cell — the column that shows "—" for unconnected rows). The icon-only
+   Actions cell no longer crowds it; a single same-named target renders as
+   plain text here instead. */
 .ucm-iface-select {
     max-width: 13rem;
     margin: 0;
     font-family: "Ubuntu Mono variable", monospace;
     font-size: .82rem;
 }
-/* labeled Connect/Disconnect (not a tiny data-URI SVG icon): compact base
-   buttons sized for a table row; the label can't be invisible or overlooked. */
-.ucm-iface-btn {
-    display: inline-flex;
-    align-items: center;
-    margin: 0;
-    padding: 0 .6rem;
-    min-height: 0;
-    height: 1.9rem;
-    font-size: .82rem;
+/* ---- interfaces Connect/Disconnect icons (round 39) -------------------
+   Same suru-file pattern as the snap-row actions above: the offline Vanilla
+   bundle ships p-icon--plus / p-icon--close as data-URI SVGs, and a data-URI
+   icon of this class can render in headless Chromium yet not paint in the
+   Electron kiosk (rounds 37/38) — so the glyphs come from cleaned suru SVG
+   files in build/images (see each file's header), served 'self' like the
+   other suru images. The <i> boxes reuse the exact 1rem style of the
+   snap-row icons. The bundle's button.is-disabled (opacity:.33 + cursor)
+   dims the no-target Connect glyph; it also sets pointer-events:none. */
+.p-icon--add{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-add.svg");
 }
-.ucm-iface-btn:disabled { color: #a8a8a8; border-color: #e0e0e0; background: #fafafa; }
+.p-icon--window-close{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-close.svg");
+}
 .ucm-ifaces-div td {
     border: 0;
     border-top: 1px solid #f0f0f0;

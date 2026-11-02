@@ -863,7 +863,13 @@ function renderSnaps() {
    focus; the label is also the aria-label. Compact padding keeps a five-icon
    row tight in the Actions cell. NOTE: the tooltip message element keeps the
    raw label as its TEXT so it is visible in CSS-less contexts (the
-   screenshot harness) — in-app the bundle hides it until :hover/:focus. */
+   screenshot harness) — in-app the bundle hides it until :hover/:focus.
+   Round 39: the interfaces page Connect/Disconnect actions use this SAME
+   idiom (the round-38 labeled buttons read inconsistent with the snaps
+   table); their glyphs are the suru add/close SVGs shipped in build/images —
+   the round-37 lesson: bundle data-URI p-icons can render in headless
+   Chromium yet not paint in the kiosk, so the interfaces icons follow the
+   proven suru-file pattern, never the bundle p-icon--plus/--close URIs. */
 function rowBtn(label, icon, onClick, opts = {}) {
     const btn = el('button', {
         class: 'p-button--base p-button ucm-rowbtn ucm-iconbtn p-tooltip--top-right' + (opts.disabled ? ' is-disabled' : ''),
@@ -877,23 +883,6 @@ function rowBtn(label, icon, onClick, opts = {}) {
         el('i', { class: icon }),
         el('span', { class: 'p-tooltip__message', text: opts.tooltip || label }));
     return btn;
-}
-
-/* Compact labeled action button for the interfaces tables. A data-URI SVG
-   glyph (the old p-icon--plus) is exactly the kind of tiny asset that can fail
-   to paint / be undiscoverable in the kiosk; a "Connect"/"Disconnect" label is
-   unambiguous and always renders. Matches the app's labeled p-button--base
-   idiom (Clear, Refresh, Search store). */
-function ifaceBtn(label, onClick, opts = {}) {
-    const b = el('button', {
-        class: 'p-button--base p-button ucm-iface-btn' + (opts.disabled ? ' is-disabled' : ''),
-        type: 'button',
-        disabled: opts.disabled || false,
-        'aria-disabled': opts.disabled ? 'true' : 'false',
-        title: opts.title || label,
-        onclick: opts.disabled ? null : ((e) => onClick(e.currentTarget)),
-    }, label);
-    return b;
 }
 
 function confirmRemove(name) {
@@ -1215,39 +1204,37 @@ async function loadInterfaces() {
 
 function ifacesRow(r) {
     const tone = r.connected ? 'positive' : 'caution';
-    // Slot column = the current connection target, or "—" when unconnected
-    // (the CLI shows "-" for a loose plug).
-    const slotCell = r.slotRef
-        ? el('td', { class: 'ucm-mono', text: slotDisplay(r.slotRef) })
-        : el('td', { class: 'ucm-muted', text: '—' });
-    // The action controls sit in one inline-flex group so the dropdown and its
-    // Connect button are ALWAYS adjacent (fixed .3rem gap). Labeled buttons
-    // (not a tiny SVG icon) so the action can't be invisible/undiscoverable.
-    const ctrl = (...kids) => el('div', { class: 'ucm-ifaces-ctrl' }, ...kids);
-    let actionCell;
-    if (r.connected) {
-        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(
-            ifaceBtn('Disconnect', () => disconnectPlug(r.snap, r.plug, r.slotRef),
-                { title: `Disconnect ${r.iface} on ${r.snap}` })));
-    } else if (r.sysSlot) {
-        // unconnected SYSTEM slot: connect needs no target selection (pre-filled)
-        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(
-            ifaceBtn('Connect', (btn) => connectPlug(r, btn), { title: `Connect ${r.iface} on ${r.snap}` })));
-    } else if (r.free.length) {
-        // unconnected APP slot with connectable targets: pick one, then connect
-        const sel = el('select', { class: 'ucm-iface-select' },
-            el('option', { value: '', text: 'target slot…' }));
-        r.free.forEach((f) => sel.append(el('option', { value: f.key, text: f.label })));
-        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(sel,
-            ifaceBtn('Connect', (btn) => connectPlug(r, btn), { title: `Connect ${r.iface} on ${r.snap}` })));
+    // Slot column = the current connection target (like the CLI's Slot
+    // column: "-", shown as "—", for a loose plug). For an unconnected plug
+    // with ONE unambiguous target — a system slot (pre-filled, stays "—"
+    // like the CLI) or a single same-named slot, which namespacing makes the
+    // only possible target — the target is rendered in this cell instead of a
+    // pulldown (round 39). With several app-owned candidates the cell holds
+    // the target-slot pulldown.
+    let slotCell;
+    if (r.slotRef) {
+        slotCell = el('td', { class: 'ucm-mono', text: slotDisplay(r.slotRef) });
+    } else if (r.singleTarget) {
+        slotCell = el('td', { class: 'ucm-mono ucm-muted', text: slotDisplay(r.singleTarget) });
     } else {
-        // unconnected APP slot with NO connectable target: no empty pulldown,
-        // and a visually + functionally disabled Connect.
-        actionCell = el('td', { class: 'ucm-ifaces-action' }, ctrl(ifaceBtn('Connect', (btn) => connectPlug(r, btn), {
-            disabled: true,
-            title: `Connect ${r.iface} on ${r.snap} — no target slots available`,
-        })));
+        slotCell = el('td', { class: 'ucm-muted' },
+            r.free.length
+                ? el('select', { class: 'ucm-iface-select' },
+                    el('option', { value: '', text: 'target slot…' }),
+                    ...r.free.map((f) => el('option', { value: f.key, text: f.label })))
+                : '—');
     }
+    // Icon-only row actions, the same idiom as the snaps table (round 34/39):
+    // Disconnect = suru close (X), Connect = suru add (+); the button is the
+    // Vanilla tooltip trigger so the label is also on keyboard focus.
+    const actionCell = el('td', { class: 'ucm-ifaces-action' },
+        r.connected
+            ? rowBtn(`Disconnect ${r.iface} on ${r.snap}`, 'p-icon--window-close',
+                () => disconnectPlug(r.snap, r.plug, r.slotRef))
+            : rowBtn(`Connect ${r.iface} on ${r.snap}` + (r.free.length ? '' : ' — no target slots available'),
+                'p-icon--add',
+                (btn) => connectPlug(r, btn),
+                { disabled: !r.connected && !r.sysSlot && !r.singleTarget && !r.free.length }));
     return el('tr', { class: `ucm-iface ucm-iface--${tone}` },
         el('td', { class: 'ucm-iface__iface', text: r.iface || '—' }),
         el('td', { class: 'ucm-mono', text: r.snap + ':' + r.plug }),
@@ -1319,9 +1306,16 @@ function renderInterfaces() {
                     && !isSystemSnap(s.snap)
                     && !(s.snap === p.snap && s.slot === p.plug))
                 .sort((a, b) => (a.snap + a.slot).localeCompare(b.snap + b.slot))
-                .map((s) => ({ key: s.snap + '|' + s.slot, label: slotDisplay(s) }));
+                .map((s) => ({ key: s.snap + '|' + s.slot, label: slotDisplay(s), ref: { snap: s.snap, slot: s.slot } }));
+            // Namespacing (round 39): when exactly one free slot shares the
+            // plug's name it is the unambiguous target — the Slot column shows
+            // it directly (no pulldown) and the connect pre-fills it.
+            const sameName = free.filter((f) => f.ref.slot === p.plug);
             e.uncons.push({ snap: p.snap, plug: p.plug, iface: p.interface, connected: false,
-                slotRef: null, sysSlot: sysSlot ? { snap: sysSlot.snap, slot: sysSlot.slot } : null, free });
+                slotRef: null,
+                sysSlot: sysSlot ? { snap: sysSlot.snap, slot: sysSlot.slot } : null,
+                singleTarget: (!sysSlot && sameName.length === 1) ? { snap: sameName[0].ref.snap, slot: sameName[0].ref.slot } : null,
+                free });
         }
     });
 
@@ -1335,11 +1329,14 @@ function renderInterfaces() {
 }
 
 async function connectPlug(r, btn) {
-    // target = the pre-filled system slot, else the dropdown selection
-    const sel = btn ? btn.parentElement.querySelector('.ucm-iface-select') : null;
+    // target = the pre-filled system slot, else the single same-named slot,
+    // else the Slot-column pulldown selection (round 39 moved it there).
+    const sel = btn && btn.closest('tr') ? btn.closest('tr').querySelector('.ucm-iface-select') : null;
     const target = r.sysSlot
         ? { snap: r.sysSlot.snap, slot: r.sysSlot.slot }
-        : (sel && sel.value ? sel.value.split('|').reduce((o, k, i) => { o[i === 0 ? 'snap' : 'slot'] = k; return o; }, {}) : null);
+        : (r.singleTarget
+            ? { snap: r.singleTarget.snap, slot: r.singleTarget.slot }
+            : (sel && sel.value ? sel.value.split('|').reduce((o, k, i) => { o[i === 0 ? 'snap' : 'slot'] = k; return o; }, {}) : null));
     if (!target || !target.snap || !target.slot) { toast('caution', 'Connect', 'Pick a target slot first.'); return; }
     if (btn) btn.classList.add('is-disabled');
     try {
@@ -1453,8 +1450,8 @@ function wire() {
     $('#snapSearchName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchStore(); } });
     $('#snapSearchClear').addEventListener('click', clearStoreResults);
 
-    // interfaces
-    $('#ifacesRefresh').addEventListener('click', loadInterfaces);
+    // interfaces: no page-level Refresh (round 39) — the view
+    // reloads on entry, like the dashboard cards reload on their 20 s poll.
 }
 
 /* -------------------------------- boot ----------------------------------- */
