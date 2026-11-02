@@ -866,10 +866,8 @@ function renderSnaps() {
    screenshot harness) — in-app the bundle hides it until :hover/:focus.
    Round 39: the interfaces page Connect/Disconnect actions use this SAME
    idiom (the round-38 labeled buttons read inconsistent with the snaps
-   table); their glyphs are the suru add/close SVGs shipped in build/images —
-   the round-37 lesson: bundle data-URI p-icons can render in headless
-   Chromium yet not paint in the kiosk, so the interfaces icons follow the
-   proven suru-file pattern, never the bundle p-icon--plus/--close URIs. */
+   table); their glyphs are the suru add/close SVGs shipped in build/images,
+   the same proven suru-file pattern as the snap-row actions above. */
 function rowBtn(label, icon, onClick, opts = {}) {
     const btn = el('button', {
         class: 'p-button--base p-button ucm-rowbtn ucm-iconbtn p-tooltip--top-right' + (opts.disabled ? ' is-disabled' : ''),

@@ -684,14 +684,14 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     font-size: .82rem;
 }
 /* ---- interfaces Connect/Disconnect icons (round 39) -------------------
-   Same suru-file pattern as the snap-row actions above: the offline Vanilla
-   bundle ships p-icon--plus / p-icon--close as data-URI SVGs, and a data-URI
-   icon of this class can render in headless Chromium yet not paint in the
-   Electron kiosk (rounds 37/38) — so the glyphs come from cleaned suru SVG
-   files in build/images (see each file's header), served 'self' like the
-   other suru images. The <i> boxes reuse the exact 1rem style of the
-   snap-row icons. The bundle's button.is-disabled (opacity:.33 + cursor)
-   dims the no-target Connect glyph; it also sets pointer-events:none. */
+   Same suru-file pattern as the snap-row actions above: the glyphs come from
+   cleaned suru SVG files in build/images (see each file's header), served
+   'self' like the other suru images. The <i> boxes reuse the exact 1rem
+   style of the snap-row icons. The bundle's button.is-disabled (opacity:.33
+   + cursor) dims the no-target Connect glyph; it also sets pointer-events:none.
+   (Note: the "missing" Connect icon in rounds 37/38 was a LAYOUT problem — a
+   full-width <select> filled the Actions cell and pushed the icon out of
+   sight, not a paint failure. These icons render fine in the kiosk.) */
 .p-icon--add{
     display: inline-block;
     background-repeat: no-repeat;
@@ -708,9 +708,15 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     background-position: center;
     background-image: url("../build/images/suru-close.svg");
 }
+/* Round-39b: the connected/unconnected sections were almost touching
+   (the divider collapsed to a 6px sliver, gapAbove/gapBelow 0 — the
+   hairline sat flush against the last connected row, so the two
+   separators read as bunched). Pad the divider open so the sections
+   are clearly separate: the hairline stays as the divider, with real
+   space above and below it. (.15rem -> .65rem, ~10.4px each side.) */
 .ucm-ifaces-div td {
     border: 0;
     border-top: 1px solid #f0f0f0;
-    padding: .15rem 0;
+    padding: .65rem 0;
     height: 0;
 }

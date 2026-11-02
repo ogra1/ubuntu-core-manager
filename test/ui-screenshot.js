@@ -887,10 +887,6 @@ function mockFactoryJs() {
     // unconnected below. System slots (core/snapd/system) render ":name" and
     // their unconnected rows get a BARE Connect (target pre-filled); app slots
     // render "snap:name" and keep a target-slot dropdown.
-    await page.click('.ucm-side a[data-view="interfaces"]');
-    await wait(700);
-    await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
-
     // Round 39: icon-only Connect/Disconnect (suru add/close, the snaps-table
     // rowBtn idiom) + the target-slot pulldown lives in the SLOT column
     // ("—" when no target; a single same-named target renders as plain text).
@@ -939,6 +935,16 @@ function mockFactoryJs() {
             ht: findCard('htop') ? readCard(findCard('htop')) : null,
             rd: findCard('radio') ? readCard(findCard('radio')) : null,
             uc: findCard('ucm') ? readCard(findCard('ucm')) : null,
+            ffDiv: (function () {
+                const card = findCard('firefox');
+                if (!card) return null;
+                const rows = Array.from(card.querySelectorAll('tr'));
+                const pos = rows.filter((r) => /ucm-iface--positive/.test(r.className));
+                const cau = rows.filter((r) => /ucm-iface--caution/.test(r.className));
+                const div = rows.find((r) => r.className === 'ucm-ifaces-div');
+                if (!pos.length || !cau.length || !div) return null;
+                return { divH: Math.round(div.getBoundingClientRect().height) };
+            })(),
         };
     });
     const ifCardBtn = (title, iface) => page.evaluate(([title, iface]) => {
@@ -964,6 +970,14 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
     if (v.summary !== '6 snaps · 2 connected · 5 unconnected')
         console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
+    // Round-39b: the connected/unconnected sections must be clearly
+    // separated — the divider row is padded open, not a collapsed ~6px
+    // sliver (which read as two bunched separators). firefox has both
+    // sections in the mock; assert its divider height is comfortably > 6px.
+    if (!v.ffDiv)
+        console.log('PAGE ERROR: firefox divider not measurable (card must have both sections)');
+    else if (v.ffDiv.divH < 16)
+        console.log('PAGE ERROR: ifaces connected/unconnected sections not visually separated (divider height ' + v.ffDiv.divH + 'px, want >=16; the old sliver was 6px)');
     // firefox: connected(network, system ":network", green, X icon) on top,
     // unconnected(browser, app pulldown in the Slot column, amber, + icon) below
     if (!v.ff || v.ff.rows.length !== 2) console.log('PAGE ERROR: firefox should have 2 rows: ' + JSON.stringify(v.ff && v.ff.rows));
