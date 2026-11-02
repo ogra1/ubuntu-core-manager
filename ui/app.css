@@ -658,6 +658,12 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    plain (subtly tinted) cell — no status box — so it is not redundant with
    the Plug/Slot columns, exactly like the CLI. */
 .ucm-ifaces-card__title { font-size: 1.05rem; }
+/* the title is a .p-heading--5; the bundle's stacked-heading padding-top
+   (6.56px) sits above its glyphs and made the snap name render ~2px below
+   the connected/unconnected counters in the flex header row (round 40 —
+   same fix as the round-32 Data-partition card). Scoped, so other headings
+   keep their padding. */
+.ucm-ifaces-card .p-heading--5 { padding-top: 0; }
 .ucm-ifaces-table { margin: 0; table-layout: auto; }
 .ucm-ifaces-table th {
     font-size: .7rem;
@@ -672,7 +678,15 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* tone tint matches the bundle status-label greens/ambers (positive #0e8420) */
 .ucm-iface--positive .ucm-iface__iface { color: #0e8420; }
 .ucm-iface--caution .ucm-iface__iface { color: #b36b00; }
-.ucm-ifaces-action { text-align: right; white-space: nowrap; }
+.ucm-ifaces-action {
+    text-align: right;
+    white-space: nowrap;
+    /* the bundle's `td,th { overflow: hidden }` (text-ellipsis) clipped the
+       p-tooltip--top-right message, which is positioned ABOVE the icon and
+       so fell outside this cell's box — the tooltip never showed (round 40).
+       The cell only holds fixed-size icon buttons, so un-clip it. */
+    overflow: visible;
+}
 /* target-slot pulldown (round 39 moved it from the Actions cell into the
    Slot cell — the column that shows "—" for unconnected rows). The icon-only
    Actions cell no longer crowds it; a single same-named target renders as

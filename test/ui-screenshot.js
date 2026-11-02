@@ -925,8 +925,22 @@ function mockFactoryJs() {
         };
         const findCard = (t) => Array.from(document.querySelectorAll('#ifacesCards .p-card'))
             .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === t);
+        const glyphMid = (el) => {
+            const r = document.createRange();
+            r.selectNodeContents(el);
+            const rects = Array.from(r.getClientRects()).filter((x) => x.width > 0);
+            if (!rects.length) return null;
+            const top = Math.min(...rects.map((x) => x.top));
+            const bot = Math.max(...rects.map((x) => x.bottom));
+            return (top + bot) / 2;
+        };
+        const ffCard = findCard('firefox');
+        const headerGlyph = ffCard
+            ? { title: glyphMid(ffCard.querySelector('.ucm-ifaces-card__title')),
+                counts: glyphMid(ffCard.querySelector('.ucm-ifaces-card__counts')) } : null;
         return {
             refreshBtn: !!document.querySelector('#ifacesRefresh'),
+            headerGlyph,
             titles: Array.from(document.querySelectorAll('#ifacesCards .p-card .ucm-ifaces-card__title')).map((t) => t.textContent.trim()),
             summary: document.querySelector('#ifacesSummary').textContent.trim(),
             ff: findCard('firefox') ? readCard(findCard('firefox')) : null,
@@ -970,6 +984,13 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
     if (v.summary !== '6 snaps · 2 connected · 5 unconnected')
         console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
+    // Round 40: header title (snap name) and the connected/unconnected
+    // counters must sit on the same visual centre — the bundle's stacked
+    // .p-heading--5 padding-top used to push the title glyphs ~2px low.
+    if (!v.headerGlyph || v.headerGlyph.title == null || v.headerGlyph.counts == null)
+        console.log('PAGE ERROR: ifaces header glyph boxes not measurable: ' + JSON.stringify(v.headerGlyph));
+    else if (Math.abs(v.headerGlyph.title - v.headerGlyph.counts) > 1)
+        console.log('PAGE ERROR: ifaces header title/counters not vertically aligned (glyph midpoints ' + v.headerGlyph.title + ' vs ' + v.headerGlyph.counts + ', delta ' + Math.abs(v.headerGlyph.title - v.headerGlyph.counts).toFixed(1) + 'px, want <=1)');
     // Round-39b: the connected/unconnected sections must be clearly
     // separated — the divider row is padded open, not a collapsed ~6px
     // sliver (which read as two bunched separators). firefox has both
@@ -978,6 +999,43 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: firefox divider not measurable (card must have both sections)');
     else if (v.ffDiv.divH < 16)
         console.log('PAGE ERROR: ifaces connected/unconnected sections not visually separated (divider height ' + v.ffDiv.divH + 'px, want >=16; the old sliver was 6px)');
+    // Round 40: the row-action tooltip must actually be VISIBLE on hover.
+    // Regression: the bundle's `td,th { overflow:hidden }` clipped the
+    // p-tooltip--top-right message (positioned above the icon) 100%, so
+    // tooltips never showed. Hover a connect/disconnect icon and assert the
+    // message is displayed and its box is NOT fully clipped by the cell.
+    const tip = await page.evaluate(() => {
+        const btn = document.querySelector('#ifacesCards .ucm-ifaces-action .ucm-iconbtn');
+        if (!btn) return null;
+        btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        btn.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        btn.focus();
+        const msg = btn.querySelector('.p-tooltip__message');
+        const cs = getComputedStyle(msg);
+        const m = msg.getBoundingClientRect();
+        const td = btn.closest('td');
+        const card = btn.closest('.p-card');
+        const cr = card.getBoundingClientRect();
+        // ancestors between the tooltip and the card: none may clip (the
+        // card itself is a legitimate scroll container, overflow:auto).
+        let n = msg.parentElement, clipper = null;
+        while (n && n !== card) {
+            const o = getComputedStyle(n).overflow;
+            if (o === 'hidden') { clipper = n.tagName.toLowerCase() + '.' + (n.className && String(n.className).slice(0, 30)); break; }
+            n = n.parentElement;
+        }
+        return { display: cs.display, w: Math.round(m.width), h: Math.round(m.height),
+            inCard: m.top >= cr.top - 1 && m.bottom <= cr.bottom + 1,
+            tdOverflow: getComputedStyle(td).overflow, clipper };
+    });
+    if (!tip)
+        console.log('PAGE ERROR: no row-action icon button to test the tooltip');
+    else if (tip.display === 'none' || tip.w <= 0 || tip.h <= 0)
+        console.log('PAGE ERROR: row-action tooltip not displayed on hover: ' + JSON.stringify(tip));
+    else if (tip.clipper)
+        console.log('PAGE ERROR: an ancestor still clips the tooltip (overflow:hidden on ' + tip.clipper + '): ' + JSON.stringify(tip));
+    else if (!tip.inCard)
+        console.log('PAGE ERROR: row-action tooltip escapes the card (would be clipped by the card scroll container): ' + JSON.stringify(tip));
     // firefox: connected(network, system ":network", green, X icon) on top,
     // unconnected(browser, app pulldown in the Slot column, amber, + icon) below
     if (!v.ff || v.ff.rows.length !== 2) console.log('PAGE ERROR: firefox should have 2 rows: ' + JSON.stringify(v.ff && v.ff.rows));
