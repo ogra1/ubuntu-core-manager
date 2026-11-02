@@ -687,6 +687,15 @@ button.is-disabled { pointer-events: none; opacity: .6; }
        The cell only holds fixed-size icon buttons, so un-clip it. */
     overflow: visible;
 }
+
+.ucm-actions-cell {
+    /* the same overflow trap as .ucm-ifaces-action (round 40 fixed the
+       interfaces page only): the bundle's `td,th { overflow: hidden }`
+       clipped the p-tooltip--top-right message of the snaps row actions,
+       which renders ABOVE the icon, so the tooltip never showed. This cell
+       only holds fixed-size 1rem icon buttons -> un-clip it. */
+    overflow: visible;
+}
 /* ---- interfaces Connect/Disconnect icons (round 39) -------------------
    Same suru-file pattern as the snap-row actions above: the glyphs come from
    cleaned suru SVG files in build/images (see each file's header), served

@@ -853,7 +853,7 @@ function renderSnaps() {
             el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
             el('td', { class: 'ucm-mono', text: fmtTrackChannel(s), title: `${s.tracking_channel || s.channel || '—'}` }),
             el('td', { text: s.type || 'app' }),
-            el('td', { style: 'text-align:right;' }, actions),
+            el('td', { class: 'ucm-actions-cell', style: 'text-align:right;' }, actions),
         ));
     });
 }

@@ -884,6 +884,49 @@ function mockFactoryJs() {
         if (col.btnPadL !== '0px') console.log('PAGE ERROR: icon button horizontal padding not zeroed (' + col.btnPadL + ')');
     }
     await page.screenshot({ path: path.join(SHOTS, '13b-snaps-actions.png'), fullPage: true });
+
+    // Round 43: the round-40 overflow fix reached only the interfaces page —
+    // the snaps Actions cell was a classless <td style="text-align:right">,
+    // so the bundle's `td,th { overflow: hidden }` still clipped its
+    // p-tooltip--top-right message (positioned above the icon) 100%. The fix
+    // adds .ucm-actions-cell { overflow: visible } to that one cell. Hover
+    // the first htop action (Configure) and assert the message displays with
+    // a real box and that nothing between it and the table wrapper (the
+    // scroll container — the snaps table is NOT in a .p-card, unlike the
+    // interfaces rows) clips it. Same idiom as the round-40 guard.
+    const snTip = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        const btn = htop && htop.querySelector('.ucm-iconbtn');
+        if (!btn) return null;
+        btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        btn.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        btn.focus();
+        const msg = btn.querySelector('.p-tooltip__message');
+        const cs = getComputedStyle(msg);
+        const m = msg.getBoundingClientRect();
+        const wrap = btn.closest('.ucm-table-wrap');
+        const wr = wrap.getBoundingClientRect();
+        // ancestors between the tooltip and the wrapper: none may clip (the
+        // wrapper itself is a legitimate scroll container, overflow:auto).
+        let n = msg.parentElement, clipper = null;
+        while (n && n !== wrap) {
+            const o = getComputedStyle(n).overflow;
+            if (o === 'hidden') { clipper = n.tagName.toLowerCase() + '.' + (n.className && String(n.className).slice(0, 40)); break; }
+            n = n.parentElement;
+        }
+        return { display: cs.display, w: Math.round(m.width), h: Math.round(m.height),
+            inWrap: m.top >= wr.top - 1 && m.bottom <= wr.bottom + 1,
+            tdOverflow: getComputedStyle(btn.closest('td')).overflow, clipper };
+    });
+    if (!snTip)
+        console.log('PAGE ERROR: no htop row action to test the snaps tooltip');
+    else if (snTip.display === 'none' || snTip.w <= 0 || snTip.h <= 0)
+        console.log('PAGE ERROR: snaps row-action tooltip not displayed on hover: ' + JSON.stringify(snTip));
+    else if (snTip.clipper)
+        console.log('PAGE ERROR: an ancestor still clips the snaps tooltip (overflow:hidden on ' + snTip.clipper + '): ' + JSON.stringify(snTip));
+    else if (!snTip.inWrap)
+        console.log('PAGE ERROR: snaps row-action tooltip escapes the table wrapper (would be clipped by its scroll container): ' + JSON.stringify(snTip));
     // defensive: no modal may still be covering the UI (a stuck modal would
     // mask later clicks and mask real layout in the shots)
     const stray = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);
