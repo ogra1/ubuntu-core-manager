@@ -49,6 +49,10 @@ const IFACES = {
         { snap: 'htop', plug: 'home', interface: 'home', apps: ['htop'], connections: null },
         { snap: 'radio', plug: 'pps', interface: 'pps', apps: ['radio'], connections: null },
         { snap: 'ucm', plug: 'icon-themes', interface: 'icon-themes', apps: ['ucm'], connections: null },
+        // lxd (the user's real example): plug named ceph-conf on the 'content'
+        // interface (plug name != interface name) — connected; its Disconnect
+        // tooltip must say "ceph-conf", not "content".
+        { snap: 'lxd', plug: 'ceph-conf', interface: 'content', apps: ['lxd'], connections: [{ snap: 'data-provider', slot: 'ceph-conf' }] },
     ],
     slots: [
         { snap: 'core', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
@@ -67,6 +71,7 @@ const IFACES = {
         { snap: 'gtk-common-themes', slot: 'gtk-2-themes', interface: 'icon-themes', connections: null },
         { snap: 'gtk-common-themes', slot: 'icon-themes', interface: 'icon-themes', connections: null },
         { snap: 'ubuntu-frame', slot: 'ubuntu-frame-diagnostic', interface: 'icon-themes', connections: null },
+        { snap: 'data-provider', slot: 'ceph-conf', interface: 'content', connections: [{ snap: 'lxd', plug: 'ceph-conf' }] },
     ],
 };
 
@@ -957,6 +962,7 @@ function mockFactoryJs() {
             ht: findCard('htop') ? readCard(findCard('htop')) : null,
             rd: findCard('radio') ? readCard(findCard('radio')) : null,
             uc: findCard('ucm') ? readCard(findCard('ucm')) : null,
+            lx: findCard('lxd') ? readCard(findCard('lxd')) : null,
             ffDiv: (function () {
                 const card = findCard('firefox');
                 if (!card) return null;
@@ -980,9 +986,9 @@ function mockFactoryJs() {
     // The page-top Refresh button is gone (round 39) — the dashboard's 20 s
     // poll pattern is the idiom; the interfaces view reloads on entry.
     if (v.refreshBtn !== false) console.log('PAGE ERROR: interfaces page still has its top Refresh button');
-    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'mosquitto', 'radio', 'snap-store', 'ucm']))
+    if (JSON.stringify(v.titles) !== JSON.stringify(['firefox', 'htop', 'lxd', 'mosquitto', 'radio', 'snap-store', 'ucm']))
         console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
-    if (v.summary !== '6 snaps · 2 connected · 5 unconnected')
+    if (v.summary !== '7 snaps · 3 connected · 5 unconnected')
         console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
     // Round 41: the target-slot pulldown no longer exists anywhere on the page.
     if (v.anySelect > 0)
@@ -1093,6 +1099,15 @@ function mockFactoryJs() {
         else if (ur.hasBtn !== true || ur.btnIconClass !== 'p-icon--add' || ur.btnDisabled !== false)
             console.log('PAGE ERROR: ucm same-named row must be an enabled icon-only Connect (+): ' + JSON.stringify(ur));
     }
+    // lxd: connected content row; the tooltip/aria-label must generalize on the
+    // PLUG name (ceph-conf), not the interface name (content) — the user's ask.
+    if (!v.lx || v.lx.rows.length !== 1 || v.lx.rows[0].iface !== 'content' || v.lx.rows[0].plug !== 'lxd:ceph-conf'
+        || v.lx.rows[0].slot !== 'data-provider:ceph-conf' || !/positive/.test(v.lx.rows[0].tone))
+        console.log('PAGE ERROR: lxd ceph-conf row wrong: ' + JSON.stringify(v.lx && v.lx.rows));
+    else if (v.lx.rows[0].hasBtn !== true || v.lx.rows[0].btnIconClass !== 'p-icon--window-close')
+        console.log('PAGE ERROR: lxd connected row must be an icon-only Disconnect (X): ' + JSON.stringify(v.lx.rows[0]));
+    else if (v.lx.rows[0].btnAria !== 'Disconnect ceph-conf on lxd')
+        console.log('PAGE ERROR: lxd Disconnect tooltip must use the PLUG name (got "' + v.lx.rows[0].btnAria + '", want "Disconnect ceph-conf on lxd" — not the interface name "content")');
     // NO-TARGET case: radio:pps has no connectable slot -> Slot "—", NO empty
     // pulldown, and a visually + functionally disabled + icon.
     if (!v.rd || v.rd.rows.length !== 1) console.log('PAGE ERROR: radio card should have 1 row: ' + JSON.stringify(v.rd && v.rd.rows));
@@ -1103,6 +1118,8 @@ function mockFactoryJs() {
         if (rr.hasSelect !== false) console.log('PAGE ERROR: radio pps must NOT show an empty pulldown (no targets): ' + JSON.stringify(rr));
         if (rr.hasBtn !== true || rr.btnDisabled !== true || rr.btnIconClass !== 'p-icon--add')
             console.log('PAGE ERROR: radio pps Connect must be present but disabled (+ icon): ' + JSON.stringify(rr));
+        else if (rr.btnAria !== 'Connect pps on radio — no target slots available')
+            console.log('PAGE ERROR: radio disabled Connect tooltip wording wrong (got "' + rr.btnAria + '"): ' + JSON.stringify(rr));
     }
     // element shot of the firefox card (VLM layout check)
     const ffCardEl = await page.$('#ifacesCards .p-card');

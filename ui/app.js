@@ -1223,9 +1223,9 @@ function ifacesRow(r) {
     // Vanilla tooltip trigger so the label is also on keyboard focus.
     const actionCell = el('td', { class: 'ucm-ifaces-action' },
         r.connected
-            ? rowBtn(`Disconnect ${r.iface} on ${r.snap}`, 'p-icon--window-close',
+            ? rowBtn(`Disconnect ${r.plug} on ${r.snap}`, 'p-icon--window-close',
                 () => disconnectPlug(r.snap, r.plug, r.slotRef))
-            : rowBtn(`Connect ${r.iface} on ${r.snap}` + (r.sysSlot || r.singleTarget ? '' : ' — no target slots available'),
+            : rowBtn(`Connect ${r.plug} on ${r.snap}` + (r.sysSlot || r.singleTarget ? '' : ' — no target slots available'),
                 'p-icon--add',
                 (btn) => connectPlug(r, btn),
                 { disabled: !r.connected && !r.sysSlot && !r.singleTarget }));
