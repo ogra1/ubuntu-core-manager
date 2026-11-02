@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><!-- Suru add/plus icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru-icon-theme package:
+     /usr/share/icons/suru/actions/scalable/add.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata, namedview and grid/guides
+     stripped; all glyph geometry kept verbatim (verified pixel-identical
+     to the original render); glyph fill set to #000000 - the original
+     #808080 is too faint for a 16px table-row icon. Shipped for the
+     interfaces page Connect row action (round 39). --><g  id="layer1" transform="translate(67.857146,-78.50504)">
+    <g transform="matrix(0,-1,-1,0,373.50506,516.50504)" id="g4845" style="display:inline">
+      <g transform="matrix(-0.9996045,0,0,1,575.94296,-611.00001)" id="g4778">
+        <g transform="matrix(-1,0,0,1,575.99999,611)" id="g4780" style="display:inline">
+          <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none" d="m 429.99929,395.3622 1.02604,-4 -81.0577,0 0,4 z" id="rect1712" />
+          <rect transform="scale(-1,1)" y="353.36221" x="-391.98431" height="80.000038" width="4.0015826" id="rect1714" style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>
