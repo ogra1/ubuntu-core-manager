@@ -793,6 +793,9 @@ async function loadSnaps() {
      Remove   = trash can (suru delete - round 44 swapped the bundle's
                 p-icon--delete data-URI glyph, which read out of place
                 next to the suru set)
+     System snaps (base/core/kernel/gadget/snapd) show ONLY Refresh +
+     Revert — snapd refuses config/disable/remove on them (live-verified,
+     round 46), so their Actions cell is two icons, not five.
    Each button IS its own Vanilla .p-tooltip--top-right trigger: the
    .p-tooltip__message child (CSS-only, shown on :hover/:focus) carries the
    label, so the tooltip also appears for keyboard focus (a wrapper span would
@@ -835,7 +838,12 @@ function renderSnaps() {
         const dispTone = disabled ? 'negative' : tone;
         const dispWord = disabled ? 'disabled' : word;
 
-        const isSystem = s.type === 'core' || s.type === 'gadget' || s.type === 'kernel' || s.type === 'os' || s.name === 'snapd';
+        // System snaps (base/core/kernel/gadget/os + snapd): snapd hard-refuses
+        // the app-level actions on them (live-verified 2.77: disable/remove 400,
+        // conf 500 'type base' / 'use system') — so they get ONLY the two
+        // actions that actually work: Refresh and Revert (revert = the escape
+        // hatch after a bad update; the user's priority for these rows).
+        const isSystem = s.type === 'base' || s.type === 'core' || s.type === 'gadget' || s.type === 'kernel' || s.type === 'os' || s.name === 'snapd';
         const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
 
         if (!isSystem && s.installed !== null) {
@@ -847,6 +855,15 @@ function renderSnaps() {
                     disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
                     () => (disabled ? snapOp(s.name, 'enable') : confirmDisable(s.name))),
                 rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
+            );
+        } else if (s.installed !== null) {
+            // System snap (base/core/kernel/gadget/snapd): snapd refuses config
+            // (500 'type base' / 'use system'), disable and remove (400), so the
+            // only genuinely-actionable icons are Refresh + Revert. No config,
+            // power or trash here — showing them would just be 400/500 toasts.
+            actions.append(
+                rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
+                rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
             );
         }
         body.append(el('tr', {},

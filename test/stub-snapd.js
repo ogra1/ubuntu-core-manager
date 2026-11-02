@@ -17,7 +17,7 @@ const path = require('path');
 const SNAPS = [
     {
         name: 'core24', version: '24.04', revision: 4110, channel: '24.04',
-        status: 'active', type: 'core', confinement: 'strict', 'tracking-channel': '24.04/stable',
+        status: 'active', type: 'base', confinement: 'strict', 'tracking-channel': '24.04/stable',
         private: false, installDate: '2026-01-01T00:00:00Z',
     },
     {

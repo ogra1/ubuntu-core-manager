@@ -25,7 +25,9 @@ const SHOTS = '/root/shots';
 fs.mkdirSync(SHOTS, { recursive: true });
 
 const SNAPS = [
-    { name: 'core24', version: '24.04.3', revision: 4110, channel: 'stable', 'tracking-channel': '24.04/stable', status: 'active', type: 'core', confinement: 'strict' },
+    // a core24 BASE is type 'base' on a real system (the 'core' type only
+    // exists on pre-core20 classic installs) - the user's "oddly core" row.
+    { name: 'core24', version: '24.04.3', revision: 4110, channel: 'stable', 'tracking-channel': '24.04/stable', status: 'active', type: 'base', confinement: 'strict' },
     { name: 'snapd', version: '2.68.4', revision: 23448, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'snapd', confinement: 'strict' },
     { name: 'kernel-noble', version: '6.8.0-40', revision: 1189, channel: 'stable', 'tracking-channel': 'noble/stable', status: 'active', type: 'kernel', confinement: 'strict' },
     { name: 'gadget', version: '1.2', revision: 77, channel: 'local', status: 'active', type: 'gadget', confinement: 'jailmode' },
@@ -848,6 +850,8 @@ function mockFactoryJs() {
         const getRow = (n) => rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === n);
         const h = getRow('htop'); const o = getRow('old-tool');
         if (!h || !o) return { error: 'htop/old-tool row missing' };
+        const k = getRow('core24'); const g = getRow('gadget');
+        const iconList = (r) => r ? Array.from(r.querySelectorAll('.ucm-iconbtn')).map((b) => { const i = b.querySelector('i'); return i ? i.className : ''; }) : null;
         const hbtns = Array.from(h.querySelectorAll('.ucm-iconbtn'));
         const obtns = Array.from(o.querySelectorAll('.ucm-iconbtn'));
         const strip = (b) => { const c = b.cloneNode(true); const m = c.querySelector('.p-tooltip__message'); if (m) m.remove(); return c.textContent.trim(); };
@@ -857,6 +861,7 @@ function mockFactoryJs() {
         const oEn = obtns.find((b) => (b.getAttribute('aria-label') || '').startsWith('Enable'));
         return {
             hCount: hbtns.length, oCount: obtns.length,
+            sysCore: iconList(k), sysGadget: iconList(g),
             hTextless: hbtns.length > 0 && hbtns.every((b) => strip(b) === ''),
             hTooltips: hbtns.map((b) => (b.getAttribute('data-tooltip') || '').length > 0),
             hAria: hbtns.map((b) => (b.getAttribute('aria-label') || '').length > 0),
@@ -895,7 +900,14 @@ function mockFactoryJs() {
         if (col.oBadge !== 'disabled') console.log('PAGE ERROR: disabled snap badge is not red disabled (' + col.oBadge + ')');
         if (col.msgDisplay !== 'none') console.log('PAGE ERROR: tooltip message visible before hover (display=' + col.msgDisplay + ')');
         if (col.btnPadL !== '0px') console.log('PAGE ERROR: icon button horizontal padding not zeroed (' + col.btnPadL + ')');
-        if (!col.iTop || col.iTop.some((v) => v !== col.iTop[0])) console.log('PAGE ERROR: row icon boxes not vertically uniform in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, round 44c)');
+        // round 46: system snaps (base/core/kernel/gadget/snapd) get ONLY
+        // Refresh + Revert — snapd refuses config (500 'type base'),
+        // disable and remove (400) on them, so no gear/power/trash icons.
+        if (!col.sysCore || JSON.stringify(col.sysCore) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
+            console.log('PAGE ERROR: system snap core24 actions wrong (' + JSON.stringify(col.sysCore) + ', want exactly [refresh, revert], round 46)');
+        if (!col.sysGadget || JSON.stringify(col.sysGadget) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
+            console.log('PAGE ERROR: system snap gadget actions wrong (' + JSON.stringify(col.sysGadget) + ', want exactly [refresh, revert], round 46)');
+                if (!col.iTop || col.iTop.some((v) => v !== col.iTop[0])) console.log('PAGE ERROR: row icon boxes not vertically uniform in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, round 44c)');
         else if (col.btnH) { var c44 = (col.btnH - 16) / 2; if (col.iTop.some((v) => Math.abs(v - c44) > 1)) console.log('PAGE ERROR: row icons not centred in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, want ' + c44.toFixed(2) + ' +-1 - the suru icons lost the bundle vertical-align nudge, round 44c)'); }
     }
     await page.screenshot({ path: path.join(SHOTS, '13b-snaps-actions.png'), fullPage: true });
