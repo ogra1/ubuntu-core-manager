@@ -687,16 +687,6 @@ button.is-disabled { pointer-events: none; opacity: .6; }
        The cell only holds fixed-size icon buttons, so un-clip it. */
     overflow: visible;
 }
-/* target-slot pulldown (round 39 moved it from the Actions cell into the
-   Slot cell — the column that shows "—" for unconnected rows). The icon-only
-   Actions cell no longer crowds it; a single same-named target renders as
-   plain text here instead. */
-.ucm-iface-select {
-    max-width: 13rem;
-    margin: 0;
-    font-family: "Ubuntu Mono variable", monospace;
-    font-size: .82rem;
-}
 /* ---- interfaces Connect/Disconnect icons (round 39) -------------------
    Same suru-file pattern as the snap-row actions above: the glyphs come from
    cleaned suru SVG files in build/images (see each file's header), served

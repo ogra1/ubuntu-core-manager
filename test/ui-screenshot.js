@@ -54,8 +54,12 @@ const IFACES = {
         { snap: 'core', slot: 'network', interface: 'network', connections: [{ snap: 'firefox', plug: 'network' }] },
         { snap: 'core', slot: 'network-bind', interface: 'network-bind', connections: [{ snap: 'mosquitto', plug: 'network-bind' }] },
         { snap: 'core', slot: 'home', interface: 'home', connections: null },
-        { snap: 'snap-store', slot: 'browser-remote', interface: 'browser', connections: null },
-        { snap: 'snap-store', slot: 'browser-view', interface: 'browser', connections: null },
+        // the browser interface: one differently-NAMED slot (browser-proxy,
+        // NOT 'browser' — so no same-name match for the firefox:browser plug)
+        // -> the lxd case: snapd would accept it but it is the wrong namespace,
+        // so the UI must NOT offer a pulldown and must treat the plug as having
+        // no usable target.
+        { snap: 'snap-store', slot: 'browser-proxy', interface: 'browser', connections: null },
         // content interfaces: gtk-common-themes and ubuntu-frame both expose
         // icon-themes — but only the same-NAMED slot qualifies for the ucm
         // icon-themes plug (namespacing), so no pulldown is needed. The
@@ -886,10 +890,13 @@ function mockFactoryJs() {
     // Actions) mirroring `snap connections <snap>`: connected rows on top,
     // unconnected below. System slots (core/snapd/system) render ":name" and
     // their unconnected rows get a BARE Connect (target pre-filled); app slots
-    // render "snap:name" and keep a target-slot dropdown.
-    // Round 39: icon-only Connect/Disconnect (suru add/close, the snaps-table
-    // rowBtn idiom) + the target-slot pulldown lives in the SLOT column
-    // ("—" when no target; a single same-named target renders as plain text).
+    // render "snap:name". Round 39: icon-only Connect/Disconnect (suru
+    // add/close, the snaps-table rowBtn idiom). Round 41: the target-slot
+    // pulldown is GONE — for content interfaces snapd accepts any same-interface
+    // slot, so a picker could only offer broken connections. The only usable
+    // target is the same-named slot: one -> shown as plain text + enabled +;
+    // none/ambiguous (the lxd case) -> "—" + disabled +. System-slot plugs
+    // keep a bare pre-filled connect.
     await page.click('.ucm-side a[data-view="interfaces"]');
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '14-interfaces.png'), fullPage: true });
@@ -943,6 +950,7 @@ function mockFactoryJs() {
             headerGlyph,
             titles: Array.from(document.querySelectorAll('#ifacesCards .p-card .ucm-ifaces-card__title')).map((t) => t.textContent.trim()),
             summary: document.querySelector('#ifacesSummary').textContent.trim(),
+            anySelect: document.querySelectorAll('#ifacesCards .ucm-iface-select').length,
             ff: findCard('firefox') ? readCard(findCard('firefox')) : null,
             mo: findCard('mosquitto') ? readCard(findCard('mosquitto')) : null,
             ss: findCard('snap-store') ? readCard(findCard('snap-store')) : null,
@@ -967,16 +975,8 @@ function mockFactoryJs() {
         const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
         row.querySelector('.ucm-ifaces-action .ucm-iconbtn').click();
     }, [title, iface]);
-    const ifSelectThenConnect = (title, iface, value) => page.evaluate(([title, iface, value]) => {
-        const card = Array.from(document.querySelectorAll('#ifacesCards .p-card'))
-            .find((c) => c.querySelector('.ucm-ifaces-card__title').textContent.trim() === title);
-        const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
-        const sel = row.querySelector('.ucm-iface-select');
-        sel.value = value;
-        row.querySelector('.ucm-ifaces-action .ucm-iconbtn').click();
-    }, [title, iface, value]);
-
     let v = await ifRead();
+
     // The page-top Refresh button is gone (round 39) — the dashboard's 20 s
     // poll pattern is the idiom; the interfaces view reloads on entry.
     if (v.refreshBtn !== false) console.log('PAGE ERROR: interfaces page still has its top Refresh button');
@@ -984,6 +984,9 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: ifaces cards not sorted per consuming snap: ' + JSON.stringify(v.titles));
     if (v.summary !== '6 snaps · 2 connected · 5 unconnected')
         console.log('PAGE ERROR: ifaces summary wrong: ' + v.summary);
+    // Round 41: the target-slot pulldown no longer exists anywhere on the page.
+    if (v.anySelect > 0)
+        console.log('PAGE ERROR: a target-slot pulldown still exists (round 41 removed them all): ' + v.anySelect);
     // Round 40: header title (snap name) and the connected/unconnected
     // counters must sit on the same visual centre — the bundle's stacked
     // .p-heading--5 padding-top used to push the title glyphs ~2px low.
@@ -1047,12 +1050,15 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: firefox network row wrong (system slot must be ":network", green): ' + JSON.stringify(a));
         else if (a.hasBtn !== true || a.btnIconClass !== 'p-icon--window-close' || a.hasSelect !== false)
             console.log('PAGE ERROR: firefox network connected row must be an icon-only Disconnect (X, no pulldown): ' + JSON.stringify(a));
-        if (b.iface !== 'browser' || b.plug !== 'firefox:browser' || b.slot !== 'target slot…' || !/caution/.test(b.tone))
-            console.log('PAGE ERROR: firefox browser row wrong (unconnected -> pulldown in Slot column, amber): ' + JSON.stringify(b));
-        else if (b.hasSelect !== true || JSON.stringify(b.selOpts) !== JSON.stringify(['', 'snap-store|browser-remote', 'snap-store|browser-view']))
-            console.log('PAGE ERROR: firefox browser row dropdown options wrong: ' + JSON.stringify(b.selOpts));
-        else if (b.hasBtn !== true || b.btnIconClass !== 'p-icon--add' || b.btnDisabled !== false)
-            console.log('PAGE ERROR: firefox browser row must be an enabled icon-only Connect (+): ' + JSON.stringify(b));
+        // firefox:browser — the lxd case: the browser interface has a slot
+        // (snap-store:browser) but it is NOT the same name, so it is not a
+        // usable target: no pulldown, Slot shows "—", Connect is DISABLED.
+        if (b.iface !== 'browser' || b.plug !== 'firefox:browser' || b.slot !== '—' || !/caution/.test(b.tone))
+            console.log('PAGE ERROR: firefox browser row wrong (no same-named target -> "—", amber, no pulldown): ' + JSON.stringify(b));
+        else if (b.hasSelect !== false)
+            console.log('PAGE ERROR: firefox browser row must NOT show a pulldown (no usable target): ' + JSON.stringify(b));
+        else if (b.hasBtn !== true || b.btnIconClass !== 'p-icon--add' || b.btnDisabled !== true)
+            console.log('PAGE ERROR: firefox browser row Connect must be present but DISABLED (no usable target): ' + JSON.stringify(b));
         else if (b.tipMsg !== b.btnAria)
             console.log('PAGE ERROR: firefox browser tooltip must mirror the aria-label: ' + JSON.stringify({ tip: b.tipMsg, aria: b.btnAria }));
         // suru-file pattern: the glyph must be the shipped SVG, not a data-URI
@@ -1132,13 +1138,8 @@ function mockFactoryJs() {
     if (!v.uc || v.uc.rows.length !== 1 || v.uc.rows[0].slot !== 'gtk-common-themes:icon-themes' || !/caution/.test(v.uc.rows[0].tone) || v.uc.rows[0].hasSelect !== false)
         console.log('PAGE ERROR: disconnect did not restore ucm:icon-themes to its same-named plain-text target: ' + JSON.stringify(v.uc && v.uc.rows));
 
-    // (c) DROPDOWN connect on an app slot (firefox:browser -> snap-store:browser-view)
-    await ifSelectThenConnect('firefox', 'browser', 'snap-store|browser-view');
-    await wait(1200);
-    v = await ifRead();
-    if (!v.ff || v.ff.rows.length !== 2 || v.ff.rows[0].slot !== ':network' || v.ff.rows[1].slot !== 'snap-store:browser-view' || !/positive/.test(v.ff.rows[1].tone))
-        console.log('PAGE ERROR: dropdown connect did not move firefox:browser to connected: ' + JSON.stringify(v.ff && v.ff.rows));
-    else if (v.ff.counts !== '2 connected · 0 unconnected') console.log('PAGE ERROR: firefox counts after dropdown connect wrong: ' + v.ff.counts);
+    // Round 41: there is no dropdown connect to drive anymore — a plug with no
+    // unique same-named target is simply not connectable from the UI.
     await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });
 
     // ---- 6. lock -> local sign-in view ----

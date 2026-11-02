@@ -1203,24 +1203,20 @@ async function loadInterfaces() {
 function ifacesRow(r) {
     const tone = r.connected ? 'positive' : 'caution';
     // Slot column = the current connection target (like the CLI's Slot
-    // column: "-", shown as "—", for a loose plug). For an unconnected plug
-    // with ONE unambiguous target — a system slot (pre-filled, stays "—"
-    // like the CLI) or a single same-named slot, which namespacing makes the
-    // only possible target — the target is rendered in this cell instead of a
-    // pulldown (round 39). With several app-owned candidates the cell holds
-    // the target-slot pulldown.
+    // column: "-", shown as "—", for a loose plug). An unconnected plug has
+    // at most ONE safe target: a system slot (pre-filled inside the Connect,
+    // so the cell stays "—" like the CLI) or a single same-named slot
+    // (namespacing — the only correct content-interface match — shown as
+    // plain text). There is no target-slot pulldown (dropped in round 41):
+    // snapd would accept any same-interface slot, so the other candidates
+    // would all be broken connections.
     let slotCell;
     if (r.slotRef) {
         slotCell = el('td', { class: 'ucm-mono', text: slotDisplay(r.slotRef) });
     } else if (r.singleTarget) {
         slotCell = el('td', { class: 'ucm-mono ucm-muted', text: slotDisplay(r.singleTarget) });
     } else {
-        slotCell = el('td', { class: 'ucm-muted' },
-            r.free.length
-                ? el('select', { class: 'ucm-iface-select' },
-                    el('option', { value: '', text: 'target slot…' }),
-                    ...r.free.map((f) => el('option', { value: f.key, text: f.label })))
-                : '—');
+        slotCell = el('td', { class: 'ucm-muted', text: '—' });
     }
     // Icon-only row actions, the same idiom as the snaps table (round 34/39):
     // Disconnect = suru close (X), Connect = suru add (+); the button is the
@@ -1229,10 +1225,10 @@ function ifacesRow(r) {
         r.connected
             ? rowBtn(`Disconnect ${r.iface} on ${r.snap}`, 'p-icon--window-close',
                 () => disconnectPlug(r.snap, r.plug, r.slotRef))
-            : rowBtn(`Connect ${r.iface} on ${r.snap}` + (r.free.length ? '' : ' — no target slots available'),
+            : rowBtn(`Connect ${r.iface} on ${r.snap}` + (r.sysSlot || r.singleTarget ? '' : ' — no target slots available'),
                 'p-icon--add',
                 (btn) => connectPlug(r, btn),
-                { disabled: !r.connected && !r.sysSlot && !r.singleTarget && !r.free.length }));
+                { disabled: !r.connected && !r.sysSlot && !r.singleTarget }));
     return el('tr', { class: `ucm-iface ucm-iface--${tone}` },
         el('td', { class: 'ucm-iface__iface', text: r.iface || '—' }),
         el('td', { class: 'ucm-mono', text: r.snap + ':' + r.plug }),
@@ -1302,18 +1298,21 @@ function renderInterfaces() {
                 .filter((s) => s.interface === p.interface
                     && (!Array.isArray(s.connections) || !s.connections.length)
                     && !isSystemSnap(s.snap)
-                    && !(s.snap === p.snap && s.slot === p.plug))
-                .sort((a, b) => (a.snap + a.slot).localeCompare(b.snap + b.slot))
-                .map((s) => ({ key: s.snap + '|' + s.slot, label: slotDisplay(s), ref: { snap: s.snap, slot: s.slot } }));
-            // Namespacing (round 39): when exactly one free slot shares the
-            // plug's name it is the unambiguous target — the Slot column shows
-            // it directly (no pulldown) and the connect pre-fills it.
-            const sameName = free.filter((f) => f.ref.slot === p.plug);
+                    && !(s.snap === p.snap && s.slot === p.plug));
+            // Namespacing (round 39/41): for content interfaces snapd accepts
+            // ANY same-interface slot as the connect target — but only the
+            // same-NAMED slot is actually usable, so offering a pulldown of the
+            // "other" slots would only ever offer broken connections (e.g.
+            // lxd:ceph-conf -> ubuntu-frame:ubuntu-frame-diagnostic). The
+            // pulldown is dropped entirely (round 41): exactly one same-named
+            // free slot -> it is the target (Slot column, pre-filled); zero or
+            // several same-named -> treated as "no target", like any other
+            // plug without a slot.
+            const sameName = free.filter((s) => s.slot === p.plug);
             e.uncons.push({ snap: p.snap, plug: p.plug, iface: p.interface, connected: false,
                 slotRef: null,
                 sysSlot: sysSlot ? { snap: sysSlot.snap, slot: sysSlot.slot } : null,
-                singleTarget: (!sysSlot && sameName.length === 1) ? { snap: sameName[0].ref.snap, slot: sameName[0].ref.slot } : null,
-                free });
+                singleTarget: (!sysSlot && sameName.length === 1) ? { snap: sameName[0].snap, slot: sameName[0].slot } : null });
         }
     });
 
@@ -1327,15 +1326,14 @@ function renderInterfaces() {
 }
 
 async function connectPlug(r, btn) {
-    // target = the pre-filled system slot, else the single same-named slot,
-    // else the Slot-column pulldown selection (round 39 moved it there).
-    const sel = btn && btn.closest('tr') ? btn.closest('tr').querySelector('.ucm-iface-select') : null;
+    // target = the pre-filled system slot, else the single same-named slot.
+    // There is no pulldown (round 41): for content interfaces any other
+    // same-interface slot would be a broken connection, so a plug with no
+    // unique safe target simply cannot be connected from here.
     const target = r.sysSlot
         ? { snap: r.sysSlot.snap, slot: r.sysSlot.slot }
-        : (r.singleTarget
-            ? { snap: r.singleTarget.snap, slot: r.singleTarget.slot }
-            : (sel && sel.value ? sel.value.split('|').reduce((o, k, i) => { o[i === 0 ? 'snap' : 'slot'] = k; return o; }, {}) : null));
-    if (!target || !target.snap || !target.slot) { toast('caution', 'Connect', 'Pick a target slot first.'); return; }
+        : (r.singleTarget ? { snap: r.singleTarget.snap, slot: r.singleTarget.slot } : null);
+    if (!target || !target.snap || !target.slot) { toast('caution', 'Connect', 'No connectable target slot for this plug.'); return; }
     if (btn) btn.classList.add('is-disabled');
     try {
         const change = await core.interfaces.connect({ snap: r.snap, plug: r.plug }, target);
