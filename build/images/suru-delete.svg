@@ -3,10 +3,15 @@
      /usr/share/icons/suru/actions/scalable/delete.svg).
      License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
      Cleaned: Inkscape editor metadata, namedview and grid/guides
-     stripped; all glyph paths kept verbatim (verified pixel-identical
-     to the original render); glyph fill set to #000000 - the original
-     #808080 is too faint for a 16px table-row icon. -->
-<g  id="layer1" transform="translate(67.857146,-78.50504)">
+     stripped; all glyph paths kept VERBATIM; glyph fill set to
+     #000000 - the original #808080 is too faint for a 16px
+     table-row icon.
+     Optical note (round-44b): the layer group carries an extra -3.4
+     canvas units of Y offset vs the theme original (a pure vertical
+     shift, no path edits) so the trash base sits level with the
+     other snap-row action glyphs - in the theme art its ink ran to
+     91.8/96 vs ~84-89 for the siblings, reading as slightly low. -->
+<g  id="layer1" transform="translate(67.857146,-81.90504)">
     <g id="g4845" transform="matrix(0,-1,-1,0,373.50506,516.50504)">
         <g id="g4778" transform="matrix(-0.9996045,0,0,1,575.94296,-611.00001)">
             <g id="g4780" transform="matrix(-1,0,0,1,575.99999,611)">
