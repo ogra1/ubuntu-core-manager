@@ -862,6 +862,9 @@ function mockFactoryJs() {
             hAria: hbtns.map((b) => (b.getAttribute('aria-label') || '').length > 0),
             hIcons: hbtns.map((b) => { const i = b.querySelector('i'); return i ? i.className : ''; }),
             hPowerImg: bg(hPow, 'p-icon--power'),
+            hRefreshImg: bg(hbtns[1], 'p-icon--refresh'),
+            hRevertImg: bg(hbtns[2], 'p-icon--revert'),
+            hDeleteImg: bg(hbtns[4], 'p-icon--delete'),
             oPowerImg: bg(oPow, 'p-icon--power'),
             oEnableLabel: oEn ? oEn.getAttribute('aria-label') : null,
             oBadge: (o.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null,
@@ -877,6 +880,9 @@ function mockFactoryJs() {
         const wantIcons = ['p-icon--settings', 'p-icon--refresh', 'p-icon--revert', 'p-icon--power', 'p-icon--delete'];
         if (JSON.stringify(col.hIcons) !== JSON.stringify(wantIcons)) console.log('PAGE ERROR: action icons wrong or out of order (' + col.hIcons + ')');
         if (!(col.hPowerImg || '').includes('suru-power.svg')) console.log('PAGE ERROR: enabled power icon is not the black suru-power.svg (' + col.hPowerImg + ')');
+        if (!(col.hRefreshImg || '').includes('suru-sync.svg')) console.log('PAGE ERROR: refresh icon is not the suru sync glyph (' + col.hRefreshImg + ')');
+        if (!(col.hRevertImg || '').includes('suru-undo.svg')) console.log('PAGE ERROR: revert icon is not the suru undo glyph (' + col.hRevertImg + ')');
+        if (!(col.hDeleteImg || '').includes('suru-delete.svg')) console.log('PAGE ERROR: remove icon is not the suru trash glyph (' + col.hDeleteImg + ')');
         if (!(col.oPowerImg || '').includes('suru-power-red.svg')) console.log('PAGE ERROR: disabled power icon is not the red suru-power-red.svg (' + col.oPowerImg + ')');
         if (!(col.oEnableLabel || '').startsWith('Enable')) console.log('PAGE ERROR: disabled snap action is not Enable (' + col.oEnableLabel + ')');
         if (col.oBadge !== 'disabled') console.log('PAGE ERROR: disabled snap badge is not red disabled (' + col.oBadge + ')');

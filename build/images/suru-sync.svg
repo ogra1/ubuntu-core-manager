@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><!-- Suru sync icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru-icon-theme package:
+     /usr/share/icons/suru/actions/scalable/sync.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata, namedview and grid/guides
+     stripped; all glyph paths kept verbatim (verified pixel-identical
+     to the original render); glyph fill set to #000000 - the original
+     #808080 is too faint for a 16px table-row icon. -->
+<g  id="layer1" transform="translate(67.857146,-78.50504)">
+    <rect transform="rotate(90)" y="-28.142855" x="78.505043" height="96" width="96" id="rect4782-3" style="fill:none;stroke:none;stroke-width:3.99999976" />
+    <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:2.99940658" id="path5823" d="M 17.072833,93.463025 0.1076338,110.43897 c 3.761009,1.401 7.708799,2.70822 11.8425792,3.92478 4.11221,1.1879 8.17652,2.23608 12.19276,3.14139 -0.93642,-3.9851 -1.99907,-8.03498 -3.18697,-12.14718 -1.21724,-4.13605 -2.51124,-8.100105 -3.88215,-11.893915 z" />
+    <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:2.99940658" id="path5825" d="m -56.82218,159.50509 16.965203,-16.97594 c -3.761007,-1.401 -7.7088,-2.70822 -11.842582,-3.92478 -4.112202,-1.1879 -8.176517,-2.23608 -12.192756,-3.14139 0.936416,3.9851 1.999068,8.03498 3.186973,12.14718 1.217235,4.13605 2.511232,8.10009 3.882142,11.89391 z" />
+    <path style="fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:4" id="path4229" transform="translate(-67.857146,78.50504)" d="M 48 8 C 25.932299 8 8 25.9323 8 48 C 8 48.652294 8.019802 49.300601 8.0507812 49.945312 C 9.405955 50.280619 10.76689 50.631088 12.132812 50.998047 C 12.051485 50.008879 12 49.010417 12 48 C 12 28.09406 28.09406 12 48 12 C 61.004938 12 72.379096 18.871744 78.705078 29.185547 L 81.564453 26.324219 C 74.445747 15.308519 62.076952 8 48 8 z M 83.863281 44.96875 C 83.946529 45.969373 84 46.977601 84 48 C 84 67.90594 67.90594 84 48 84 C 34.975164 84 23.583842 77.10771 17.263672 66.767578 L 14.384766 69.648438 C 21.511139 80.681575 33.907347 88 48 88 C 70.067701 88 88 70.0677 88 48 A 2.0002 2.0002 0 0 0 87.958984 47.59375 C 87.953538 47.062177 87.92836 46.536233 87.902344 46.009766 C 86.56135 45.678175 85.2148 45.331336 83.863281 44.96875 z " />
+</g>
+</svg>

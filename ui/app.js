@@ -786,11 +786,13 @@ async function loadSnaps() {
    glyphs shipped in build/images (see .p-icon--settings/refresh/revert/power
    in app.css):
      Config   = gear (suru settings)
-     Refresh  = circular reload arrow (suru view-refresh)
-     Revert   = backward-curving undo arrow (suru revert)
+     Refresh  = two curved arrows (suru sync)
+     Revert   = curved back arrow (suru undo)
      Disable  = power switch, BLACK when the snap is enabled
      Enable   = power switch, RED when the snap is disabled (toggles to Enable)
-     Remove   = trash can (bundle p-icon--delete, unchanged)
+     Remove   = trash can (suru delete - round 44 swapped the bundle's
+                p-icon--delete data-URI glyph, which read out of place
+                next to the suru set)
    Each button IS its own Vanilla .p-tooltip--top-right trigger: the
    .p-tooltip__message child (CSS-only, shown on :hover/:focus) carries the
    label, so the tooltip also appears for keyboard focus (a wrapper span would
