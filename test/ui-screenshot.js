@@ -900,6 +900,105 @@ function mockFactoryJs() {
     }
     await page.screenshot({ path: path.join(SHOTS, '13b-snaps-actions.png'), fullPage: true });
 
+    // ---- 4e. Round 45: Disable is a FATAL-class action -> confirmation card ----
+    // Disabling a snap (e.g. the app's own) stops it for good until re-enabled,
+    // so the power icon must NOT toggle it in one click. Clicking Disable on an
+    // ENABLED snap must spawn the inline confirm card (same idiom as Remove);
+    // Cancel must leave the snap enabled; Confirm must disable it and flip the
+    // row to the red power + Enable. Enable stays one-click (it is the safe,
+    // corrective direction).
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        if (!htop) throw new Error('htop row missing');
+        const btn = htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'); // htop is active -> Disable
+        if (!btn) throw new Error('Disable button missing');
+        btn.click();
+    });
+    await wait(400);
+    const dis1 = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        const badge = (htop.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null;
+        const box = document.querySelector('.ucm-confirm');
+        const msg = box && (box.querySelector('.ucm-confirm__msg') || {}).textContent || null;
+        const btns = box ? Array.from(box.querySelectorAll('button')).map((b) => b.textContent.trim()) : [];
+        return {
+            boxShown: !!box,
+            negative: !!(box && box.classList.contains('ucm-confirm--negative')),
+            msg, btns, badge,
+            disableStillThere: !!htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'),
+        };
+    });
+    if (!dis1.boxShown) console.log('PAGE ERROR: clicking Disable did not spawn a confirmation card (it must not be a one-click action)');
+    else {
+        if (!dis1.negative) console.log('PAGE ERROR: disable confirm card is not the negative style');
+        if (!dis1.msg || !/Disable snap “htop”\?/.test(dis1.msg)) console.log('PAGE ERROR: disable confirm message wrong (' + dis1.msg + ')');
+        if (JSON.stringify(dis1.btns) !== JSON.stringify(['Disable htop?', 'Cancel'])) console.log('PAGE ERROR: disable confirm buttons wrong (' + JSON.stringify(dis1.btns) + ')');
+        if (dis1.badge !== 'active') console.log('PAGE ERROR: snap changed BEFORE the user confirmed (badge ' + dis1.badge + ', want active)');
+        if (!dis1.disableStillThere) console.log('PAGE ERROR: row already flipped before confirmation');
+    }
+    // Cancel -> the snap must stay enabled and the card must vanish
+    await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        const cancel = box && Array.from(box.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Cancel');
+        if (!cancel) throw new Error('Cancel button missing');
+        cancel.click();
+    });
+    await wait(300);
+    const dis2 = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        const badge = (htop.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null;
+        return {
+            cardGone: !document.querySelector('.ucm-confirm'),
+            badge,
+            stillDisable: !!htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'),
+        };
+    });
+    if (!dis2.cardGone) console.log('PAGE ERROR: confirm card still shown after Cancel');
+    if (dis2.badge !== 'active' || !dis2.stillDisable) console.log('PAGE ERROR: Cancel did not leave the snap enabled (' + JSON.stringify(dis2) + ')');
+    // Confirm -> htop becomes disabled (red badge + red power + Enable), card removed
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        const btn = htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]');
+        if (!btn) throw new Error('Disable button missing (again)');
+        btn.click();
+    });
+    await wait(400);
+    await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        const ok = box && Array.from(box.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Disable htop?');
+        if (!ok) throw new Error('Disable confirm button missing');
+        ok.click();
+    });
+    await wait(1900); // 1.2s mock settle + margin
+    const dis3 = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        const badge = (htop.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null;
+        const btns = Array.from(htop.querySelectorAll('.ucm-iconbtn'));
+        const pow = btns.find((b) => b.querySelector('i.p-icon--power'));
+        return {
+            cardGone: !document.querySelector('.ucm-confirm'),
+            badge,
+            hasEnable: !!htop.querySelector('.ucm-iconbtn[aria-label="Enable htop"]'),
+            powRed: !!(pow && pow.querySelector('i.p-icon--power-red')),
+        };
+    });
+    if (!dis3.cardGone) console.log('PAGE ERROR: confirm card still shown after the disable settled');
+    if (dis3.badge !== 'disabled') console.log('PAGE ERROR: htop not disabled after confirming (badge ' + dis3.badge + ')');
+    if (!dis3.hasEnable || !dis3.powRed) console.log('PAGE ERROR: disabled row is not the red-power + Enable state (' + JSON.stringify(dis3) + ')');
+    // restore htop (Enable is one-click) so later steps see a consistent state
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        const en = htop && htop.querySelector('.ucm-iconbtn[aria-label="Enable htop"]');
+        if (en) en.click();
+    });
+    await wait(1900);
+
     // Round 43: the round-40 overflow fix reached only the interfaces page —
     // the snaps Actions cell was a classless <td style="text-align:right">,
     // so the bundle's `td,th { overflow: hidden }` still clipped its

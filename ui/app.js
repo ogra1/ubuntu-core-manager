@@ -845,7 +845,7 @@ function renderSnaps() {
                 rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
                 rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
                     disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
-                    () => snapOp(s.name, disabled ? 'enable' : 'disable')),
+                    () => (disabled ? snapOp(s.name, 'enable') : confirmDisable(s.name))),
                 rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
             );
         }
@@ -905,6 +905,41 @@ function confirmRemove(name) {
             loadSnaps();
             if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
                 toast('negative', 'Removal finished with an error', `${name}: ${done.err || done.status}`);
+            }
+        } catch (e) { toastErr(e); }
+        finally { box.remove(); }
+    };
+    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancel.onclick = () => box.remove();
+    box.append(icon, msg, b, cancel);
+    $('#snapsBody').closest('.ucm-table-wrap').after(box);
+    b.focus();
+}
+
+function confirmDisable(name) {
+    // Disabling a snap is potentially FATAL (disabling the app's own snap stops
+    // the running process; disabling a service snap interrupts it), so — like
+    // Remove — it must NOT be a one-click power toggle. Same inline confirm idiom
+    // as confirmRemove: the box is built before its buttons reference it (avoids
+    // the TDZ throw the old cancel handler had), one baseline-centred flex row
+    // (question icon, message, action, Cancel), and it removes itself when the
+    // change settles (or on Cancel).
+    const box = el('div', {
+        class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
+    });
+    const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
+    const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Disable snap “${name}”? It will stop and stay stopped until enabled again.` });
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: `Disable ${name}?` });
+    b.onclick = async () => {
+        b.classList.add('is-disabled');
+        try {
+            const change = await core.snaps.action(name, 'disable');
+            toast('positive', 'Disable started', `${name} is being disabled by snapd.`);
+            const done = await waitChangeSettled(change);
+            loadSnaps();
+            if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
+                toast('negative', 'Disable finished with an error', `${name}: ${done.err || done.status}`);
             }
         } catch (e) { toastErr(e); }
         finally { box.remove(); }
