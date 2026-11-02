@@ -870,6 +870,13 @@ function mockFactoryJs() {
             oBadge: (o.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null,
             msgDisplay: hbtns[0] ? getComputedStyle(hbtns[0].querySelector('.p-tooltip__message')).display : null,
             btnPadL: hbtns[0] ? getComputedStyle(hbtns[0]).paddingLeft : null,
+            // icon top offset inside its button + the button height, px: round-44c
+            // regression - the four suru icons had no bundle vertical-align, so they
+            // fell to the text baseline ~2px ABOVE the hover-square centre (the
+            // bundle's own p-icons, incl. p-icon--delete, are centred by a
+            // vertical-align nudge). All five must be uniform AND centred.
+            iTop: hbtns.map((b) => +((b.querySelector('i').getBoundingClientRect().top) - (b.getBoundingClientRect().top)).toFixed(2)),
+            btnH: hbtns[0] ? +getComputedStyle(hbtns[0]).height : null,
         };
     });
     if (col.error) console.log('PAGE ERROR: ' + col.error);
@@ -888,6 +895,8 @@ function mockFactoryJs() {
         if (col.oBadge !== 'disabled') console.log('PAGE ERROR: disabled snap badge is not red disabled (' + col.oBadge + ')');
         if (col.msgDisplay !== 'none') console.log('PAGE ERROR: tooltip message visible before hover (display=' + col.msgDisplay + ')');
         if (col.btnPadL !== '0px') console.log('PAGE ERROR: icon button horizontal padding not zeroed (' + col.btnPadL + ')');
+        if (!col.iTop || col.iTop.some((v) => v !== col.iTop[0])) console.log('PAGE ERROR: row icon boxes not vertically uniform in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, round 44c)');
+        else if (col.btnH) { var c44 = (col.btnH - 16) / 2; if (col.iTop.some((v) => Math.abs(v - c44) > 1)) console.log('PAGE ERROR: row icons not centred in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, want ' + c44.toFixed(2) + ' +-1 - the suru icons lost the bundle vertical-align nudge, round 44c)'); }
     }
     await page.screenshot({ path: path.join(SHOTS, '13b-snaps-actions.png'), fullPage: true });
 

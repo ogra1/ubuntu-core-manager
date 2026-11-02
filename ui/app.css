@@ -598,6 +598,16 @@ html, body {
     background-position: center;
     background-image: url("../build/images/suru-delete.svg");
 }
+/* Snap-row action icons centred in their hover square (round-44c). The 16px
+   glyph sits in a 36px button (a 24px line box); baseline-aligned it lands ~2px
+   ABOVE the box centre, so the four suru icons read as shifted toward the top
+   of the highlight. The bundle centres its own p-icons (incl. p-icon--delete)
+   with vertical-align calc(.5px + .3465em - .5rem) (= -1.956px at 16px); the
+   suru classes have no bundle rule and lost that nudge. Apply it to all five
+   snap-row icons so every glyph sits centred and uniform with its neighbours.
+   Scoped to .ucm-actions (snaps page) - the interfaces row actions
+   (.ucm-ifaces-action) keep their own baseline. */
+.ucm-actions i { vertical-align: calc(.5px + .3465em - .5rem); }
 .p-icon--power{
     display: inline-block;
     background-repeat: no-repeat;
