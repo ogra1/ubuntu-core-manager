@@ -1068,6 +1068,10 @@ async function installFromRow(name, channel, btn) {
         loadSnaps();
         if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
             toast('negative', 'Install finished with an error', `${name}: ${done.err || done.status}`);
+        } else if (done && done.status && isChangeTerminal(done.status)) {
+            // round 47i: a successful install makes the results card
+            // redundant — hide it (the error / settle-timeout paths keep it)
+            clearStoreResults();
         }
     } catch (e) {
         toastErr(e);

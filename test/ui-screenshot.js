@@ -846,6 +846,31 @@ function mockFactoryJs() {
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '10-snaps-search.png'), fullPage: true });
 
+    // ---- 4a. Round 47i: the Store results card auto-hides after a
+    // successful install, and its close button is icon-only. ----
+    const clearBtn = await page.evaluate(() => {
+        const b = document.querySelector('#snapSearchClear');
+        return { text: b ? b.textContent.trim() : null, aria: b ? (b.getAttribute('aria-label') || '') : null };
+    });
+    if (clearBtn.text !== '') console.log('PAGE ERROR: the Store results close button is not icon-only (text ' + JSON.stringify(clearBtn.text) + ', round 47i)');
+    if (!/clear/i.test(clearBtn.aria)) console.log('PAGE ERROR: the Store results close button has no aria-label (' + JSON.stringify(clearBtn.aria) + ', round 47i)');
+    // install mosquitto from its store row -> the card must hide on success
+    await page.evaluate(() => {
+        const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))
+            .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        if (!row) throw new Error('mosquitto store row missing');
+        const btn = row.querySelector('button.p-button--brand');
+        if (!btn) throw new Error('store row Install button missing');
+        btn.click();
+    });
+    await wait(900); // 250ms mock install settle + margin
+    const autoHide = await page.evaluate(() => ({
+        hidden: !!document.querySelector('#snapSearchResults.ucm-hidden'),
+        rows: document.querySelectorAll('#snapSearchBody tr').length,
+    }));
+    if (!autoHide.hidden) console.log('PAGE ERROR: the Store results card did not auto-hide after a successful install (round 47i)');
+    if (autoHide.rows !== 0) console.log('PAGE ERROR: the Store results card still has rows after the install (' + autoHide.rows + ', round 47i)');
+
     // ---- 4b. per-snap config modal (htop) ----
     await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
