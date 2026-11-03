@@ -668,6 +668,13 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* the title is a .p-heading--5; the bundle's stacked-heading padding-top
    (6.56px) sits above its glyphs (round-40 lesson) — scoped here too. */
 .ucm-snaps-card .p-heading--5 { padding-top: 0; }
+/* identity column: plain semibold like the interface cards' .ucm-iface__iface
+   (round 47b) — the mono stays on the technical columns only. */
+.ucm-snaps-name { font-weight: 600; }
+/* disabled snap (round 47b, the Status column is gone): the name takes the
+   interface cards' caution amber (the color their not-active rows use) — a
+   subtle state cue that does not touch the icon row. */
+.ucm-snaps-name--disabled { color: #b36b00; }
 
 /* ---- interfaces page: per-snap cards, snap-connections tables ------
    Each card is one <snap> and holds a table (Interface | Plug | Slot |

@@ -935,9 +935,14 @@ function snapsRow(s) {
     }
     // Round 47: no Status/Type columns; the Track/Channel cell keeps its
     // fmtTrackChannel() content but LOSES its redundant title tooltip
-    // (the user already sees the value).
+    // (the user already sees the value). The NAME column is the identity
+    // cell — plain semibold like the interface cards' .ucm-iface__iface
+    // (Version/Rev + Track/Channel stay mono). Round 47b: with the Status
+    // column gone, a DISABLED snap tints its name the caution amber the
+    // interface cards use for their not-active rows — the clearest cue
+    // without touching the icon row (or its locked centering).
     return el('tr', {},
-        el('td', { text: s.name, class: 'ucm-mono' }),
+        el('td', { text: s.name, class: 'ucm-snaps-name' + (disabled ? ' ucm-snaps-name--disabled' : '') }),
         el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
         el('td', { class: 'ucm-mono', text: fmtTrackChannel(s) }),
         el('td', { class: 'ucm-actions-cell', style: 'text-align:right;' }, actions));

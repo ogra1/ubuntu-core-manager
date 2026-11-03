@@ -838,6 +838,8 @@ function mockFactoryJs() {
         const counts = cards.map((c) => (c.querySelector('.p-card__header .ucm-ifaces-card__counts') || {}).textContent || null);
         const osTitle = (cards[0] || {}).querySelector ? cards[0].querySelector('.ucm-snaps-card__title') : null;
         const osTitleCs = osTitle ? getComputedStyle(osTitle) : null;
+        const firstTd = sys.length ? sys[0].cells[0] : null;
+        const firstTdCs = firstTd ? getComputedStyle(firstTd) : null;
         // every cell in both cards must be free of title tooltips
         let maxTitle = 0;
         cards.forEach((c) => c.querySelectorAll('tbody td').forEach((td) => {
@@ -853,6 +855,8 @@ function mockFactoryJs() {
             maxTitle,
             titleSize: osTitleCs ? osTitleCs.fontSize : null,
             titlePadTop: osTitleCs ? osTitleCs.paddingTop : null,
+            nameFam: firstTdCs ? firstTdCs.fontFamily : null,
+            nameWt: firstTdCs ? firstTdCs.fontWeight : null,
             legacyWrap: !!document.querySelector('.ucm-table-wrap.ucm-snaps-table'),
             oldBody: !!document.querySelector('#snapsBody'),
         };
@@ -874,6 +878,8 @@ function mockFactoryJs() {
         if (snCards.maxTitle !== 0) console.log('PAGE ERROR: a table cell still carries a title tooltip (max ' + snCards.maxTitle + ' chars — the Track/Channel tooltip was dropped)');
         if (snCards.titleSize !== '16.8px') console.log('PAGE ERROR: card title is not the ifaces-card 1.05rem size (' + snCards.titleSize + ')');
         if (snCards.titlePadTop !== '0px') console.log('PAGE ERROR: card heading keeps the bundle padding-top (' + snCards.titlePadTop + ')');
+        if (snCards.nameWt !== '600') console.log('PAGE ERROR: snap name is not semibold like the interface identity column (weight ' + snCards.nameWt + ', round 47b)');
+        if (snCards.nameFam && /mono/i.test(snCards.nameFam)) console.log('PAGE ERROR: snap name still uses a monospace font (' + snCards.nameFam + ', round 47b)');
         if (snCards.counts[0] !== '4 snaps' || snCards.counts[1] !== '5 snaps')
             console.log('PAGE ERROR: card meta counts wrong (' + JSON.stringify(snCards.counts) + ', want ["4 snaps","5 snaps"])');
         if (snCards.legacyWrap) console.log('PAGE ERROR: the old scrollable table wrap (.ucm-table-wrap.ucm-snaps-table) is still in the DOM');
@@ -957,6 +963,10 @@ function mockFactoryJs() {
             oEnableLabel: oEn ? oEn.getAttribute('aria-label') : null,
             msgDisplay: hbtns[0] ? getComputedStyle(hbtns[0].querySelector('.p-tooltip__message')).display : null,
             btnPadL: hbtns[0] ? getComputedStyle(hbtns[0]).paddingLeft : null,
+            // round 47b: disabled state is the amber NAME now (Status column
+            // gone) — old-tool is disabled in the mock, htop is not.
+            oNameColor: getComputedStyle(o.cells[0]).color,
+            hNameColor: getComputedStyle(h.cells[0]).color,
             // icon top offset inside its button + the button height, px: round-44c
             // regression - the four suru icons had no bundle vertical-align, so they
             // fell to the text baseline ~2px ABOVE the hover-square centre (the
@@ -982,6 +992,8 @@ function mockFactoryJs() {
         if (!(col.hDeleteImg || '').includes('suru-delete.svg')) console.log('PAGE ERROR: remove icon is not the suru trash glyph (' + col.hDeleteImg + ')');
         if (!(col.oPowerImg || '').includes('suru-power-red.svg')) console.log('PAGE ERROR: disabled power icon is not the red suru-power-red.svg (' + col.oPowerImg + ')');
         if (!(col.oEnableLabel || '').startsWith('Enable')) console.log('PAGE ERROR: disabled snap action is not Enable (' + col.oEnableLabel + ')');
+        if (col.oNameColor !== 'rgb(179, 107, 0)') console.log('PAGE ERROR: disabled snap name is not the caution amber (' + col.oNameColor + ', want rgb(179, 107, 0) — the round-47b state cue)');
+        if (col.hNameColor === 'rgb(179, 107, 0)') console.log('PAGE ERROR: enabled snap name is tinted (' + col.hNameColor + ' — amber must mark DISABLED only, round 47b)');
         if (col.msgDisplay !== 'none') console.log('PAGE ERROR: tooltip message visible before hover (display=' + col.msgDisplay + ')');
         if (col.btnPadL !== '0px') console.log('PAGE ERROR: icon button horizontal padding not zeroed (' + col.btnPadL + ')');
         // round 46: system snaps (base/core/kernel/gadget/snapd) get ONLY
