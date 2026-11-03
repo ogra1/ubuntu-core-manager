@@ -117,6 +117,7 @@ const state = {
     snapd: null,
     model: null,       // model assertion headers (parsed in main.js)
     systemNames: new Set(), // SYSTEM snap names from the model assertion (round 46b)
+    requiredNames: new Set(), // model `presence: required` snap names (round 47k)
     host: null,
     cpuSeries: null,      // last sys:cpu sample: (number|null)[] oldest->newest
     cpuPoll: null,
@@ -182,6 +183,7 @@ function enterApp() {
     // (round 46b, user-corrected). Dashboard's sys:info already fetched
     // the model; derive the set here, loadSnaps has a fetch fallback.
     state.systemNames = modelSystemNames(state.model);
+    state.requiredNames = modelRequiredNames(state.model);
     const fromHash = (location.hash || '').replace('#', '');
     switchView(VIEWS.includes(fromHash) ? fromHash : 'dashboard');
 }
@@ -787,6 +789,20 @@ function modelSystemNames(mod) {
     return set;
 }
 
+/* `presence: required` snap names from the model assertion (round 47k) —
+   snapd already refuses to remove them ('used by the model'); the row now
+   also omits the Remove icon so the action set stays honest. Mirrors
+   modelSystemNames: same parse output (main.js parseModelAssertion keeps
+   each entry's presence field). */
+function modelRequiredNames(mod) {
+    const set = new Set();
+    if (!mod || typeof mod !== 'object') return set;
+    for (const e of (mod.snaps || [])) {
+        if (e && e.name && e.presence === 'required') set.add(e.name);
+    }
+    return set;
+}
+
 async function loadSnaps() {
     if (!state.systemNames.size) {
         // model not loaded yet (dashboard sys:info pending) — fetch it
@@ -795,6 +811,7 @@ async function loadSnaps() {
             const mod = await core.system.model();
             state.model = state.model || mod;
             state.systemNames = modelSystemNames(mod);
+            state.requiredNames = modelRequiredNames(mod);
         } catch (e) { /* classic pre-model: stays empty */ }
     }
     const wrap = $('#snapsCards');
@@ -913,7 +930,8 @@ function snapsRow(s) {
     //     -> Refresh + Revert only.
     //  2. BASE-type snap the model does NOT declare -> everything except
     //     Config (snapd 500s conf on type 'base').
-    //  3. everything else -> the full set.
+    //  3. everything else -> the full set, MINUS Remove for model-
+    //     `presence: required` snaps (round 47k — snapd refuses it too).
     const isSystem = state.systemNames.has(s.name);
     const isBase = s.type === 'base' || s.type === 'core' || s.type === 'os';
     const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
@@ -939,8 +957,12 @@ function snapsRow(s) {
             rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
                 disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
                 () => (disabled ? snapOp(s.name, 'enable') : confirmDisable(s.name))),
-            rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
         );
+        // Round 47k: model-`presence: required` snaps are used by the model —
+        // snapd already refuses their removal ('used by the model'), so the row
+        // omits the Remove icon like it omits the icons snapd refuses.
+        if (!state.requiredNames.has(s.name))
+            actions.append(rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)));
     }
     // Round 47: no Status/Type columns; the Track/Channel cell keeps its
     // fmtTrackChannel() content but LOSES its redundant title tooltip
