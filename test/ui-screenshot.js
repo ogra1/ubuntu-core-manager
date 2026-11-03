@@ -50,11 +50,16 @@ const SNAP_INFO = {
         title: "Host resources monitor",
         summary: "Interactive ps",
         description: "htop is an **interactive** process viewer for Unix-like systems.\n\nIt shows a task list and a real-time view of CPU/memory usage, including a live view of each process\u2019s threads, open files and environment.\n\nFeatures:\n- Full-screen, keyboard-driven interface\n- Sortable by CPU, memory or any column\n- Per-process I/O and network monitoring\n- Kill, renice and signal any process\n\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\nThe task list updates continuously while you watch. See <https://htop.dev> for screenshots and <https://github.com/vt100/htop> for the source and the issue tracker. htop is free software under the GNU General Public License.",
-        publisher: { id: "htop-dev", username: "htop-dev", "display-name": "htop-dev", validation: "verified" },
+        publisher: { id: "htop-dev", username: "htop-dev", "display-name": "htop-dev", validation: "starred" },
         "installed-size": 8948736,
         "install-date": "2026-10-20T09:15:00Z",
         id: "SNAPINFO-htop-0001",
         links: { website: ["https://htop.dev"], source: ["https://github.com/vt100/htop"], contact: ["https://github.com/vt100/htop/issues"] },
+    },
+    core24: {
+        // canonical-verified, NO title/summary/description/links — exercises
+        // the verified check + the 'no display-title' path + the divider.
+        publisher: { id: "canonical", username: "canonical", "display-name": "Canonical", validation: "verified" },
     },
 };
 
@@ -1083,6 +1088,7 @@ function mockFactoryJs() {
             }
         }
         const closeIc = modal ? modal.querySelector('.ucm-info__close') : null;
+        const pb = body ? body.querySelector('.ucm-pub-badge') : null;
         const dd = (label) => {
             if (!body) return null;
             for (const div of body.querySelectorAll('.ucm-kv > div')) {
@@ -1106,6 +1112,9 @@ function mockFactoryJs() {
             cardW: card ? Math.round(card.getBoundingClientRect().width) : null,
             closeFilter: closeIc ? getComputedStyle(closeIc).filter : null,
             descIdx, firstKvIdx, tok,
+            pubBadgeChar: pb ? pb.textContent : null,
+            pubBadgeColor: pb ? getComputedStyle(pb).color : null,
+            divPresent: body ? !!body.querySelector('.ucm-info__div') : false,
         };
     });
     if (!info.shown) console.log('PAGE ERROR: clicking a snap name did not open the snap-info modal');
@@ -1116,7 +1125,10 @@ function mockFactoryJs() {
         if (info.chip0 !== 'active') console.log('PAGE ERROR: info modal status chip wrong (' + info.chip0 + ')');
         if (info.version !== '3.3.0 (5533)') console.log('PAGE ERROR: info modal version wrong (' + info.version + ')');
         if (info.channel !== 'latest/stable') console.log('PAGE ERROR: info modal track/channel wrong (' + info.channel + ')');
-        if (info.publisher !== 'htop-dev · verified') console.log('PAGE ERROR: info modal publisher wrong (' + info.publisher + ')');
+        if (info.publisher !== 'htop-dev\u272A') console.log('PAGE ERROR: info modal publisher wrong (want the name + a star, got ' + JSON.stringify(info.publisher) + ')');
+        if (info.pubBadgeChar !== '\u272A') console.log('PAGE ERROR: starred publisher is not the yellow star glyph (got ' + JSON.stringify(info.pubBadgeChar) + ', round 47e)');
+        if (info.pubBadgeColor !== 'rgb(217, 164, 0)') console.log('PAGE ERROR: star badge is not the yellow (--ucm-yellow) (got ' + info.pubBadgeColor + ', round 47e)');
+        if (info.divPresent !== true) console.log('PAGE ERROR: no divider between the description and the technical info (round 47e)');
         if (info.website !== 'https://htop.dev') console.log('PAGE ERROR: info modal website link wrong (' + info.website + ')');
         if (info.source !== 'https://github.com/vt100/htop') console.log('PAGE ERROR: info modal source link wrong (' + info.source + ')');
         if (!info.hasDesc) console.log('PAGE ERROR: info modal has no description section');
@@ -1129,14 +1141,52 @@ function mockFactoryJs() {
         else if (info.tok.boxW > info.tok.descW) console.log('PAGE ERROR: the 80-char line wraps (' + info.tok.boxW + 'px > ' + info.tok.descW + 'px container — card too narrow, round 47d)');
     }
     await page.screenshot({ path: path.join(SHOTS, '13c-snap-info.png') });
-    // close via the backdrop (the documented close path) and verify it's gone
+    // round 47e: Esc closes the modal (focus is on the close button, so the
+    // keydown bubbles to the modal box)
+    await page.keyboard.down('Escape');
+    await page.keyboard.up('Escape');
+    await wait(200);
+    const escGone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
+    if (!escGone) console.log('PAGE ERROR: Esc did not close the snap-info modal (round 47e)');
+
+    // 4f2. a VERIFIED publisher (core24) -> the green CHECK, and core24 has no
+    //      display title so the mono id line is absent — then Esc again.
     await page.evaluate(() => {
-        const b = document.querySelector('.ucm-modal .ucm-modal__backdrop');
-        if (b) b.click();
+        const name = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name'))
+            .find((n) => n.textContent.trim() === 'core24');
+        if (!name) throw new Error('core24 name cell missing');
+        name.click();
     });
-    await wait(300);
-    const infoGone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
-    if (!infoGone) console.log('PAGE ERROR: snap-info modal did not close on backdrop click');
+    await wait(600);
+    const c24 = await page.evaluate(() => {
+        const body = document.querySelector('.ucm-modal .ucm-info');
+        const t = (sel) => body && (body.querySelector(sel) || {}).textContent || null;
+        const dd = (label) => {
+            if (!body) return null;
+            for (const div of body.querySelectorAll('.ucm-kv > div'))
+                if ((div.querySelector('dt') || {}).textContent === label) return (div.querySelector('dd') || {}).textContent;
+            return null;
+        };
+        const pb = body ? body.querySelector('.ucm-pub-badge') : null;
+        return { shown: !!body, title: t('.ucm-info__name'), hasId: !!t('.ucm-info__id') && t('.ucm-info__id') !== '',
+                 publisher: dd('Publisher'), badgeChar: pb ? pb.textContent : null,
+                 badgeColor: pb ? getComputedStyle(pb).color : null,
+                 divPresent: body ? !!body.querySelector('.ucm-info__div') : false };
+    });
+    if (!c24.shown) console.log('PAGE ERROR: clicking core24 did not open the snap-info modal');
+    else {
+        if (c24.title !== 'core24') console.log('PAGE ERROR: no-title snap shows the wrong modal title (' + c24.title + ')');
+        if (c24.hasId) console.log('PAGE ERROR: a snap without a display title still shows a mono id line (round 47e)');
+        if (c24.publisher !== 'Canonical\u2713') console.log('PAGE ERROR: verified publisher is not the name + a check (want ' + JSON.stringify('Canonical\u2713') + ', got ' + JSON.stringify(c24.publisher) + ')');
+        if (c24.badgeChar !== '\u2713') console.log('PAGE ERROR: verified publisher is not the check glyph (got ' + JSON.stringify(c24.badgeChar) + ', round 47e)');
+        if (c24.badgeColor !== 'rgb(14, 132, 32)') console.log('PAGE ERROR: check badge is not the positive green (got ' + c24.badgeColor + ', round 47e)');
+        if (c24.divPresent !== true) console.log('PAGE ERROR: no divider before the technical info on a no-description snap (round 47e)');
+    }
+    await page.keyboard.down('Escape');
+    await page.keyboard.up('Escape');
+    await wait(200);
+    const c24Gone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
+    if (!c24Gone) console.log('PAGE ERROR: Esc did not close the second snap-info modal (round 47e)');
     // ---- 4e. Round 45: Disable is a FATAL-class action -> confirmation card ----
     // Disabling a snap (e.g. the app's own) stops it for good until re-enabled,
     // so the power icon must NOT toggle it in one click. Clicking Disable on an

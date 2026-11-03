@@ -1161,7 +1161,9 @@ function infoPlain(t) {
 }
 
 function openSnapInfo(name) {
-    const box = el('div', { class: 'ucm-modal' });
+    // Esc closes the modal (round 47e). The app has no other
+    // open-escape handling, so no preventDefault / no focus conflict.
+    const box = el('div', { class: 'ucm-modal', onkeydown: (e) => { if (e.key === 'Escape') box.remove(); } });
     const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
     const inner = el('div', { class: 'ucm-modal__card' });
     const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => box.remove() },
@@ -1214,6 +1216,12 @@ function openSnapInfo(name) {
             bodyBox.append(el('p', { class: 'ucm-info__desc', text: infoPlain(info.description) }));
         }
 
+        // a rule separates the flow text (the description, round 47d) from
+        // the technical data — so 'Version' does not read as the end of the
+        // description (round 47e). Always present: with no description it
+        // separates the chips from the facts instead.
+        bodyBox.append(el('div', { class: 'ucm-info__div' }));
+
         // the fact rows (empty values vanish, like the dashboard KV lists)
         const kv = el('dl', { class: 'ucm-kv' });
         const row = (k, v, mono) => {
@@ -1222,9 +1230,21 @@ function openSnapInfo(name) {
         };
         row('Version', `${info.version || '—'} (${info.revision != null ? info.revision : '—'})`);
         row('Track/Channel', fmtTrackChannel(info));
+        // Publisher (round 47e): replicate what the terminal shows AFTER
+        // the name — snapd cmd/snapd/cli/color.go longPublisher() appends a
+        // GREEN check (verified) or a BRIGHT-YELLOW star (starred); other
+        // validations (unproven) get nothing. The glyphs are real Unicode in
+        // the system fallback font (the Ubuntu face lacks them; verified to
+        // render here, no tofu), so no ' · verified' text.
         const pub = info.publisher || {};
         const pubName = pub['display-name'] || pub.username || pub.id || info.developer || null;
-        if (pubName) row('Publisher', pubName + (pub.validation && pub.validation !== 'unproven' ? ' · ' + pub.validation : ''));
+        if (pubName) {
+            const pubVal = el('span', { class: 'ucm-mono', text: pubName });
+            const v = pub.validation;
+            if (v === 'verified' || v === 'starred')
+                pubVal.append(el('span', { class: 'ucm-pub-badge ' + (v === 'verified' ? 'ucm-pub-badge--verified' : 'ucm-pub-badge--starred'), text: v === 'verified' ? '\u2713' : '\u272A' }));
+            kv.append(el('div', {}, el('dt', { text: 'Publisher' }), el('dd', {}, pubVal)));
+        }
         row('Size', info['installed-size'] != null ? fmtBytes(info['installed-size']) : null);
         row('Installed', info['install-date'] ? fmtDm(info['install-date']) : null);
         row('Confinement', info.confinement || null);

@@ -20,6 +20,7 @@
     --vf-color-positive: #0e8420;
     --vf-color-negative: #c7162b;
     --vf-color-caution: #f99b11;
+    --ucm-yellow: #d9a400; /* snap-info starred-publisher star (round 47e) */
 }
 
 * { box-sizing: border-box; }
@@ -702,7 +703,18 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    readable-measure for body paragraphs) that would clamp this long
    description to 640px even inside the wide 52rem card (round 47d) — lift it
    so the description can span the card and ~80 chars fit on one line. */
-.ucm-info__desc { margin: 0; max-width: none; white-space: pre-line; line-height: 1.55; color: #333; }
+/* publisher validation badge (round 47e): the terminal's green check /
+   yellow star, rendered right after the publisher name (snapd's
+   longPublisher idiom). Verified = the app's positive green; starred = a
+   warm yellow (added to the palette). */
+.ucm-pub-badge { font-size: .95rem; margin-left: .35rem; }
+.ucm-pub-badge--verified { color: var(--vf-color-positive); }
+.ucm-pub-badge--starred { color: var(--ucm-yellow); }
+/* the description (round 47d sits above the facts) is flow text — a rule
+   separates it from the technical data so 'Version' does not read as the
+   end of the description (round 47e). */
+.ucm-info__div { height: 0; border-top: 1px solid #e0e0e0; margin: 1rem 0 1.2rem; }
+.ucm-info__desc { margin: 0 0 .6rem; max-width: none; white-space: pre-line; line-height: 1.55; color: #333; }
 
 /* ---- interfaces page: per-snap cards, snap-connections tables ------
    Each card is one <snap> and holds a table (Interface | Plug | Slot |
