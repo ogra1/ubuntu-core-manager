@@ -41,6 +41,23 @@ const SNAPS = [
     { name: 'core22', version: '22.04.5', revision: 3120, channel: 'stable', 'tracking-channel': '22.04/stable', status: 'active', type: 'base', confinement: 'strict' },
 ];
 
+// Rich single-snap details (the harness stand-in for the live
+// GET /v2/snaps/{name} object, which carries more than the list fields:
+// title / summary / description / publisher / installed-size /
+// install-date / links / id). Merged over the SNAPS entry by info().
+const SNAP_INFO = {
+    htop: {
+        title: "Host resources monitor",
+        summary: "Interactive ps",
+        description: "htop is an **interactive** process viewer for Unix-like systems.\n\nIt shows a task list and a real-time view of CPU/memory usage, including a live view of each process\u2019s threads, open files and environment.\n\nFeatures:\n- Full-screen, keyboard-driven interface\n- Sortable by CPU, memory or any column\n- Per-process I/O and network monitoring\n- Kill, renice and signal any process\n\nThe task list updates continuously while you watch. See <https://htop.dev> for screenshots and <https://github.com/vt100/htop> for the source and the issue tracker. htop is free software under the GNU General Public License.",
+        publisher: { id: "htop-dev", username: "htop-dev", "display-name": "htop-dev", validation: "verified" },
+        "installed-size": 8948736,
+        "install-date": "2026-10-20T09:15:00Z",
+        id: "SNAPINFO-htop-0001",
+        links: { website: ["https://htop.dev"], source: ["https://github.com/vt100/htop"], contact: ["https://github.com/vt100/htop/issues"] },
+    },
+};
+
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
     htop: { port: '8080', 'logging.level': 'info' },
@@ -103,6 +120,7 @@ function mockFactoryJs() {
     window.__mockCore = (function () {
         let SNAPS = ${JSON.stringify(SNAPS)};
         const CONF = ${JSON.stringify(SNAP_CONF)};
+        const INFO = ${JSON.stringify(SNAP_INFO)};
         const CHANGES = {};
         let IFC = ${JSON.stringify(IFACES)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
@@ -272,7 +290,11 @@ function mockFactoryJs() {
             },
             snaps: {
                 async list() { return SNAPS; },
-                async info(n) { return SNAPS.find((s) => s.name === n); },
+                async info(n) {
+                    const s = SNAPS.find((x) => x.name === n);
+                    if (!s) return null;
+                    return Object.assign({}, s, INFO[n] || {});
+                },
                 // Store search/install: unauthenticated by design (model
                 // attachment at image build time) — no store login needed.
                 async search(q) {
@@ -840,11 +862,15 @@ function mockFactoryJs() {
         const osTitleCs = osTitle ? getComputedStyle(osTitle) : null;
         const firstTd = sys.length ? sys[0].cells[0] : null;
         const firstTdCs = firstTd ? getComputedStyle(firstTd) : null;
-        // every cell in both cards must be free of title tooltips
-        let maxTitle = 0;
+        // round 47c: the only title tooltips left in the table are the
+        // name cells (the 'Show snap info' click affordance). Everything
+        // else (esp. the old Track/Channel one) must be tooltip-free.
+        let badTitle = 0, nameTitle = 0;
         cards.forEach((c) => c.querySelectorAll('tbody td').forEach((td) => {
             const t = td.getAttribute('title') || '';
-            if (t.length > maxTitle) maxTitle = t.length;
+            if (!t) return;
+            if (t === 'Show snap info') nameTitle++;
+            else badTitle++;
         }));
         return {
             count: cards.length, titles, counts,
@@ -852,11 +878,12 @@ function mockFactoryJs() {
             osRowLen: sys.map((r) => r.cells ? r.cells.length : -1),
             instRowLen: inst.map((r) => r.cells ? r.cells.length : -1),
             osHeads, instHeads,
-            maxTitle,
+            badTitle, nameTitle,
             titleSize: osTitleCs ? osTitleCs.fontSize : null,
             titlePadTop: osTitleCs ? osTitleCs.paddingTop : null,
             nameFam: firstTdCs ? firstTdCs.fontFamily : null,
             nameWt: firstTdCs ? firstTdCs.fontWeight : null,
+            nameColor: firstTdCs ? firstTdCs.color : null,
             legacyWrap: !!document.querySelector('.ucm-table-wrap.ucm-snaps-table'),
             oldBody: !!document.querySelector('#snapsBody'),
         };
@@ -875,11 +902,13 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: Installed card columns wrong (' + JSON.stringify(snCards.instHeads) + ')');
         if (snCards.osRowLen.some((n) => n !== 4) || snCards.instRowLen.some((n) => n !== 4))
             console.log('PAGE ERROR: rows must have 4 cells (Status/Type dropped) os=' + JSON.stringify(snCards.osRowLen) + ' inst=' + JSON.stringify(snCards.instRowLen));
-        if (snCards.maxTitle !== 0) console.log('PAGE ERROR: a table cell still carries a title tooltip (max ' + snCards.maxTitle + ' chars — the Track/Channel tooltip was dropped)');
+        if (snCards.badTitle !== 0) console.log('PAGE ERROR: a non-name cell still carries a title tooltip (' + snCards.badTitle + ' — the Track/Channel tooltip was dropped)');
+        if (snCards.nameTitle !== 9) console.log('PAGE ERROR: snap-name info affordance missing (title on ' + snCards.nameTitle + ' of 9 name cells, want 9 — round 47c)');
         if (snCards.titleSize !== '16.8px') console.log('PAGE ERROR: card title is not the ifaces-card 1.05rem size (' + snCards.titleSize + ')');
         if (snCards.titlePadTop !== '0px') console.log('PAGE ERROR: card heading keeps the bundle padding-top (' + snCards.titlePadTop + ')');
         if (snCards.nameWt !== '600') console.log('PAGE ERROR: snap name is not semibold like the interface identity column (weight ' + snCards.nameWt + ', round 47b)');
         if (snCards.nameFam && /mono/i.test(snCards.nameFam)) console.log('PAGE ERROR: snap name still uses a monospace font (' + snCards.nameFam + ', round 47b)');
+        if (snCards.nameColor !== 'rgb(59, 59, 59)') console.log('PAGE ERROR: snap name color is not the softened #3b3b3b (' + (snCards.nameColor || 'n/a') + ', round 47c)');
         if (snCards.counts[0] !== '4 snaps' || snCards.counts[1] !== '5 snaps')
             console.log('PAGE ERROR: card meta counts wrong (' + JSON.stringify(snCards.counts) + ', want ["4 snaps","5 snaps"])');
         if (snCards.legacyWrap) console.log('PAGE ERROR: the old scrollable table wrap (.ucm-table-wrap.ucm-snaps-table) is still in the DOM');
@@ -1016,6 +1045,68 @@ function mockFactoryJs() {
     }
     await page.screenshot({ path: path.join(SHOTS, '13b-snaps-actions.png'), fullPage: true });
 
+    // ---- 4f. Round 47c: clicking a snap NAME opens the snap-info modal.
+    // The data is the single-snap GET /v2/snaps/{name} (the harness mock's
+    // core.snaps.info already returns it). Assert the card's contents, then
+    // close it (backdrop) so later steps see a clean table.
+    await page.evaluate(() => {
+        const name = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name'))
+            .find((n) => n.textContent.trim() === 'htop');
+        if (!name) throw new Error('htop name cell missing');
+        name.click();
+    });
+    await wait(600); // async info fetch + render
+    const info = await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal');
+        const body = modal ? modal.querySelector('.ucm-info') : null;
+        const card = modal ? modal.querySelector('.ucm-modal__card') : null;
+        const t = (sel) => body && (body.querySelector(sel) || {}).textContent || null;
+        const dd = (label) => {
+            if (!body) return null;
+            for (const div of body.querySelectorAll('.ucm-kv > div')) {
+                if ((div.querySelector('dt') || {}).textContent === label)
+                    return (div.querySelector('dd') || {}).textContent;
+            }
+            return null;
+        };
+        return {
+            shown: !!body,
+            title: t('.ucm-info__name'), id: t('.ucm-info__id'),
+            summary: t('.ucm-info__summary'),
+            chip0: (body && body.querySelector('.ucm-info__chips .p-status-label') || {}).textContent || null,
+            version: dd('Version'), channel: dd('Track/Channel'), publisher: dd('Publisher'),
+            website: dd('Website'), source: dd('Source'),
+            hasDesc: !!t('.ucm-info__desc'),
+            descPlain: (t('.ucm-info__desc') || '').includes('**') ? 'STILL-MARKDOWN' : 'plain',
+            // the kiosk is a fixed 900px-tall display — the card must fit
+            // fully (head pinned, body scrolls) instead of clipping
+            inViewport: card ? (card.getBoundingClientRect().top >= 0 && card.getBoundingClientRect().bottom <= window.innerHeight) : false,
+        };
+    });
+    if (!info.shown) console.log('PAGE ERROR: clicking a snap name did not open the snap-info modal');
+    else {
+        if (info.title !== 'Host resources monitor') console.log('PAGE ERROR: info modal title wrong (' + info.title + ')');
+        if (info.id !== 'htop') console.log('PAGE ERROR: info modal real name wrong (' + info.id + ')');
+        if (info.summary !== 'Interactive ps') console.log('PAGE ERROR: info modal summary wrong (' + info.summary + ')');
+        if (info.chip0 !== 'active') console.log('PAGE ERROR: info modal status chip wrong (' + info.chip0 + ')');
+        if (info.version !== '3.3.0 (5533)') console.log('PAGE ERROR: info modal version wrong (' + info.version + ')');
+        if (info.channel !== 'latest/stable') console.log('PAGE ERROR: info modal track/channel wrong (' + info.channel + ')');
+        if (info.publisher !== 'htop-dev · verified') console.log('PAGE ERROR: info modal publisher wrong (' + info.publisher + ')');
+        if (info.website !== 'https://htop.dev') console.log('PAGE ERROR: info modal website link wrong (' + info.website + ')');
+        if (info.source !== 'https://github.com/vt100/htop') console.log('PAGE ERROR: info modal source link wrong (' + info.source + ')');
+        if (!info.hasDesc) console.log('PAGE ERROR: info modal has no description section');
+        else if (info.descPlain !== 'plain') console.log('PAGE ERROR: info modal description still carries markdown');
+        if (info.inViewport !== true) console.log('PAGE ERROR: info modal card does not fit the 900px kiosk viewport (head pinned + body must scroll)');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '13c-snap-info.png') });
+    // close via the backdrop (the documented close path) and verify it's gone
+    await page.evaluate(() => {
+        const b = document.querySelector('.ucm-modal .ucm-modal__backdrop');
+        if (b) b.click();
+    });
+    await wait(300);
+    const infoGone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
+    if (!infoGone) console.log('PAGE ERROR: snap-info modal did not close on backdrop click');
     // ---- 4e. Round 45: Disable is a FATAL-class action -> confirmation card ----
     // Disabling a snap (e.g. the app's own) stops it for good until re-enabled,
     // so the power icon must NOT toggle it in one click. Clicking Disable on an

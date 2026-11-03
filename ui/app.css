@@ -515,7 +515,7 @@ html, body {
 }
 .ucm-modal__head .p-button--base { color: #fff; }
 .ucm-modal__head .p-icon { color: #fff; }
-.ucm-modal__body { padding: 1.4rem 1.6rem 1.6rem; }
+.ucm-modal__body { padding: 1.4rem 1.6rem 1.6rem; max-height: calc(100vh - 9rem); overflow-y: auto; }
 .ucm-modal__body .p-form__group { margin-bottom: 1rem; }
 .ucm-modal__body .p-button--brand { min-width: 8rem; }
 
@@ -669,12 +669,32 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    (6.56px) sits above its glyphs (round-40 lesson) — scoped here too. */
 .ucm-snaps-card .p-heading--5 { padding-top: 0; }
 /* identity column: plain semibold like the interface cards' .ucm-iface__iface
-   (round 47b) — the mono stays on the technical columns only. */
-.ucm-snaps-name { font-weight: 600; }
+   (round 47b) — the mono stays on the technical columns only. Round 47c: pure
+   #000 read a touch heavy for an identity label, so it is softened one step
+   toward the table-caption grey (#757575) — still clearly darker than the
+   muted #888 counters, still high contrast. */
+.ucm-snaps-name { font-weight: 600; color: #3b3b3b; }
 /* disabled snap (round 47b, the Status column is gone): the name takes the
    interface cards' caution amber (the color their not-active rows use) — a
    subtle state cue that does not touch the icon row. */
 .ucm-snaps-name--disabled { color: #b36b00; }
+/* the name is the row's click target -> the snap-info modal (round 47c):
+   pointer + a faint dotted underline on hover (kept subtle so the table
+   stays calm; the amber disabled color wins for disabled rows). */
+.ucm-snaps-name { cursor: pointer; }
+.ucm-snaps-name:hover { text-decoration: underline dotted; }
+
+/* ---- snap info modal (round 47c) ---------------------------------------
+   Clicking a snap name opens this card: display title + real name +
+   summary + state/type chips, the fact rows (the dashboard's .ucm-kv
+   idiom), the daemon's links and the plainified description. */
+.ucm-info__name { font-size: 1.35rem; font-weight: 600; margin: 0 0 .1rem; }
+.ucm-info__id { margin: 0 0 .5rem; font-size: .85rem; }
+.ucm-info__summary { margin: 0 0 .7rem; color: #555; }
+.ucm-info__chips { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.ucm-info__chips .p-status-label { margin: 0; }
+.ucm-info__sec { margin: 1.1rem 0 .2rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #757575; }
+.ucm-info__desc { margin: 0; white-space: pre-line; line-height: 1.55; color: #333; font-size: .92rem; }
 
 /* ---- interfaces page: per-snap cards, snap-connections tables ------
    Each card is one <snap> and holds a table (Interface | Plug | Slot |

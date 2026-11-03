@@ -942,7 +942,13 @@ function snapsRow(s) {
     // interface cards use for their not-active rows — the clearest cue
     // without touching the icon row (or its locked centering).
     return el('tr', {},
-        el('td', { text: s.name, class: 'ucm-snaps-name' + (disabled ? ' ucm-snaps-name--disabled' : '') }),
+        // The name is the row's click target -> the snap-info modal (round
+        // 47c); pointer cursor + dotted hover underline + the title are the
+        // affordance (the one title tooltip left in the table, by design).
+        el('td', { text: s.name, title: 'Show snap info',
+            class: 'ucm-snaps-name' + (disabled ? ' ucm-snaps-name--disabled' : ''),
+            onclick: () => openSnapInfo(s.name) }),
+
         el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
         el('td', { class: 'ucm-mono', text: fmtTrackChannel(s) }),
         el('td', { class: 'ucm-actions-cell', style: 'text-align:right;' }, actions));
@@ -1135,6 +1141,110 @@ async function searchStore() {
    modal edits ONE key at a time — snapd's conf API is a key map, and that
    matches how snap configs actually look (rare, small, scalar). */
 const RE_CONF_KEY_UI = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)*$/;
+
+/* ------------------------- snap info modal (round 47c) ------------------- */
+/* Clicking a snap's NAME opens a beautified info card for that snap. The
+   data is the single-snap GET /v2/snaps/{name} object (main.js
+   getSnapInfo — live-verified to carry title/summary/description/
+   publisher{display-name,validation}/installed-size/install-date/links/
+   id on installed snaps, beyond the list fields). The card reuses the
+   .ucm-modal + .ucm-kv idioms of the config modal; links are display-only
+   (the kiosk has no external browser). */
+function infoPlain(t) {
+    // light markdown plainify — snap descriptions carry **bold**, `code`,
+    // headings and <autolinks>; strip the markup, keep the words
+    return String(t || '')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/<([a-z]+:\/\/[^\s>]+)>/gi, '$1');
+}
+
+function openSnapInfo(name) {
+    const box = el('div', { class: 'ucm-modal' });
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
+    const inner = el('div', { class: 'ucm-modal__card' });
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => box.remove() },
+        el('i', { class: 'p-icon--close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'Snap info', style: 'margin:0;' }),
+        close));
+    const bodyBox = el('div', { class: 'ucm-modal__body ucm-info' });
+    bodyBox.append(el('p', { class: 'ucm-muted', style: 'padding:1rem 0;', text: 'Loading snap info…' }));
+    inner.append(bodyBox);
+    box.append(backdrop, inner);
+    document.body.append(box);
+    close.focus();
+
+    (async () => {
+        let info;
+        try {
+            info = await core.snaps.info(name);
+        } catch (e) {
+            bodyBox.innerHTML = '';
+            bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load snap info: ' + e.message }));
+            return;
+        }
+        if (!info || !info.name) {
+            bodyBox.innerHTML = '';
+            bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'No info returned by snapd.' }));
+            return;
+        }
+        bodyBox.innerHTML = '';
+        const disabled = snapDisabled(info);
+        // header: display title (falls back to the snap name) + the mono
+        // real name + summary + state chips
+        bodyBox.append(el('p', { class: 'ucm-info__name', text: info.title || info.name }));
+        if (info.title && info.title !== info.name)
+            bodyBox.append(el('p', { class: 'ucm-info__id ucm-mono', text: info.name }));
+        if (info.summary)
+            bodyBox.append(el('p', { class: 'ucm-info__summary', text: info.summary }));
+        const chips = el('div', { class: 'ucm-info__chips' });
+        chips.append(el('span', {
+            class: `p-status-label p-status-label--${disabled ? 'negative' : 'positive'}`,
+            text: disabled ? 'disabled' : (String(info.status || 'active') || 'active'),
+        }));
+        if (info.type) chips.append(el('span', { class: 'p-status-label p-status-label--information', text: info.type }));
+        bodyBox.append(chips);
+
+        // the fact rows (empty values vanish, like the dashboard KV lists)
+        const kv = el('dl', { class: 'ucm-kv' });
+        const row = (k, v, mono) => {
+            if (v == null || v === '') return;
+            kv.append(el('div', {}, el('dt', { text: k }), el('dd', { text: String(v), class: mono ? 'mono' : undefined })));
+        };
+        row('Version', `${info.version || '—'} (${info.revision != null ? info.revision : '—'})`);
+        row('Track/Channel', fmtTrackChannel(info));
+        const pub = info.publisher || {};
+        const pubName = pub['display-name'] || pub.username || pub.id || info.developer || null;
+        if (pubName) row('Publisher', pubName + (pub.validation && pub.validation !== 'unproven' ? ' · ' + pub.validation : ''));
+        row('Size', info['installed-size'] != null ? fmtBytes(info['installed-size']) : null);
+        row('Installed', info['install-date'] ? fmtDm(info['install-date']) : null);
+        row('Confinement', info.confinement || null);
+        row('Grade', info.grade || null);
+        row('Snap ID', info.id || null, true);
+        if (kv.children.length) bodyBox.append(kv);
+
+        // links (the daemon sends them as single-element arrays)
+        const links = {};
+        ['website', 'source', 'contact'].forEach((k) => {
+            const v = (info.links && info.links[k]) ? info.links[k][0] : info[k];
+            if (v) links[k] = v;
+        });
+        if (Object.keys(links).length) {
+            bodyBox.append(el('p', { class: 'ucm-info__sec', text: 'Links' }));
+            const lk = el('dl', { class: 'ucm-kv' });
+            Object.keys(links).forEach((k) => lk.append(el('div', {},
+                el('dt', { text: k[0].toUpperCase() + k.slice(1) }),
+                el('dd', { text: links[k], class: 'mono' }))));
+            bodyBox.append(lk);
+        }
+        if (info.description) {
+            bodyBox.append(el('p', { class: 'ucm-info__sec', text: 'Description' }));
+            bodyBox.append(el('p', { class: 'ucm-info__desc', text: infoPlain(info.description) }));
+        }
+    })();
+}
 
 function openConfigModal(name) {
     const box = el('div', { class: 'ucm-modal' });
