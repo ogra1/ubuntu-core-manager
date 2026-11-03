@@ -1114,6 +1114,7 @@ function mockFactoryJs() {
             descIdx, firstKvIdx, tok,
             pubBadgeChar: pb ? pb.textContent : null,
             pubBadgeColor: pb ? getComputedStyle(pb).color : null,
+            pubBadgeSize: pb ? getComputedStyle(pb).fontSize : null,
             divPresent: body ? !!body.querySelector('.ucm-info__div') : false,
         };
     });
@@ -1128,6 +1129,7 @@ function mockFactoryJs() {
         if (info.publisher !== 'htop-dev\u272A') console.log('PAGE ERROR: info modal publisher wrong (want the name + a star, got ' + JSON.stringify(info.publisher) + ')');
         if (info.pubBadgeChar !== '\u272A') console.log('PAGE ERROR: starred publisher is not the yellow star glyph (got ' + JSON.stringify(info.pubBadgeChar) + ', round 47e)');
         if (info.pubBadgeColor !== 'rgb(217, 164, 0)') console.log('PAGE ERROR: star badge is not the yellow (--ucm-yellow) (got ' + info.pubBadgeColor + ', round 47e)');
+        if (info.pubBadgeSize !== '20.8px') console.log('PAGE ERROR: publisher badge is not the enlarged 1.3rem size (got ' + info.pubBadgeSize + ', round 47f)');
         if (info.divPresent !== true) console.log('PAGE ERROR: no divider between the description and the technical info (round 47e)');
         if (info.website !== 'https://htop.dev') console.log('PAGE ERROR: info modal website link wrong (' + info.website + ')');
         if (info.source !== 'https://github.com/vt100/htop') console.log('PAGE ERROR: info modal source link wrong (' + info.source + ')');

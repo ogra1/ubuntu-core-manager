@@ -707,7 +707,10 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    yellow star, rendered right after the publisher name (snapd's
    longPublisher idiom). Verified = the app's positive green; starred = a
    warm yellow (added to the palette). */
-.ucm-pub-badge { font-size: .95rem; margin-left: .35rem; }
+/* round 47f: at the inherited .95rem the glyphs read tiny on the kiosk.
+   ~1.3rem (~+37%) is the requested 30-50% larger; line-height:1 keeps the
+   taller glyph from inflating the publisher row's height. */
+.ucm-pub-badge { font-size: 1.3rem; line-height: 1; margin-left: .35rem; }
 .ucm-pub-badge--verified { color: var(--vf-color-positive); }
 .ucm-pub-badge--starred { color: var(--ucm-yellow); }
 /* the description (round 47d sits above the facts) is flow text — a rule
