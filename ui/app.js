@@ -1161,12 +1161,19 @@ function infoPlain(t) {
 }
 
 function openSnapInfo(name) {
-    // Esc closes the modal (round 47e). The app has no other
-    // open-escape handling, so no preventDefault / no focus conflict.
-    const box = el('div', { class: 'ucm-modal', onkeydown: (e) => { if (e.key === 'Escape') box.remove(); } });
-    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
+    // Esc closes the modal (round 47e, robustified in 47g): the listener
+    // lives on `document` for the modal's whole life — focus can fall to
+    // <body> after an async re-render (e.g. a channel switch), and a
+    // box-scoped listener would never see that key. Removed on every close
+    // path so no stale handler outlives the modal.
+    const box = el('div', { class: 'ucm-modal' });
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    const closeModal = () => { document.removeEventListener('keydown', onKey); box.remove(); };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    document.addEventListener('keydown', onKey);
+
     const inner = el('div', { class: 'ucm-modal__card' });
-    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => box.remove() },
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
         el('i', { class: 'p-icon--close ucm-info__close' }));
     inner.append(el('div', { class: 'ucm-modal__head' },
         el('p', { class: 'p-heading--5', text: 'Snap info', style: 'margin:0;' }),
@@ -1178,20 +1185,33 @@ function openSnapInfo(name) {
     document.body.append(box);
     close.focus();
 
+    let info = null; // the loaded snap info (shared by the loader, renderSnapInfo and the picker)
+    const loading = el('span', { class: 'ucm-muted ucm-info__loading', style: 'margin-left:.5rem; font-size:.8rem;', text: 'Loading channels…' });
+
     (async () => {
-        let info;
+        let loaded;
         try {
-            info = await core.snaps.info(name);
+            loaded = await core.snaps.info(name);
         } catch (e) {
             bodyBox.innerHTML = '';
             bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load snap info: ' + e.message }));
             return;
         }
-        if (!info || !info.name) {
+        if (!loaded || !loaded.name) {
             bodyBox.innerHTML = '';
             bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'No info returned by snapd.' }));
             return;
         }
+        info = loaded;
+        renderSnapInfo();
+        // store channels load async (round 47g) — the Track/Channel row shows
+        // "Loading channels…" until they arrive (a local snap has none).
+        let chans = null;
+        try { chans = await core.snaps.search(info.name); } catch (e) { /* store unavailable: no picker */ }
+        renderChannelRow(info.name, chans || []);
+    })();
+
+    function renderSnapInfo() {
         bodyBox.innerHTML = '';
         const disabled = snapDisabled(info);
         // header: display title (falls back to the snap name) + the mono
@@ -1216,10 +1236,7 @@ function openSnapInfo(name) {
             bodyBox.append(el('p', { class: 'ucm-info__desc', text: infoPlain(info.description) }));
         }
 
-        // a rule separates the flow text (the description, round 47d) from
-        // the technical data — so 'Version' does not read as the end of the
-        // description (round 47e). Always present: with no description it
-        // separates the chips from the facts instead.
+        // a rule separates the flow text from the technical data (round 47e)
         bodyBox.append(el('div', { class: 'ucm-info__div' }));
 
         // the fact rows (empty values vanish, like the dashboard KV lists)
@@ -1229,13 +1246,13 @@ function openSnapInfo(name) {
             kv.append(el('div', {}, el('dt', { text: k }), el('dd', { text: String(v), class: mono ? 'mono' : undefined })));
         };
         row('Version', `${info.version || '—'} (${info.revision != null ? info.revision : '—'})`);
-        row('Track/Channel', fmtTrackChannel(info));
-        // Publisher (round 47e): replicate what the terminal shows AFTER
-        // the name — snapd cmd/snapd/cli/color.go longPublisher() appends a
-        // GREEN check (verified) or a BRIGHT-YELLOW star (starred); other
-        // validations (unproven) get nothing. The glyphs are real Unicode in
-        // the system fallback font (the Ubuntu face lacks them; verified to
-        // render here, no tofu), so no ' · verified' text.
+        // Track/Channel — the value is followed by a transient "loading"
+        // marker until the store channels resolve (round 47g); the switcher
+        // or 'local' marker replaces it.
+        const chanDd = el('dd');
+        chanDd.append(el('span', { class: 'ucm-mono', text: fmtTrackChannel(info) }), loading.cloneNode(true));
+        kv.append(el('div', {}, el('dt', { text: 'Track/Channel' }), chanDd));
+        // Publisher (round 47e): the terminal's green check / yellow star
         const pub = info.publisher || {};
         const pubName = pub['display-name'] || pub.username || pub.id || info.developer || null;
         if (pubName) {
@@ -1266,9 +1283,135 @@ function openSnapInfo(name) {
                 el('dd', { text: links[k], class: 'mono' }))));
             bodyBox.append(lk);
         }
-    })();
-}
+        // the channel switcher panel (round 47g) — empty until opened
+        bodyBox.append(el('div', { id: 'snapsInfoPicker' }));
+    }
 
+    function renderChannelRow(nm, store) {
+        const chRow = Array.from(bodyBox.querySelectorAll('.ucm-kv > div'))
+            .find((d) => (d.querySelector('dt') || {}).textContent === 'Track/Channel');
+        if (!chRow) return; // modal closed / re-rendered in the meantime
+        const dd = chRow.querySelector('dd');
+        const cur = fmtTrackChannel(info);
+        const val = el('span', { class: 'ucm-mono', text: cur });
+        const chanMap = (store[0] && store[0].channels) || {};
+        dd.innerHTML = '';
+        dd.append(val);
+        if (Object.keys(chanMap).length > 0) {
+            // store channels available -> the quiet ghost switcher
+            dd.append(el('button', {
+                class: 'p-button--base p-button ucm-info__switcher', type: 'button',
+                'aria-label': 'Switch channel for ' + nm, text: 'Switch channel',
+                onclick: () => renderPicker(nm, cur, chanMap),
+            }));
+        } else {
+            // no store channels -> a local snap (or store unavailable): no
+            // switcher, a quiet 'local' marker instead
+            dd.append(el('span', { class: 'ucm-muted ucm-info__local', style: 'margin-left:.5rem; font-size:.8rem;', text: 'local' }));
+        }
+    }
+
+    function renderPicker(nm, cur, chanMap) {
+        const panel = bodyBox.querySelector('#snapsInfoPicker');
+        if (!panel) return;
+        panel.innerHTML = '';
+        // grouped by track (the part before '/'), risks in the snapd store
+        // order (stable -> candidate -> beta -> edge)
+        const RISK = ['stable', 'candidate', 'beta', 'edge'];
+        const byTrack = new Map();
+        Object.keys(chanMap).forEach((c) => {
+            const [t] = c.split('/');
+            const r = c.split('/')[1] || 'stable';
+            if (!byTrack.has(t)) byTrack.set(t, []);
+            byTrack.get(t).push({ channel: c, risk: r });
+        });
+        const tracks = Array.from(byTrack.keys()).sort((a, b) => a.localeCompare(b));
+        let sel = null;
+
+        const list = el('div', { class: 'ucm-info__picker-list' });
+        const sec = el('p', { class: 'ucm-info__sec', text: 'Available channels' });
+        const wrap = el('div', { class: 'ucm-info__picker' });
+        const filter = el('input', {
+            class: 'ucm-mono ucm-info__picker-filter', type: 'text',
+            placeholder: 'Filter channels…', spellcheck: 'false',
+        });
+        const foot = el('div', { class: 'ucm-info__picker-foot' });
+        const selLabel = el('span', { class: 'ucm-muted', text: 'Choose a channel' });
+        const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+        const go = el('button', { class: 'p-button--brand p-button', type: 'button', disabled: true, 'aria-disabled': 'true', text: 'Switch' });
+        foot.append(selLabel, cancel, go);
+        wrap.append(sec, filter, list, foot);
+        panel.append(wrap);
+
+        function paintRows(filt) {
+            list.innerHTML = '';
+            const f = (filt || '').trim().toLowerCase();
+            let shown = 0;
+            tracks.forEach((t) => {
+                const rows = byTrack.get(t)
+                    .filter((e) => !f || e.channel.toLowerCase().includes(f))
+                    .sort((a, b) => RISK.indexOf(a.risk) - RISK.indexOf(b.risk));
+                if (!rows.length) return;
+                if (shown) list.append(el('div', { class: 'ucm-info__track-sep' }));
+                list.append(el('p', { class: 'ucm-info__track', text: t }));
+                rows.forEach((e) => {
+                    shown++;
+                    const isCur = e.channel === cur;
+                    const item = el('button', {
+                        class: 'ucm-info__chan' + (isCur ? ' is-current' : '') + (sel === e.channel ? ' is-sel' : ''),
+                        type: 'button',
+                        'aria-label': e.channel + (isCur ? ' (current)' : ''),
+                        disabled: isCur,
+                    },
+                        el('span', { class: 'ucm-mono', text: e.channel }),
+                        isCur ? el('span', { class: 'ucm-muted', text: 'current' }) : null);
+                    if (!isCur) item.onclick = () => {
+                        sel = e.channel;
+                        Array.from(list.querySelectorAll('.ucm-info__chan')).forEach((b) => b.classList.remove('is-sel'));
+                        item.classList.add('is-sel');
+                        selLabel.textContent = sel;
+                        go.disabled = false;
+                        go.setAttribute('aria-disabled', 'false');
+                        go.textContent = 'Switch to ' + sel;
+                    };
+                    list.append(item);
+                });
+            });
+            if (!shown) list.append(el('p', { class: 'ucm-muted', style: 'padding:.5rem 0;', text: 'No channels match.' }));
+        }
+        filter.oninput = () => paintRows(filter.value);
+        paintRows('');
+
+        cancel.onclick = () => { panel.innerHTML = ''; };
+        go.onclick = async () => {
+            const target = sel;
+            if (!target) return;
+            go.disabled = true;
+            cancel.disabled = true;
+            try {
+                // a channel switch is a REFRESH with the new channel (round
+                // 47g — `switch` only rewrites the tracking metadata, it does
+                // not fetch/apply the payload). Async: 202 + change id.
+                const change = await core.snaps.action(nm, 'refresh', { channel: target });
+                toast('positive', 'Channel switch started', `Refreshing ${nm} to ${target}…`);
+                const done = await waitChangeSettled(change);
+                panel.innerHTML = ''; // collapse the picker (the re-render
+                // below would otherwise leave it detached behind the new row)
+                await loadSnaps(); // the table's channel cell updates
+                info = await core.snaps.info(nm); // reload the card data
+                renderSnapInfo();
+                let store2 = null;
+                try { store2 = await core.snaps.search(nm); } catch (e2) { /* keep the row as-is */ }
+                renderChannelRow(nm, (store2 && store2[0]) ? store2 : []);
+                if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
+                    toast('negative', 'Channel switch finished with an error', `${nm}: ${done.err || done.status}`);
+            } catch (e) {
+                toastErr(e);
+            }
+        };
+        filter.focus();
+    }
+}
 function openConfigModal(name) {
     const box = el('div', { class: 'ucm-modal' });
     const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });

@@ -63,6 +63,18 @@ const SNAP_INFO = {
     },
 };
 
+// Store channel maps per snap (the round-47g mock stand-in for
+// /v2/find?name=..., which the info modal uses to offer a channel
+// switcher). Snap absent here = a LOCAL snap (no store channels -> no
+// switcher, the 'local' marker instead).
+const STORE = {
+    htop: { 'latest/stable': {}, 'latest/candidate': {}, 'latest/beta': {}, 'latest/edge': {},
+        '3.3/stable': {}, '3.3/candidate': {}, '3.2/stable': {} },
+    firefox: { 'latest/stable': {}, 'latest/candidate': {}, 'latest/edge': {},
+        '141/stable': {}, '140/stable': {} },
+    mosquitto: { 'latest/stable': {}, 'latest/edge': {}, '2.0/stable': {} },
+};
+
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
     htop: { port: '8080', 'logging.level': 'info' },
@@ -126,6 +138,7 @@ function mockFactoryJs() {
         let SNAPS = ${JSON.stringify(SNAPS)};
         const CONF = ${JSON.stringify(SNAP_CONF)};
         const INFO = ${JSON.stringify(SNAP_INFO)};
+        const STORE = ${JSON.stringify(STORE)};
         const CHANGES = {};
         let IFC = ${JSON.stringify(IFACES)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
@@ -303,6 +316,10 @@ function mockFactoryJs() {
                 // Store search/install: unauthenticated by design (model
                 // attachment at image build time) — no store login needed.
                 async search(q) {
+                    // the info modal queries the STORE for one installed
+                    // snap's channels (round 47g) — resolve it first; a
+                    // missing entry (e.g. 'core24') = a local snap -> [].
+                    if (STORE[q]) return [{ name: q, channels: STORE[q] }];
                     return [
                         { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
                         { name: 'mqtt-spy', summary: 'Simple MQTT traffic inspector', publisher: { username: 'iot-labs' }, channels: { 'latest/stable': {} } },
@@ -320,7 +337,7 @@ function mockFactoryJs() {
                     // real snapd async envelope: id at top level, result null
                     return { id, change: id };
                 },
-                async action(n, a) {
+                async action(n, a, extra) {
                     if (a === 'remove' && n === 'core24') throw new Error('cannot remove snap "core24": system snap');
                     const cur = SNAPS.find((x) => x.name === n);
                     if (a === 'revert' && (!cur || !cur.prevRev || cur.prevRev === cur.revision))
@@ -332,9 +349,20 @@ function mockFactoryJs() {
                         else if (a === 'disable' && cur) cur.status = 'installed'; // live snapd: not-active == "installed"
                         else if (a === 'enable' && cur) cur.status = 'active';
                         else if (a === 'revert' && cur) { cur.status = 'active'; cur.revision = cur.prevRev; }
+                        // a channel-switching REFRESH (round 47g): the daemon
+                        // updates the tracking channel + fetches the new
+                        // revision for it
+                        else if (a === 'refresh' && extra && extra.channel && cur) {
+                            cur.channel = extra.channel;
+                            cur['tracking-channel'] = extra.channel;
+                            cur.prevRev = cur.revision;
+                            cur.revision = String(Number(cur.revision) + 1);
+                        }
                         else if (cur) { cur.prevRev = cur.revision; cur.revision = String(Number(cur.revision) + 1); cur.status = 'active'; }
                         CHANGES[id] = { id, status: 'Done' };
-                    }, 1200); // slow settle: keeps the confirm card visible for the shot
+                    }, a === 'refresh' ? 400 : 1200); // refresh (channel switch) settles fast;
+                    // remove/disable/etc. keep the 1.2s window so the inline
+                    // confirm cards stay visible for their shots (rounds 45/47c)
                     return { id, change: id };
                 },
                 async confGet(n, key) {
@@ -1097,12 +1125,20 @@ function mockFactoryJs() {
             }
             return null;
         };
+        const ddEl = (label) => {
+            if (!body) return null;
+            for (const div of body.querySelectorAll('.ucm-kv > div')) {
+                if ((div.querySelector('dt') || {}).textContent === label)
+                    return div.querySelector('dd');
+            }
+            return null;
+        };
         return {
             shown: !!body,
             title: t('.ucm-info__name'), id: t('.ucm-info__id'),
             summary: t('.ucm-info__summary'),
             chip0: (body && body.querySelector('.ucm-info__chips .p-status-label') || {}).textContent || null,
-            version: dd('Version'), channel: dd('Track/Channel'), publisher: dd('Publisher'),
+            version: dd('Version'), channel: (ddEl('Track/Channel') && (ddEl('Track/Channel').querySelector('.ucm-mono') || {}).textContent || '').trim(), publisher: dd('Publisher'),
             website: dd('Website'), source: dd('Source'),
             hasDesc: !!t('.ucm-info__desc'),
             descPlain: (t('.ucm-info__desc') || '').includes('**') ? 'STILL-MARKDOWN' : 'plain',
@@ -1189,6 +1225,113 @@ function mockFactoryJs() {
     await wait(200);
     const c24Gone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
     if (!c24Gone) console.log('PAGE ERROR: Esc did not close the second snap-info modal (round 47e)');
+
+    // ---- 4g. Round 47g: the channel switcher. A snap with store channels
+    // (htop in the mock) shows a 'Switch channel' ghost button on the
+    // Track/Channel row; a local snap (core24 — no store channels) shows a
+    // quiet 'local' marker instead. The picker is a filterable,
+    // track-grouped list; confirming issues a REFRESH with the channel
+    // (`switch` is metadata-only and is never used).
+    await page.evaluate(() => {
+        const n = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name'))
+            .find((n) => n.textContent.trim() === 'htop');
+        if (!n) throw new Error('htop name cell missing (4g)');
+        n.click();
+    });
+    await wait(700); // info + store channel search (async)
+    const sw = await page.evaluate(() => {
+        const body = document.querySelector('.ucm-modal .ucm-info');
+        const dd = (label) => { for (const d of body.querySelectorAll('.ucm-kv > div')) if ((d.querySelector('dt')||{}).textContent === label) return d.querySelector('dd'); return null; };
+        const chDd = dd('Track/Channel');
+        const btn = chDd ? chDd.querySelector('.ucm-info__switcher') : null;
+        return { hasSwitcher: !!btn, btnText: btn ? btn.textContent.trim() : null,
+                 cur: chDd ? (chDd.querySelector('.ucm-mono')||{}).textContent.trim() : null };
+    });
+    if (!sw.hasSwitcher) console.log('PAGE ERROR: htop (has store channels) shows no Switch channel button');
+    else {
+        if (sw.btnText !== 'Switch channel') console.log('PAGE ERROR: switcher label wrong (' + sw.btnText + ')');
+        if (sw.cur !== 'latest/stable') console.log('PAGE ERROR: channel value wrong before switch (' + sw.cur + ')');
+        await page.evaluate(() => document.querySelector('.ucm-info__switcher').click());
+        await wait(250);
+        const pk = await page.evaluate(() => {
+            const wrap = document.querySelector('.ucm-info__picker');
+            if (!wrap) return { err: true };
+            const items = Array.from(wrap.querySelectorAll('.ucm-info__chan'));
+            const tracks = Array.from(wrap.querySelectorAll('.ucm-info__track')).map((t) => t.textContent.trim());
+            const cur = items.find((i) => i.classList.contains('is-current'));
+            const go = wrap.querySelector('.p-button--brand');
+            return { items: items.length, tracks,
+                     curText: cur ? cur.querySelector('.ucm-mono').textContent.trim() : null,
+                     curDisabled: cur ? cur.disabled : null,
+                     hasFilter: !!wrap.querySelector('.ucm-info__picker-filter'),
+                     goDisabled: go ? go.disabled : true, goText: go ? go.textContent.trim() : null };
+        });
+        if (pk.err) console.log('PAGE ERROR: the channel picker panel did not open');
+        else {
+            if (pk.items !== 7) console.log('PAGE ERROR: picker item count wrong (' + pk.items + ', want 7 for htop)');
+            if (JSON.stringify(pk.tracks) !== JSON.stringify(['3.2', '3.3', 'latest'])) console.log('PAGE ERROR: picker track grouping wrong (' + JSON.stringify(pk.tracks) + ')');
+            if (pk.curText !== 'latest/stable' || pk.curDisabled !== true) console.log('PAGE ERROR: current channel not marked current+disabled (' + JSON.stringify({ t: pk.curText, d: pk.curDisabled }) + ')');
+            if (!pk.hasFilter) console.log('PAGE ERROR: picker has no filter input');
+            if (pk.goDisabled !== true) console.log('PAGE ERROR: the Switch CTA is enabled before a channel is selected');
+            // filter narrows to the candidate channels only
+            await page.type('.ucm-info__picker-filter', 'candidate');
+            await wait(150);
+            const flt = await page.evaluate(() => Array.from(document.querySelectorAll('.ucm-info__chan')).map((b) => b.querySelector('.ucm-mono').textContent.trim()));
+            if (JSON.stringify(flt) !== JSON.stringify(['3.3/candidate', 'latest/candidate'])) console.log('PAGE ERROR: channel filter wrong (got ' + JSON.stringify(flt) + ')');
+            await page.evaluate(() => { const fi = document.querySelector('.ucm-info__picker-filter'); fi.value = ''; fi.dispatchEvent(new Event('input', { bubbles: true })); });
+            await wait(150);
+            // select 3.3/candidate -> the CTA arms with the target
+            await page.evaluate(() => {
+                const it = Array.from(document.querySelectorAll('.ucm-info__chan'))
+                    .find((b) => b.querySelector('.ucm-mono').textContent.trim() === '3.3/candidate');
+                if (!it) throw new Error('3.3/candidate not in picker');
+                it.click();
+            });
+            await wait(150);
+            const selS = await page.evaluate(() => { const go = document.querySelector('.ucm-info__picker .p-button--brand'); return { goText: go.textContent.trim(), goDisabled: go.disabled }; });
+            if (selS.goDisabled !== false || selS.goText !== 'Switch to 3.3/candidate') console.log('PAGE ERROR: CTA did not arm on selection (' + JSON.stringify(selS) + ')');
+            await page.screenshot({ path: path.join(SHOTS, '13d-snap-info-picker.png') });
+            // confirm -> REFRESH with channel settles -> the channel row shows
+            // the new current channel and the panel collapses
+            await page.evaluate(() => document.querySelector('.ucm-info__picker .p-button--brand').click());
+            await wait(1500); // 400ms mock settle + info re-render
+            const after = await page.evaluate(() => {
+                const body = document.querySelector('.ucm-modal .ucm-info');
+                const dd = (label) => { for (const d of body.querySelectorAll('.ucm-kv > div')) if ((d.querySelector('dt')||{}).textContent === label) return d.querySelector('dd'); return null; };
+                const chDd = dd('Track/Channel');
+                return { cur: chDd ? (chDd.querySelector('.ucm-mono')||{}).textContent.trim() : null,
+                         pickerGone: !document.querySelector('.ucm-info__picker') };
+            });
+            if (after.cur !== '3.3/candidate') console.log('PAGE ERROR: channel row did not update to the new channel after the switch (' + after.cur + ')');
+            if (!after.pickerGone) console.log('PAGE ERROR: the picker panel is still open after the switch completed');
+        }
+    }
+    await page.keyboard.down('Escape');
+    await page.keyboard.up('Escape');
+    await wait(200);
+    const swGone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
+    if (!swGone) console.log('PAGE ERROR: Esc did not close the modal after the channel switch');
+    // a LOCAL snap (core24 — no store channels) -> no switcher, a 'local' marker
+    await page.evaluate(() => {
+        const n = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name'))
+            .find((n) => n.textContent.trim() === 'core24');
+        if (!n) throw new Error('core24 name cell missing (4g)');
+        n.click();
+    });
+    await wait(700);
+    const swLocal = await page.evaluate(() => {
+        const body = document.querySelector('.ucm-modal .ucm-info');
+        const dd = (label) => { for (const d of body.querySelectorAll('.ucm-kv > div')) if ((d.querySelector('dt')||{}).textContent === label) return d.querySelector('dd'); return null; };
+        const chDd = dd('Track/Channel');
+        return { hasSwitcher: !!(chDd && chDd.querySelector('.ucm-info__switcher')),
+                 local: (chDd ? chDd.textContent : '').includes('local') };
+    });
+    if (swLocal.hasSwitcher) console.log('PAGE ERROR: a local snap (no store channels) offers a Switch channel button');
+    if (!swLocal.local) console.log('PAGE ERROR: a local snap is not marked local in the channel row');
+    await page.keyboard.down('Escape');
+    await page.keyboard.up('Escape');
+    await wait(200);
+
     // ---- 4e. Round 45: Disable is a FATAL-class action -> confirmation card ----
     // Disabling a snap (e.g. the app's own) stops it for good until re-enabled,
     // so the power icon must NOT toggle it in one click. Clicking Disable on an
