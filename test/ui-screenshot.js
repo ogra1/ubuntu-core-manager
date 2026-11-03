@@ -1298,13 +1298,23 @@ function mockFactoryJs() {
         const dd = (label) => { for (const d of body.querySelectorAll('.ucm-kv > div')) if ((d.querySelector('dt')||{}).textContent === label) return d.querySelector('dd'); return null; };
         const chDd = dd('Track/Channel');
         const btn = chDd ? chDd.querySelector('.ucm-info__switcher') : null;
+        const chRow = chDd ? chDd.closest('.ucm-kv > div') : null;
+        const verRow = dd('Version') ? dd('Version').closest('.ucm-kv > div') : null;
         return { hasSwitcher: !!btn, btnText: btn ? btn.textContent.trim() : null,
-                 cur: chDd ? (chDd.querySelector('.ucm-mono')||{}).textContent.trim() : null };
+                 cur: chDd ? (chDd.querySelector('.ucm-mono')||{}).textContent.trim() : null,
+                 switcherMarginBottom: btn ? getComputedStyle(btn).marginBottom : null,
+                 chRowH: chRow ? chRow.getBoundingClientRect().height : null,
+                 verRowH: verRow ? verRow.getBoundingClientRect().height : null };
     });
     if (!sw.hasSwitcher) console.log('PAGE ERROR: htop (has store channels) shows no Switch channel button');
     else {
         if (sw.btnText !== 'Switch channel') console.log('PAGE ERROR: switcher label wrong (' + sw.btnText + ')');
         if (sw.cur !== 'latest/stable') console.log('PAGE ERROR: channel value wrong before switch (' + sw.cur + ')');
+        // round 47l: the switcher must NOT grow the Track/Channel row. The bundle
+        // .p-button carries an 18.88px margin-bottom that used to leak onto it, so
+        // the row jumped when the button replaced the 'Loading channels…' text.
+        if (sw.switcherMarginBottom !== '0px') console.log('PAGE ERROR: the switcher button still carries the bundle .p-button bottom margin (' + sw.switcherMarginBottom + ', want 0px — round 47l)');
+        if (sw.chRowH && sw.verRowH && Math.abs(sw.chRowH - sw.verRowH) > 1) console.log('PAGE ERROR: the Track/Channel row grows when the switcher button is drawn (chRow ' + sw.chRowH.toFixed(2) + ' vs reference row ' + sw.verRowH.toFixed(2) + ' — round 47l)');
         await page.evaluate(() => document.querySelector('.ucm-info__switcher').click());
         await wait(250);
         const pk = await page.evaluate(() => {

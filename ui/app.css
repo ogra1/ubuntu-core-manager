@@ -726,7 +726,7 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    panel below the row — an accordion, not a floating dropdown, so it never
    clips or overlaps (the class of bug the tooltips hit). Confirming issues a
    REFRESH with the channel (not `switch`, which is metadata-only). */
-.ucm-info__switcher { margin-left: .6rem; padding: 0 .5rem; height: 1.5rem; font-size: .78rem; }
+.ucm-info__switcher { margin: 0 0 0 .6rem; padding: 0 .5rem; height: 1.3rem; font-size: .78rem; line-height: 1; vertical-align: middle; }
 .ucm-info__picker { border: 1px solid var(--ucm-grey-90); border-radius: .25rem; padding: .8rem 1rem; margin-top: .9rem; }
 .ucm-info__picker-filter { width: 100%; font-size: .85rem; padding: .35rem .5rem; margin-bottom: .5rem; }
 .ucm-info__picker-list { max-height: 15rem; overflow-y: auto; }
