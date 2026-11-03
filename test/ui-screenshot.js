@@ -49,7 +49,7 @@ const SNAP_INFO = {
     htop: {
         title: "Host resources monitor",
         summary: "Interactive ps",
-        description: "htop is an **interactive** process viewer for Unix-like systems.\n\nIt shows a task list and a real-time view of CPU/memory usage, including a live view of each process\u2019s threads, open files and environment.\n\nFeatures:\n- Full-screen, keyboard-driven interface\n- Sortable by CPU, memory or any column\n- Per-process I/O and network monitoring\n- Kill, renice and signal any process\n\nThe task list updates continuously while you watch. See <https://htop.dev> for screenshots and <https://github.com/vt100/htop> for the source and the issue tracker. htop is free software under the GNU General Public License.",
+        description: "htop is an **interactive** process viewer for Unix-like systems.\n\nIt shows a task list and a real-time view of CPU/memory usage, including a live view of each process\u2019s threads, open files and environment.\n\nFeatures:\n- Full-screen, keyboard-driven interface\n- Sortable by CPU, memory or any column\n- Per-process I/O and network monitoring\n- Kill, renice and signal any process\n\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\nThe task list updates continuously while you watch. See <https://htop.dev> for screenshots and <https://github.com/vt100/htop> for the source and the issue tracker. htop is free software under the GNU General Public License.",
         publisher: { id: "htop-dev", username: "htop-dev", "display-name": "htop-dev", validation: "verified" },
         "installed-size": 8948736,
         "install-date": "2026-10-20T09:15:00Z",
@@ -1061,6 +1061,28 @@ function mockFactoryJs() {
         const body = modal ? modal.querySelector('.ucm-info') : null;
         const card = modal ? modal.querySelector('.ucm-modal__card') : null;
         const t = (sel) => body && (body.querySelector(sel) || {}).textContent || null;
+        const descEl = body ? body.querySelector('.ucm-info__desc') : null;
+        // section order (round 47d): the description must come BEFORE the
+        // first fact table. Compare real DOM order (a flat .ucm-info__sec /
+        // .ucm-kv sequence) — the Description sec precedes the first .ucm-kv.
+        const seq = body ? Array.from(body.querySelectorAll('.ucm-info__sec, .ucm-kv')) : [];
+        const descIdx = seq.findIndex((e) => e.classList.contains('ucm-info__sec') && e.textContent.trim() === 'Description');
+        const firstKvIdx = seq.findIndex((e) => e.classList.contains('ucm-kv'));
+        // the 80-char token must sit on ONE line (its Range width <= the
+        // description container width — the 52rem card guarantee)
+        let tok = null;
+        if (descEl) {
+            const tokStr = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+            const node = descEl.firstChild;
+            const idx = node ? node.data.indexOf(tokStr) : -1;
+            if (node && idx >= 0) {
+                const rng = document.createRange();
+                rng.setStart(node, idx);
+                rng.setEnd(node, idx + tokStr.length);
+                tok = { boxW: Math.round(rng.getBoundingClientRect().width), descW: Math.round(descEl.clientWidth), lineH: Math.round(getComputedStyle(descEl).lineHeight) };
+            }
+        }
+        const closeIc = modal ? modal.querySelector('.ucm-info__close') : null;
         const dd = (label) => {
             if (!body) return null;
             for (const div of body.querySelectorAll('.ucm-kv > div')) {
@@ -1081,6 +1103,9 @@ function mockFactoryJs() {
             // the kiosk is a fixed 900px-tall display — the card must fit
             // fully (head pinned, body scrolls) instead of clipping
             inViewport: card ? (card.getBoundingClientRect().top >= 0 && card.getBoundingClientRect().bottom <= window.innerHeight) : false,
+            cardW: card ? Math.round(card.getBoundingClientRect().width) : null,
+            closeFilter: closeIc ? getComputedStyle(closeIc).filter : null,
+            descIdx, firstKvIdx, tok,
         };
     });
     if (!info.shown) console.log('PAGE ERROR: clicking a snap name did not open the snap-info modal');
@@ -1097,6 +1122,11 @@ function mockFactoryJs() {
         if (!info.hasDesc) console.log('PAGE ERROR: info modal has no description section');
         else if (info.descPlain !== 'plain') console.log('PAGE ERROR: info modal description still carries markdown');
         if (info.inViewport !== true) console.log('PAGE ERROR: info modal card does not fit the 900px kiosk viewport (head pinned + body must scroll)');
+        if (!(info.cardW >= 750)) console.log('PAGE ERROR: info modal card is not the wide 52rem size (width ' + info.cardW + 'px, want >=750 — 80 chars/line, round 47d)');
+        if (!/brightness\(0\)\s+invert\(1\)/.test(info.closeFilter || '')) console.log('PAGE ERROR: info modal close icon is not whitened (filter ' + info.closeFilter + ', round 47d)');
+        if (!(info.descIdx >= 0 && info.firstKvIdx > info.descIdx)) console.log('PAGE ERROR: description is not above the technical info (descIdx ' + info.descIdx + ' firstKvIdx ' + info.firstKvIdx + ', round 47d)');
+        if (!info.tok) console.log('PAGE ERROR: the 80-char token line is not found in the description');
+        else if (info.tok.boxW > info.tok.descW) console.log('PAGE ERROR: the 80-char line wraps (' + info.tok.boxW + 'px > ' + info.tok.descW + 'px container — card too narrow, round 47d)');
     }
     await page.screenshot({ path: path.join(SHOTS, '13c-snap-info.png') });
     // close via the backdrop (the documented close path) and verify it's gone

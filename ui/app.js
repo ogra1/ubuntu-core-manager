@@ -1165,7 +1165,7 @@ function openSnapInfo(name) {
     const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
     const inner = el('div', { class: 'ucm-modal__card' });
     const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => box.remove() },
-        el('i', { class: 'p-icon--close' }));
+        el('i', { class: 'p-icon--close ucm-info__close' }));
     inner.append(el('div', { class: 'ucm-modal__head' },
         el('p', { class: 'p-heading--5', text: 'Snap info', style: 'margin:0;' }),
         close));
@@ -1207,6 +1207,13 @@ function openSnapInfo(name) {
         if (info.type) chips.append(el('span', { class: 'p-status-label p-status-label--information', text: info.type }));
         bodyBox.append(chips);
 
+        // description first (round 47d) — it often carries the how-to
+        // (connect/interface) text the user actually comes for
+        if (info.description) {
+            bodyBox.append(el('p', { class: 'ucm-info__sec', text: 'Description' }));
+            bodyBox.append(el('p', { class: 'ucm-info__desc', text: infoPlain(info.description) }));
+        }
+
         // the fact rows (empty values vanish, like the dashboard KV lists)
         const kv = el('dl', { class: 'ucm-kv' });
         const row = (k, v, mono) => {
@@ -1238,10 +1245,6 @@ function openSnapInfo(name) {
                 el('dt', { text: k[0].toUpperCase() + k.slice(1) }),
                 el('dd', { text: links[k], class: 'mono' }))));
             bodyBox.append(lk);
-        }
-        if (info.description) {
-            bodyBox.append(el('p', { class: 'ucm-info__sec', text: 'Description' }));
-            bodyBox.append(el('p', { class: 'ucm-info__desc', text: infoPlain(info.description) }));
         }
     })();
 }

@@ -502,7 +502,7 @@ html, body {
 }
 .ucm-modal__card {
     position: relative;
-    width: 100%; max-width: 26rem;
+    width: 100%; max-width: 52rem; /* round 47d: fit ~80 chars of the default font per line */
     background: #fff; border-radius: .35rem;
     box-shadow: 0 24px 70px rgba(0,0,0,.4);
     overflow: hidden;
@@ -694,7 +694,15 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-info__chips { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .ucm-info__chips .p-status-label { margin: 0; }
 .ucm-info__sec { margin: 1.1rem 0 .2rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #757575; }
-.ucm-info__desc { margin: 0; white-space: pre-line; line-height: 1.55; color: #333; font-size: .92rem; }
+/* the dark modal head vanishes the bundle's #000 close glyph (round 47d):
+   whiten it with the app's brightness/invert filter, scoped to the info modal
+   (the rail X + login head use the same idiom). */
+.ucm-info__close { filter: brightness(0) invert(1); }
+/* the offline Vanilla bundle sets a generic `p { max-width: 40em }` (a
+   readable-measure for body paragraphs) that would clamp this long
+   description to 640px even inside the wide 52rem card (round 47d) — lift it
+   so the description can span the card and ~80 chars fit on one line. */
+.ucm-info__desc { margin: 0; max-width: none; white-space: pre-line; line-height: 1.55; color: #333; }
 
 /* ---- interfaces page: per-snap cards, snap-connections tables ------
    Each card is one <snap> and holds a table (Interface | Plug | Slot |
