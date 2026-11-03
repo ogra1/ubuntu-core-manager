@@ -797,14 +797,15 @@ async function loadSnaps() {
             state.systemNames = modelSystemNames(mod);
         } catch (e) { /* classic pre-model: stays empty */ }
     }
-    const body = $('#snapsBody');
+    const wrap = $('#snapsCards');
     try {
         state.snaps = await core.snaps.list();
         renderSnaps();
     } catch (e) {
         toastErr(e);
-        body.innerHTML = '';
-        body.append(el('tr', {}, el('td', { colspan: '6', class: 'ucm-muted', text: 'Could not load snaps: ' + e.message })));
+        wrap.innerHTML = '';
+        wrap.append(el('div', { class: 'p-card' },
+            el('div', { class: 'ucm-muted', style: 'padding:.4rem 0;', text: 'Could not load snaps: ' + e.message })));
     }
 }
 
@@ -837,77 +838,109 @@ async function loadSnaps() {
    status "installed" (there is no "disabled" status string) and the REST
    response carries NO `active` field; an ENABLED snap reports status "active".
    So "not active" = disabled. The legacy "disabled" status (pre-2.7x fixtures)
-   is still treated as disabled. Consequence for the Status badge column: a
-   live-disabled snap shows "installed", which is indistinguishable from an
-   active one — the badge is re-derived through the same detector so it reads
-   "disabled" (red) instead of a misleading green "installed". */
+   is still treated as disabled. Consequence (round 47: the Status column is
+   gone, so no badge renders): a live-disabled snap reports "installed", which
+   is indistinguishable from an active one — the red power icon + the Enable
+   label are re-derived through the same detector instead of a misleading
+   green state. */
 function snapDisabled(s) {
     const st = String(s.status || '').toLowerCase();
     return !s.active && (st === 'installed' || st === 'disabled');
 }
 
 function renderSnaps() {
-    const body = $('#snapsBody');
-    body.innerHTML = '';
+    // Round 47: the scrollable single table is two INTERFACE-CARD-STYLE
+    // cards (the interfaces page idiom — same p-card + p-table look):
+    //   "OS"             -> the system snaps (the model assertion's set —
+    //                       the round-46b definition, NOT the type field)
+    //   "Installed Snaps" -> everything else
+    // Both cards are alphabetical: /v2/snaps has NO stable order (snapd
+    // map iteration — the round-27 changes lesson), so relying on list
+    // order would shuffle the rows on every 20 s reload.
+    // Columns: Snap | Version/Rev | Track/Channel | Actions. The old Status
+    // and Type columns are dropped; a DISABLED snap still reads through the
+    // same detector via the red power icon + the Enable label (the icon set
+    // IS the status now).
+    const wrap = $('#snapsCards');
+    wrap.innerHTML = '';
     if (!state.snaps.length) {
-        body.append(el('tr', {}, el('td', { colspan: '6', class: 'ucm-muted', text: 'No snaps installed.' })));
+        wrap.append(el('div', { class: 'p-card' },
+            el('div', { class: 'ucm-muted', style: 'padding:.4rem 0;', text: 'No snaps installed.' })));
         return;
     }
-    state.snaps.forEach((s) => {
-        const sk = String(s.status || '').toLowerCase();
-        const statusTone =
-            s.installed === null ? ['negative', 'Removed'] :
-            ['failed', 'jailview', 'held', 'frozen'].includes(sk) ? ['negative', s.status] :
-            ['activating', 'installing', 'refreshing', 'removing', 'reverting', 'switching'].includes(sk) ? ['caution', s.status] :
-            ['positive', s.status || 'installed'];
-        const [tone, word] = statusTone;
-        // A snap that reports "installed" (live snapd: not-active == disabled)
-        // or the legacy "disabled" status gets the red badge, never a green
-        // "installed" — otherwise it would contradict the red Enable power icon.
-        const disabled = snapDisabled(s);
-        const dispTone = disabled ? 'negative' : tone;
-        const dispWord = disabled ? 'disabled' : word;
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    const sys = state.snaps.filter((s) => state.systemNames.has(s.name)).sort(byName);
+    const other = state.snaps.filter((s) => !state.systemNames.has(s.name)).sort(byName);
+    wrap.append(snapsCard('OS', sys));
+    wrap.append(snapsCard('Installed Snaps', other));
+}
 
-        // Action set per snap — round 46b (user-corrected; snapd 2.77
-        // live-verified for the refusals behind tiers 1+2):
-        //  1. SYSTEM snap (declared in the model assertion: top-level `base`
-        //     + gadget/kernel/snapd/os entries — NOT the /v2/snaps type field;
-        //     model-declared app snaps like required mesa/ubuntu-frame are NOT
-        //     system snaps) -> Refresh + Revert only: not removable, not
-        //     disable-able, no per-snap config.
-        //  2. BASE-type snap the model does NOT declare (a second base that
-        //     apps depend on) -> everything except Config (snapd 500s conf on
-        //     type 'base').
-        //  3. everything else -> the full set.
-        const isSystem = state.systemNames.has(s.name);
-        const isBase = s.type === 'base' || s.type === 'core' || s.type === 'os';
-        const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
+function snapsCard(title, snaps) {
+    const card = el('div', { class: 'p-card ucm-snaps-card' });
+    // The header mirrors the interface cards (title + muted meta count on
+    // one flex row). The count reuses the ifaces __counts class so both
+    // pages' headers style identically.
+    card.append(el('div', { class: 'p-card__header' },
+        el('div', { style: 'display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;' },
+            el('p', { class: 'p-heading--5 ucm-snaps-card__title', style: 'margin:0;', text: title }),
+            el('span', { class: 'ucm-muted ucm-ifaces-card__counts', text: `${snaps.length} snaps` }))));
+    const body = el('tbody');
+    if (!snaps.length) {
+        body.append(el('tr', {}, el('td', { colspan: '4', class: 'ucm-muted', text: 'None' })));
+    } else {
+        snaps.forEach((s) => body.append(snapsRow(s)));
+    }
+    // The table reuses .ucm-ifaces-table (the interfaces page's table idiom —
+    // the same design the cards copy): small-caps nowrap headers, middle
+    // cells, .85rem mono. .ucm-ifaces-action on the Actions header gives it
+    // the overflow:visible the tooltip needs (the bundle clips td,th).
+    card.append(el('table', { class: 'p-table ucm-ifaces-table' },
+        el('thead', {}, el('tr', {},
+            el('th', { text: 'Snap' }),
+            el('th', { text: 'Version / Rev' }),
+            el('th', { text: 'Track/Channel' }),
+            el('th', { class: 'ucm-ifaces-action', style: 'text-align:right;', text: 'Actions' }))),
+        body));
+    return card;
+}
 
-        if (isSystem && s.installed !== null) {
-            actions.append(
-                rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
-                rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
-            );
-        } else if (s.installed !== null) {
-            if (!isBase) actions.append(rowBtn('Configure ' + s.name, 'p-icon--settings', () => openConfigModal(s.name)));
-            actions.append(
-                rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
-                rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
-                rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
-                    disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
-                    () => (disabled ? snapOp(s.name, 'enable') : confirmDisable(s.name))),
-                rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
-            );
-        }
-        body.append(el('tr', {},
-            el('td', { text: s.name, class: 'ucm-mono' }),
-            el('td', {}, el('span', { class: `p-status-label p-status-label--${dispTone}`, text: dispWord })),
-            el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
-            el('td', { class: 'ucm-mono', text: fmtTrackChannel(s), title: `${s.tracking_channel || s.channel || '—'}` }),
-            el('td', { text: s.type || 'app' }),
-            el('td', { class: 'ucm-actions-cell', style: 'text-align:right;' }, actions),
-        ));
-    });
+function snapsRow(s) {
+    const disabled = snapDisabled(s);
+    // Action set per snap — round 46b (unchanged):
+    //  1. SYSTEM snap (declared in the model assertion: top-level `base`
+    //     + gadget/kernel/snapd/os entries — NOT the /v2/snaps type field)
+    //     -> Refresh + Revert only.
+    //  2. BASE-type snap the model does NOT declare -> everything except
+    //     Config (snapd 500s conf on type 'base').
+    //  3. everything else -> the full set.
+    const isSystem = state.systemNames.has(s.name);
+    const isBase = s.type === 'base' || s.type === 'core' || s.type === 'os';
+    const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
+
+    if (isSystem && s.installed !== null) {
+        actions.append(
+            rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
+            rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
+        );
+    } else if (s.installed !== null) {
+        if (!isBase) actions.append(rowBtn('Configure ' + s.name, 'p-icon--settings', () => openConfigModal(s.name)));
+        actions.append(
+            rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
+            rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
+            rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
+                disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
+                () => (disabled ? snapOp(s.name, 'enable') : confirmDisable(s.name))),
+            rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
+        );
+    }
+    // Round 47: no Status/Type columns; the Track/Channel cell keeps its
+    // fmtTrackChannel() content but LOSES its redundant title tooltip
+    // (the user already sees the value).
+    return el('tr', {},
+        el('td', { text: s.name, class: 'ucm-mono' }),
+        el('td', { class: 'ucm-mono', text: `${s.version || '—'} (${s.revision != null ? s.revision : '—'})` }),
+        el('td', { class: 'ucm-mono', text: fmtTrackChannel(s) }),
+        el('td', { class: 'ucm-actions-cell', style: 'text-align:right;' }, actions));
 }
 
 /* Icon-only row action button: the button itself is the Vanilla tooltip
@@ -962,7 +995,7 @@ function confirmRemove(name) {
     const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancel.onclick = () => box.remove();
     box.append(icon, msg, b, cancel);
-    $('#snapsBody').closest('.ucm-table-wrap').after(box);
+    $('#snapsCards').after(box);
     b.focus();
 }
 
@@ -997,7 +1030,7 @@ function confirmDisable(name) {
     const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancel.onclick = () => box.remove();
     box.append(icon, msg, b, cancel);
-    $('#snapsBody').closest('.ucm-table-wrap').after(box);
+    $('#snapsCards').after(box);
     b.focus();
 }
 
@@ -1099,7 +1132,6 @@ async function searchStore() {
 const RE_CONF_KEY_UI = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)*$/;
 
 function openConfigModal(name) {
-    const card = $('#snapsBody').closest('.ucm-table-wrap');
     const box = el('div', { class: 'ucm-modal' });
     const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
     const inner = el('div', { class: 'ucm-modal__card' });

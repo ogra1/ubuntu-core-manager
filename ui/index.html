@@ -393,22 +393,10 @@
                 </div>
             </div>
 
-            <div class="ucm-table-wrap ucm-snaps-table">
-                <table class="p-table">
-                    <thead>
-                        <tr>
-                            <th>Snap</th>
-                            <th>Status</th>
-                            <th>Version / Rev</th>
-                            <th>Track/Channel</th>
-                            <th>Type</th>
-                            <th style="text-align:right;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="snapsBody">
-                        <tr><td colspan="6" class="ucm-muted">Loading snaps…</td></tr>
-                    </tbody>
-                </table>
+            <div id="snapsCards" style="display:flex; flex-direction:column; gap:1.2rem;">
+                <div class="p-card">
+                    <div class="ucm-muted" style="padding:.4rem 0;">Loading snaps…</div>
+                </div>
             </div>
         </section>
 

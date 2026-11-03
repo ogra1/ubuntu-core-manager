@@ -411,20 +411,6 @@ html, body {
 .ucm-login__head i {
     filter: brightness(0) invert(1);
 }
-/* installed-snaps table: the bundle's table-layout:fixed + width:100% equalizes
-   every nowrap column (Status/Type become far too wide). A max-content table
-   hugs each column but then leaves a big right-side gap to the scroll parent
-   (round 34's icon-only Actions narrowed it, exposing the gap). Fix = the same
-   round-29 changes-table idiom: table-layout:auto + width:100% so the table
-   FILLS the scroll parent, with width:1% shrink-to-fit hints on the narrow
-   content columns (2-6). Under auto layout a 1% nowrap column grows to its
-   content and the width-less Snap column absorbs the whole remainder. Measured
-   @1440: [540, 79, 159, 159, 67, 122], 1px to the scrollbar (no gap), and the
-   actions icons end ~9px from the scroll edge. Status/Type stay content-hugging
-   (<=140px, round-8 guard). */
-.ucm-snaps-table .p-table { width: 100%; table-layout: auto; }
-.ucm-snaps-table .p-table th:nth-child(n+2),
-.ucm-snaps-table .p-table td:nth-child(n+2) { width: 1%; }
 
 /* remove-confirm row: single centred line (question icon + message + buttons).
    NOTE: the bundle's .p-notification__message is display:inline — an inline box
@@ -668,6 +654,20 @@ html, body {
 
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }
+
+/* ---- snaps page: two interface-card-style cards (round 47) --------------
+   The old single scrollable table is now two .p-cards (same look as the
+   interfaces page): "OS" (the model-assertion system snaps) and
+   "Installed Snaps" (everything else, alphabetical). The table lives
+   INSIDE the card, so it inherits the card's white surface + border — no
+   table-wrap needed, and the page scrolls (the bundle card is not height
+   constrained). The tables carry .ucm-ifaces-table directly (the
+   interfaces page's table idiom — small-caps headers, nowrap middle
+   cells, .85rem mono), so both pages read the same. */
+.ucm-snaps-card__title { font-size: 1.05rem; }
+/* the title is a .p-heading--5; the bundle's stacked-heading padding-top
+   (6.56px) sits above its glyphs (round-40 lesson) — scoped here too. */
+.ucm-snaps-card .p-heading--5 { padding-top: 0; }
 
 /* ---- interfaces page: per-snap cards, snap-connections tables ------
    Each card is one <snap> and holds a table (Interface | Plug | Slot |

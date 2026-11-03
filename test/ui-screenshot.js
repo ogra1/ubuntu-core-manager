@@ -788,7 +788,7 @@ function mockFactoryJs() {
 
     // ---- 4b. per-snap config modal (htop) ----
     await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.textContent.includes('htop'));
         if (!htop) throw new Error('htop row missing');
         const btn = htop.querySelector('.ucm-iconbtn[aria-label^="Configure"]'); // icon-only: no text to match
@@ -818,10 +818,72 @@ function mockFactoryJs() {
     if (cfgSaved.modalGone !== true) console.log('PAGE ERROR: config modal did not close after save');
     await page.screenshot({ path: path.join(SHOTS, '12-config-saved.png') });
 
+    // ---- 4c. Round 47: two interface-card-style cards replace the
+    // scrollable table. Card 1 "OS" = the model-assertion system snaps
+    // (round-46b definition — the harness mock's model lists
+    // core24/snapd/kernel-noble/gadget), Card 2 "Installed Snaps" =
+    // everything else. Both alphabetical (live /v2/snaps order is not
+    // stable). Columns: Snap | Version / Rev | Track/Channel | Actions —
+    // the old Status/Type columns are gone, and no cell keeps a title
+    // tooltip (the Track/Channel one was redundant).
+    const snCards = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll('#snapsCards > .p-card'));
+        const titles = cards.map((c) => (c.querySelector('.p-card__header .p-heading--5') || {}).textContent || null);
+        const rowsOf = (i) => (cards[i] || {}).querySelectorAll ? Array.from(cards[i].querySelectorAll('tbody tr')) : [];
+        const namesOf = (trs) => trs.map((r) => (r.cells && r.cells[0] ? r.cells[0].textContent.trim() : null));
+        const sys = rowsOf(0);
+        const inst = rowsOf(1);
+        const osHeads = cards[0] ? Array.from(cards[0].querySelectorAll('thead th')).map((th) => th.textContent.trim()) : null;
+        const instHeads = cards[1] ? Array.from(cards[1].querySelectorAll('thead th')).map((th) => th.textContent.trim()) : null;
+        const counts = cards.map((c) => (c.querySelector('.p-card__header .ucm-ifaces-card__counts') || {}).textContent || null);
+        const osTitle = (cards[0] || {}).querySelector ? cards[0].querySelector('.ucm-snaps-card__title') : null;
+        const osTitleCs = osTitle ? getComputedStyle(osTitle) : null;
+        // every cell in both cards must be free of title tooltips
+        let maxTitle = 0;
+        cards.forEach((c) => c.querySelectorAll('tbody td').forEach((td) => {
+            const t = td.getAttribute('title') || '';
+            if (t.length > maxTitle) maxTitle = t.length;
+        }));
+        return {
+            count: cards.length, titles, counts,
+            osNames: namesOf(sys), instNames: namesOf(inst),
+            osRowLen: sys.map((r) => r.cells ? r.cells.length : -1),
+            instRowLen: inst.map((r) => r.cells ? r.cells.length : -1),
+            osHeads, instHeads,
+            maxTitle,
+            titleSize: osTitleCs ? osTitleCs.fontSize : null,
+            titlePadTop: osTitleCs ? osTitleCs.paddingTop : null,
+            legacyWrap: !!document.querySelector('.ucm-table-wrap.ucm-snaps-table'),
+            oldBody: !!document.querySelector('#snapsBody'),
+        };
+    });
+    if (snCards.count !== 2) console.log('PAGE ERROR: snaps page must have exactly two cards (' + snCards.count + ')');
+    else {
+        if (snCards.titles[0] !== 'OS' || snCards.titles[1] !== 'Installed Snaps')
+            console.log('PAGE ERROR: card captions wrong (' + JSON.stringify(snCards.titles) + ', want ["OS","Installed Snaps"])');
+        if (JSON.stringify(snCards.osNames) !== JSON.stringify(['core24', 'gadget', 'kernel-noble', 'snapd']))
+            console.log('PAGE ERROR: OS card rows wrong (' + JSON.stringify(snCards.osNames) + ', want the four model system snaps, alphabetical)');
+        if (JSON.stringify(snCards.instNames) !== JSON.stringify(['core22', 'firefox', 'htop', 'mosquitto', 'old-tool']))
+            console.log('PAGE ERROR: Installed Snaps rows not alphabetical (' + JSON.stringify(snCards.instNames) + ')');
+        if (JSON.stringify(snCards.osHeads) !== JSON.stringify(['Snap', 'Version / Rev', 'Track/Channel', 'Actions']))
+            console.log('PAGE ERROR: card table columns wrong (' + JSON.stringify(snCards.osHeads) + ')');
+        if (JSON.stringify(snCards.instHeads) !== JSON.stringify(['Snap', 'Version / Rev', 'Track/Channel', 'Actions']))
+            console.log('PAGE ERROR: Installed card columns wrong (' + JSON.stringify(snCards.instHeads) + ')');
+        if (snCards.osRowLen.some((n) => n !== 4) || snCards.instRowLen.some((n) => n !== 4))
+            console.log('PAGE ERROR: rows must have 4 cells (Status/Type dropped) os=' + JSON.stringify(snCards.osRowLen) + ' inst=' + JSON.stringify(snCards.instRowLen));
+        if (snCards.maxTitle !== 0) console.log('PAGE ERROR: a table cell still carries a title tooltip (max ' + snCards.maxTitle + ' chars — the Track/Channel tooltip was dropped)');
+        if (snCards.titleSize !== '16.8px') console.log('PAGE ERROR: card title is not the ifaces-card 1.05rem size (' + snCards.titleSize + ')');
+        if (snCards.titlePadTop !== '0px') console.log('PAGE ERROR: card heading keeps the bundle padding-top (' + snCards.titlePadTop + ')');
+        if (snCards.counts[0] !== '4 snaps' || snCards.counts[1] !== '5 snaps')
+            console.log('PAGE ERROR: card meta counts wrong (' + JSON.stringify(snCards.counts) + ', want ["4 snaps","5 snaps"])');
+        if (snCards.legacyWrap) console.log('PAGE ERROR: the old scrollable table wrap (.ucm-table-wrap.ucm-snaps-table) is still in the DOM');
+        if (snCards.oldBody) console.log('PAGE ERROR: the old #snapsBody table is still in the DOM');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '13a-snaps-cards.png'), fullPage: true });
     // ---- 4c. installed-snaps table + remove-confirm card (alignment) ----
     // htop is a non-system snap -> shows Config/Refresh/Remove row actions.
     await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.textContent.includes('htop'));
         if (!htop) throw new Error('htop row missing');
         const btn = htop.querySelector('.ucm-iconbtn[aria-label^="Remove"]'); // icon-only: no text to match
@@ -829,6 +891,10 @@ function mockFactoryJs() {
         btn.click();
     });
     await wait(800); // still inside the 1.2s settle window -> card is up
+    // round 47: the confirm card anchors after the cards (below the fold in
+    // the .ucm-main scroller) — scroll it into view for the shot.
+    await page.evaluate(() => document.querySelector('.ucm-main').scrollTo({ top: 99999 }));
+    await wait(200);
     await page.screenshot({ path: path.join(SHOTS, '13-remove-confirm.png'), fullPage: true });
     // Regression guard: every item in the remove-confirm row must share the same
     // vertical centre (bundle's .p-button margin-bottom used to shift the buttons
@@ -852,39 +918,22 @@ function mockFactoryJs() {
         if (box) box.remove();
     });
 
-    // Regression guard: Status/Type columns must hug their content (the 100%-wide
-    // table used to stretch every nowrap column, making them "way too wide"), AND
-    // the table must fill its scroll parent (round-35: the old max-content table
-    // left a big right-side gap between the Actions column and the scrollbar).
-    const cw = await page.evaluate(() => {
-        const tbl = document.querySelector('.ucm-snaps-table table');
-        const wrap = document.querySelector('.ucm-snaps-table');
-        if (!tbl) return { error: 'no snaps table' };
-        const heads = Array.from(tbl.querySelectorAll('thead th')).map((th) => th.textContent.trim());
-        const wi = (label) => heads.indexOf(label);
-        const w = (i) => (i >= 0 ? Math.round(tbl.querySelectorAll('thead th')[i].getBoundingClientRect().width) : -1);
-        const tr = tbl.getBoundingClientRect();
-        const wr = wrap.getBoundingClientRect();
-        return { status: w(wi('Status')), type: w(wi('Type')), gap: Math.round(wr.right - tr.right) };
-    });
-    if (cw.error) console.log('PAGE ERROR: ' + cw.error);
-    else if (cw.status > 140 || cw.type > 140)
-        console.log(`PAGE ERROR: snaps table Status/Type too wide (status=${cw.status}px type=${cw.type}px, want <=140px)`);
-    else if (cw.gap > 4)
-        console.log(`PAGE ERROR: snaps table does not fill its scroll parent (right gap=${cw.gap}px, want <=4px)`);
-
     // ---- 4d. Round 34: icon-only actions column (suru glyphs + Vanilla
-    // tooltips) ---- every action is a textless icon button (label lives in
-    // data-tooltip / aria-label; the CSS-only .p-tooltip__message child is
-    // display:none until hover/focus). Active snap htop -> 5 icons in order
-    // gear/refresh/revert/power-black/trash; disabled snap old-tool (live
-    // status "installed") -> red power + "Enable" + red disabled badge.
+    // tooltips), round 46b tiers (system = Refresh+Revert, non-model base
+    // loses Config), round 47 cards. Every action is a textless icon button
+    // (label lives in data-tooltip / aria-label; the CSS-only
+    // .p-tooltip__message child is display:none until hover/focus).
+    // Active snap htop -> 5 icons in order gear/refresh/revert/power-black/
+    // trash; disabled snap old-tool (live status "installed") -> red power +
+    // "Enable" (round 47 dropped the Status column — the red icon + label
+    // carry the disabled state).
+
     const col = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
-        const getRow = (n) => rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === n);
-        const h = getRow('htop'); const o = getRow('old-tool');
+        const rowOf = (n) => Array.from(document.querySelectorAll('#snapsCards tbody tr'))
+            .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === n);
+        const h = rowOf('htop'); const o = rowOf('old-tool');
         if (!h || !o) return { error: 'htop/old-tool row missing' };
-        const k = getRow('core24'); const g = getRow('gadget'); const kn = getRow('kernel-noble'); const c22 = getRow('core22');
+        const k = rowOf('core24'); const g = rowOf('gadget'); const kn = rowOf('kernel-noble'); const c22 = rowOf('core22');
         const iconList = (r) => r ? Array.from(r.querySelectorAll('.ucm-iconbtn')).map((b) => { const i = b.querySelector('i'); return i ? i.className : ''; }) : null;
         const hbtns = Array.from(h.querySelectorAll('.ucm-iconbtn'));
         const obtns = Array.from(o.querySelectorAll('.ucm-iconbtn'));
@@ -906,7 +955,6 @@ function mockFactoryJs() {
             hDeleteImg: bg(hbtns[4], 'p-icon--delete'),
             oPowerImg: bg(oPow, 'p-icon--power'),
             oEnableLabel: oEn ? oEn.getAttribute('aria-label') : null,
-            oBadge: (o.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null,
             msgDisplay: hbtns[0] ? getComputedStyle(hbtns[0].querySelector('.p-tooltip__message')).display : null,
             btnPadL: hbtns[0] ? getComputedStyle(hbtns[0]).paddingLeft : null,
             // icon top offset inside its button + the button height, px: round-44c
@@ -914,6 +962,9 @@ function mockFactoryJs() {
             // fell to the text baseline ~2px ABOVE the hover-square centre (the
             // bundle's own p-icons, incl. p-icon--delete, are centred by a
             // vertical-align nudge). All five must be uniform AND centred.
+            // (Round 47: the old red disabled badge is gone with the Status
+            // column — the red power icon + Enable label are the status now,
+            // both still asserted below.)
             iTop: hbtns.map((b) => +((b.querySelector('i').getBoundingClientRect().top) - (b.getBoundingClientRect().top)).toFixed(2)),
             btnH: hbtns[0] ? +getComputedStyle(hbtns[0]).height : null,
         };
@@ -931,7 +982,6 @@ function mockFactoryJs() {
         if (!(col.hDeleteImg || '').includes('suru-delete.svg')) console.log('PAGE ERROR: remove icon is not the suru trash glyph (' + col.hDeleteImg + ')');
         if (!(col.oPowerImg || '').includes('suru-power-red.svg')) console.log('PAGE ERROR: disabled power icon is not the red suru-power-red.svg (' + col.oPowerImg + ')');
         if (!(col.oEnableLabel || '').startsWith('Enable')) console.log('PAGE ERROR: disabled snap action is not Enable (' + col.oEnableLabel + ')');
-        if (col.oBadge !== 'disabled') console.log('PAGE ERROR: disabled snap badge is not red disabled (' + col.oBadge + ')');
         if (col.msgDisplay !== 'none') console.log('PAGE ERROR: tooltip message visible before hover (display=' + col.msgDisplay + ')');
         if (col.btnPadL !== '0px') console.log('PAGE ERROR: icon button horizontal padding not zeroed (' + col.btnPadL + ')');
         // round 46: system snaps (base/core/kernel/gadget/snapd) get ONLY
@@ -962,7 +1012,7 @@ function mockFactoryJs() {
     // row to the red power + Enable. Enable stays one-click (it is the safe,
     // corrective direction).
     await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
         if (!htop) throw new Error('htop row missing');
         const btn = htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'); // htop is active -> Disable
@@ -971,16 +1021,15 @@ function mockFactoryJs() {
     });
     await wait(400);
     const dis1 = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
-        const badge = (htop.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null;
         const box = document.querySelector('.ucm-confirm');
         const msg = box && (box.querySelector('.ucm-confirm__msg') || {}).textContent || null;
         const btns = box ? Array.from(box.querySelectorAll('button')).map((b) => b.textContent.trim()) : [];
         return {
             boxShown: !!box,
             negative: !!(box && box.classList.contains('ucm-confirm--negative')),
-            msg, btns, badge,
+            msg, btns,
             disableStillThere: !!htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'),
         };
     });
@@ -989,7 +1038,6 @@ function mockFactoryJs() {
         if (!dis1.negative) console.log('PAGE ERROR: disable confirm card is not the negative style');
         if (!dis1.msg || !/Disable snap “htop”\?/.test(dis1.msg)) console.log('PAGE ERROR: disable confirm message wrong (' + dis1.msg + ')');
         if (JSON.stringify(dis1.btns) !== JSON.stringify(['Disable htop?', 'Cancel'])) console.log('PAGE ERROR: disable confirm buttons wrong (' + JSON.stringify(dis1.btns) + ')');
-        if (dis1.badge !== 'active') console.log('PAGE ERROR: snap changed BEFORE the user confirmed (badge ' + dis1.badge + ', want active)');
         if (!dis1.disableStillThere) console.log('PAGE ERROR: row already flipped before confirmation');
     }
     // Cancel -> the snap must stay enabled and the card must vanish
@@ -1001,20 +1049,18 @@ function mockFactoryJs() {
     });
     await wait(300);
     const dis2 = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
-        const badge = (htop.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null;
         return {
             cardGone: !document.querySelector('.ucm-confirm'),
-            badge,
             stillDisable: !!htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'),
         };
     });
     if (!dis2.cardGone) console.log('PAGE ERROR: confirm card still shown after Cancel');
-    if (dis2.badge !== 'active' || !dis2.stillDisable) console.log('PAGE ERROR: Cancel did not leave the snap enabled (' + JSON.stringify(dis2) + ')');
+    if (!dis2.stillDisable) console.log('PAGE ERROR: Cancel did not leave the snap enabled (' + JSON.stringify(dis2) + ')');
     // Confirm -> htop becomes disabled (red badge + red power + Enable), card removed
     await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
         const btn = htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]');
         if (!btn) throw new Error('Disable button missing (again)');
@@ -1029,41 +1075,38 @@ function mockFactoryJs() {
     });
     await wait(1900); // 1.2s mock settle + margin
     const dis3 = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
-        const badge = (htop.querySelector('td:nth-child(2) .p-status-label') || {}).textContent || null;
         const btns = Array.from(htop.querySelectorAll('.ucm-iconbtn'));
         const pow = btns.find((b) => b.querySelector('i.p-icon--power'));
         return {
             cardGone: !document.querySelector('.ucm-confirm'),
-            badge,
             hasEnable: !!htop.querySelector('.ucm-iconbtn[aria-label="Enable htop"]'),
             powRed: !!(pow && pow.querySelector('i.p-icon--power-red')),
         };
     });
     if (!dis3.cardGone) console.log('PAGE ERROR: confirm card still shown after the disable settled');
-    if (dis3.badge !== 'disabled') console.log('PAGE ERROR: htop not disabled after confirming (badge ' + dis3.badge + ')');
     if (!dis3.hasEnable || !dis3.powRed) console.log('PAGE ERROR: disabled row is not the red-power + Enable state (' + JSON.stringify(dis3) + ')');
     // restore htop (Enable is one-click) so later steps see a consistent state
     await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
         const en = htop && htop.querySelector('.ucm-iconbtn[aria-label="Enable htop"]');
         if (en) en.click();
     });
     await wait(1900);
 
-    // Round 43: the round-40 overflow fix reached only the interfaces page —
-    // the snaps Actions cell was a classless <td style="text-align:right">,
-    // so the bundle's `td,th { overflow: hidden }` still clipped its
-    // p-tooltip--top-right message (positioned above the icon) 100%. The fix
-    // adds .ucm-actions-cell { overflow: visible } to that one cell. Hover
-    // the first htop action (Configure) and assert the message displays with
-    // a real box and that nothing between it and the table wrapper (the
-    // scroll container — the snaps table is NOT in a .p-card, unlike the
-    // interfaces rows) clips it. Same idiom as the round-40 guard.
+    // Round 43/47: the bundle's `td,th { overflow: hidden }` clips the
+    // p-tooltip--top-right message of the row actions (it renders above the
+    // icon) 100% unless the Actions cell AND header are un-clipped
+    // (.ucm-actions-cell / .ucm-ifaces-action { overflow: visible }). Round 47
+    // moved the table into a .p-card, so the card is the clip boundary now
+    // (the old sticky-thead overflow override no longer applies). Hover the
+    // first htop action and assert the message displays with a real box,
+    // nothing between it and the card clips it, and the cell + header stay
+    // overflow:visible (same idiom as the round-40 guard).
     const snTip = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#snapsBody tr'));
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
         const btn = htop && htop.querySelector('.ucm-iconbtn');
         if (!btn) return null;
@@ -1073,7 +1116,7 @@ function mockFactoryJs() {
         const msg = btn.querySelector('.p-tooltip__message');
         const cs = getComputedStyle(msg);
         const m = msg.getBoundingClientRect();
-        const wrap = btn.closest('.ucm-table-wrap');
+        const wrap = btn.closest('.p-card'); // round 47: the table lives inside a card
         const wr = wrap.getBoundingClientRect();
         // ancestors between the tooltip and the wrapper: none may clip (the
         // wrapper itself is a legitimate scroll container, overflow:auto).
@@ -1083,9 +1126,10 @@ function mockFactoryJs() {
             if (o === 'hidden') { clipper = n.tagName.toLowerCase() + '.' + (n.className && String(n.className).slice(0, 40)); break; }
             n = n.parentElement;
         }
+        const th = btn.closest('table') ? btn.closest('table').querySelector('thead th.ucm-ifaces-action') : null;
         return { display: cs.display, w: Math.round(m.width), h: Math.round(m.height),
             inWrap: m.top >= wr.top - 1 && m.bottom <= wr.bottom + 1,
-            tdOverflow: getComputedStyle(btn.closest('td')).overflow, clipper };
+            tdOverflow: getComputedStyle(btn.closest('td')).overflow, thOverflow: th ? getComputedStyle(th).overflow : null, clipper };
     });
     if (!snTip)
         console.log('PAGE ERROR: no htop row action to test the snaps tooltip');
@@ -1093,8 +1137,12 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: snaps row-action tooltip not displayed on hover: ' + JSON.stringify(snTip));
     else if (snTip.clipper)
         console.log('PAGE ERROR: an ancestor still clips the snaps tooltip (overflow:hidden on ' + snTip.clipper + '): ' + JSON.stringify(snTip));
+    else if (snTip.tdOverflow !== 'visible')
+        console.log('PAGE ERROR: the snaps Actions cell is not overflow:visible (' + snTip.tdOverflow + ')');
+    else if (snTip.thOverflow !== 'visible')
+        console.log('PAGE ERROR: the snaps Actions header is not overflow:visible (' + snTip.thOverflow + ')');
     else if (!snTip.inWrap)
-        console.log('PAGE ERROR: snaps row-action tooltip escapes the table wrapper (would be clipped by its scroll container): ' + JSON.stringify(snTip));
+        console.log('PAGE ERROR: snaps row-action tooltip escapes its card (would be clipped by the card border): ' + JSON.stringify(snTip));
     // defensive: no modal may still be covering the UI (a stuck modal would
     // mask later clicks and mask real layout in the shots)
     const stray = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);
