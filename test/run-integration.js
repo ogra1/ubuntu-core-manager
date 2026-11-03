@@ -137,6 +137,17 @@ function ok(name, cond, extra = '') {
         m.parseModelAssertion('type: model\nclassic: true\nmodel: x\n\nSIG').classic === true);
     ok('parser: missing headers -> empty object',
         Object.keys(m.parseModelAssertion(null)).length === 0);
+    // the model snaps: list (round 46b: it DEFINES the system snaps)
+    ok('model assertion parsed: snaps: list',
+        Array.isArray(mod.snaps) && mod.snaps.length === 4 && mod.snaps[0].name === 'snapd'
+        && mod.snaps[0].type === 'snapd' && mod.snaps[2].name === 'gadget' && mod.snaps[2].type === 'gadget'
+        && mod.snaps[3].type === 'app' && mod.snaps[3].presence === 'required',
+        JSON.stringify(mod.snaps));
+    ok('modelSystemSnaps: top-level base + gadget/kernel/snapd/os (NOT app entries, NOT unlisted bases)',
+        JSON.stringify(Array.from(m.modelSystemSnaps(mod)).sort()) === JSON.stringify(['core24', 'gadget', 'snapd'])
+        && m.modelSystemSnaps(null).size === 0
+        && m.modelSystemSnaps({ base: 'core24' }).size === 1,
+        JSON.stringify(Array.from(m.modelSystemSnaps(mod))));
     const snaps = await m.listSnaps();
     ok('listSnaps returns array of 3', Array.isArray(snaps) && snaps.length === 3, JSON.stringify(snaps).slice(0, 60));
     const find = await m.searchSnaps('fire');

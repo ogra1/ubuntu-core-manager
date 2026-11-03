@@ -562,13 +562,30 @@ async function listChanges(select = 'all') {
     snapd 2.77: no JSON envelope at all), so snapdRequest lands in its
     JSON-parse-fallback branch and hands us { raw: text }. Parse the header
     section (lines up to the first blank line; everything after is the
-    signature block) into { key: value } with classic/true->bool. */
+    signature block) into { key: value } with classic/true->bool, PLUS the
+    `snaps:` list — a minimal YAML-subset parse (an entry starts at a
+    "  -" line; its fields indent deeper: name/type/presence/
+    default-channel/id). Validated against a real core24 model assertion
+    (round 46b). */
 function parseModelAssertion(raw) {
     const out = {};
     if (typeof raw !== 'string' || !raw) return out;
+    let entry = null;
     for (const line of raw.split('\n')) {
         if (line.trim() === '') break;              // signature block follows
-        const i = line.indexOf(':');
+        if (/^ {2,}-/.test(line)) {                 // a snaps: list entry ("  -")
+            entry = {};
+            (out.snaps = out.snaps || []).push(entry);
+            continue;
+        }
+        if (/^\s/.test(line)) {                    // indented field of an entry
+            if (!entry) continue;
+            const i = line.indexOf(':');
+            if (i <= 0) continue;
+            entry[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+            continue;
+        }
+        const i = line.indexOf(':');                // top-level header (col 0)
         if (i <= 0) continue;
         const k = line.slice(0, i).trim();
         const v = line.slice(i + 1).trim();
@@ -576,6 +593,26 @@ function parseModelAssertion(raw) {
         out[k] = (v === 'true') ? true : (v === 'false') ? false : v;
     }
     return out;
+}
+
+/** The device's SYSTEM snap names — authoritative source is the model
+    ASSERTION, not the /v2/snaps type field (round 46b, user-corrected):
+    the top-level `base:` (the OS snap) + every `snaps:` entry of type
+    gadget / kernel / snapd / os. Model-declared APP snaps (e.g. required
+    mesa/ubuntu-frame) are NOT system snaps — they keep their full action
+    set. A base-type snap that the model does not declare (a second base
+    apps depend on) is likewise not a "system snap" (it loses Config
+    separately, by type). */
+function modelSystemSnaps(model) {
+    const set = new Set();
+    if (!model || typeof model !== 'object') return set;
+    if (model.base) set.add(model.base);
+    for (const e of (model.snaps || [])) {
+        if (e && e.name && ['gadget', 'kernel', 'snapd', 'os'].includes(e.type)) {
+            set.add(e.name);
+        }
+    }
+    return set;
 }
 
 async function getModelAssertion() {
@@ -1028,7 +1065,7 @@ const api = {
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
-    getSystemInfo, getModelAssertion, parseModelAssertion,
+    getSystemInfo, getModelAssertion, parseModelAssertion, modelSystemSnaps,
     getDataPartition, mountsTable, defaultRouteIface,
     listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,

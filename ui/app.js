@@ -116,6 +116,7 @@ const state = {
     storeUsername: null,
     snapd: null,
     model: null,       // model assertion headers (parsed in main.js)
+    systemNames: new Set(), // SYSTEM snap names from the model assertion (round 46b)
     host: null,
     cpuSeries: null,      // last sys:cpu sample: (number|null)[] oldest->newest
     cpuPoll: null,
@@ -176,6 +177,11 @@ function enterApp() {
     startDashPoll();
     startCpuPoll();
     startNetPoll();
+    // SYSTEM snaps = model-assertion-declared (top-level `base` +
+    // gadget/kernel/snapd/os entries), NOT the /v2/snaps type field
+    // (round 46b, user-corrected). Dashboard's sys:info already fetched
+    // the model; derive the set here, loadSnaps has a fetch fallback.
+    state.systemNames = modelSystemNames(state.model);
     const fromHash = (location.hash || '').replace('#', '');
     switchView(VIEWS.includes(fromHash) ? fromHash : 'dashboard');
 }
@@ -767,7 +773,30 @@ function fmtTrackChannel(snap) {
     return full; // bare risk (e.g. "stable") — no track info available
 }
 
+/* System snap names from the model assertion — mirrors main.js
+   modelSystemSnaps(): top-level `base` + snaps: entries of type gadget /
+   kernel / snapd / os. Model-declared app snaps (required mesa/ubuntu-
+   frame) are NOT system snaps. */
+function modelSystemNames(mod) {
+    const set = new Set();
+    if (!mod || typeof mod !== 'object') return set;
+    if (mod.base) set.add(mod.base);
+    for (const e of (mod.snaps || [])) {
+        if (e && e.name && ['gadget', 'kernel', 'snapd', 'os'].includes(e.type)) set.add(e.name);
+    }
+    return set;
+}
+
 async function loadSnaps() {
+    if (!state.systemNames.size) {
+        // model not loaded yet (dashboard sys:info pending) — fetch it
+        // directly so the action set is right on first paint.
+        try {
+            const mod = await core.system.model();
+            state.model = state.model || mod;
+            state.systemNames = modelSystemNames(mod);
+        } catch (e) { /* classic pre-model: stays empty */ }
+    }
     const body = $('#snapsBody');
     try {
         state.snaps = await core.snaps.list();
@@ -793,9 +822,10 @@ async function loadSnaps() {
      Remove   = trash can (suru delete - round 44 swapped the bundle's
                 p-icon--delete data-URI glyph, which read out of place
                 next to the suru set)
-     System snaps (base/core/kernel/gadget/snapd) show ONLY Refresh +
-     Revert — snapd refuses config/disable/remove on them (live-verified,
-     round 46), so their Actions cell is two icons, not five.
+     System snaps (model-assertion: top-level `base` + gadget/kernel/
+     snapd entries — NOT the type field) show ONLY Refresh + Revert;
+     base-type snaps the model does not declare show everything
+     except Config (live-verified refusals, round 46b).
    Each button IS its own Vanilla .p-tooltip--top-right trigger: the
    .p-tooltip__message child (CSS-only, shown on :hover/:focus) carries the
    label, so the tooltip also appears for keyboard focus (a wrapper span would
@@ -838,32 +868,35 @@ function renderSnaps() {
         const dispTone = disabled ? 'negative' : tone;
         const dispWord = disabled ? 'disabled' : word;
 
-        // System snaps (base/core/kernel/gadget/os + snapd): snapd hard-refuses
-        // the app-level actions on them (live-verified 2.77: disable/remove 400,
-        // conf 500 'type base' / 'use system') — so they get ONLY the two
-        // actions that actually work: Refresh and Revert (revert = the escape
-        // hatch after a bad update; the user's priority for these rows).
-        const isSystem = s.type === 'base' || s.type === 'core' || s.type === 'gadget' || s.type === 'kernel' || s.type === 'os' || s.name === 'snapd';
+        // Action set per snap — round 46b (user-corrected; snapd 2.77
+        // live-verified for the refusals behind tiers 1+2):
+        //  1. SYSTEM snap (declared in the model assertion: top-level `base`
+        //     + gadget/kernel/snapd/os entries — NOT the /v2/snaps type field;
+        //     model-declared app snaps like required mesa/ubuntu-frame are NOT
+        //     system snaps) -> Refresh + Revert only: not removable, not
+        //     disable-able, no per-snap config.
+        //  2. BASE-type snap the model does NOT declare (a second base that
+        //     apps depend on) -> everything except Config (snapd 500s conf on
+        //     type 'base').
+        //  3. everything else -> the full set.
+        const isSystem = state.systemNames.has(s.name);
+        const isBase = s.type === 'base' || s.type === 'core' || s.type === 'os';
         const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
 
-        if (!isSystem && s.installed !== null) {
+        if (isSystem && s.installed !== null) {
             actions.append(
-                rowBtn('Configure ' + s.name, 'p-icon--settings', () => openConfigModal(s.name)),
+                rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
+                rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
+            );
+        } else if (s.installed !== null) {
+            if (!isBase) actions.append(rowBtn('Configure ' + s.name, 'p-icon--settings', () => openConfigModal(s.name)));
+            actions.append(
                 rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
                 rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
                 rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
                     disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',
                     () => (disabled ? snapOp(s.name, 'enable') : confirmDisable(s.name))),
                 rowBtn('Remove ' + s.name, 'p-icon--delete', () => confirmRemove(s.name)),
-            );
-        } else if (s.installed !== null) {
-            // System snap (base/core/kernel/gadget/snapd): snapd refuses config
-            // (500 'type base' / 'use system'), disable and remove (400), so the
-            // only genuinely-actionable icons are Refresh + Revert. No config,
-            // power or trash here — showing them would just be 400/500 toasts.
-            actions.append(
-                rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
-                rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
             );
         }
         body.append(el('tr', {},

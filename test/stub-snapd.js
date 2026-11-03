@@ -150,6 +150,24 @@ function makeServer(socketPath, state) {
                     'base: core24\n' +
                     'grade: signed\n' +
                     'architecture: amd64\n' +
+                    'snaps:\n' +
+                    '  -\n' +
+                    '    default-channel: latest/stable\n' +
+                    '    name: snapd\n' +
+                    '    type: snapd\n' +
+                    '  -\n' +
+                    '    default-channel: latest/stable\n' +
+                    '    name: core24\n' +
+                    '    type: base\n' +
+                    '  -\n' +
+                    '    default-channel: local\n' +
+                    '    name: gadget\n' +
+                    '    type: gadget\n' +
+                    '  -\n' +
+                    '    default-channel: latest/stable\n' +
+                    '    name: snap-store\n' +
+                    '    presence: required\n' +
+                    '    type: app\n' +
                     'timestamp: 2026-01-01T00:00:00Z\n' +
                     'sign-key-sha3-384: stub-key-id\n' +
                     '\n' +

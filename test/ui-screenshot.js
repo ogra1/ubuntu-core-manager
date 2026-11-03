@@ -35,6 +35,10 @@ const SNAPS = [
     { name: 'mosquitto', version: '2.0.19', revision: 14077, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', 'tracking-channel': 'latest/candidate', status: 'installed', type: 'app', confinement: 'devmode' },
+    // a base-type snap the MODEL does NOT declare (apps can depend on a
+    // second base): NOT a system snap — it keeps Refresh/Revert/Disable/
+    // Remove, only loses Config (round 46b tier 2).
+    { name: 'core22', version: '22.04.5', revision: 3120, channel: 'stable', 'tracking-channel': '22.04/stable', status: 'active', type: 'base', confinement: 'strict' },
 ];
 
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
@@ -160,6 +164,19 @@ function mockFactoryJs() {
                             'authority-id': 'canonical', series: '16', 'brand-id': 'canonical',
                             model: 'core-24-kvm', base: 'core24', grade: 'signed',
                             architecture: 'amd64', 'sign-key-sha3-384': 'stub-key-id',
+                            // the model assertion's snaps: list (parsed in
+                            // main.js) — DEFINES the system snaps (top-level
+                            // base + gadget/kernel/snapd/os entries). Note the
+                            // required APP snaps: they are in the model but are
+                            // NOT system snaps (round 46b). core22 (a base in
+                            // SNAPS) is deliberately NOT listed here.
+                            snaps: [
+                                { name: 'snapd', type: 'snapd', 'default-channel': 'latest/stable' },
+                                { name: 'core24', type: 'base', 'default-channel': 'latest/stable' },
+                                { name: 'kernel-noble', type: 'kernel', 'default-channel': 'noble/stable' },
+                                { name: 'gadget', type: 'gadget', 'default-channel': 'local' },
+                                { name: 'snap-store', type: 'app', presence: 'required', 'default-channel': 'latest/stable' },
+                            ],
                         },
                         host: {
                             hostname: 'core-kvm-01', platform: 'linux', arch: 'x64',
@@ -179,6 +196,23 @@ function mockFactoryJs() {
                         warnings: [
                             { message: 'Another system-level warning message here', 'first-seen': '2026-10-20T12:00:00Z', 'last-seen': '2026-10-21T14:30:00Z', 'delete-after': '1h30m' },
                             { message: "Option value has invalid field name 'apiVersion'. For core26+ snaps, fields must be dash separated lowercase alphanumerics.", 'first-seen': '2026-10-05T16:00:44Z', 'last-seen': '2026-10-22T16:05:12Z' },
+                        ],
+                    };
+                },
+                async model() {
+                    // the dedicated sys:model route (main.js getModelAssertion)
+                    // — loadSnaps uses it when the dashboard's sys:info hasn't
+                    // populated the model yet.
+                    return {
+                        'authority-id': 'canonical', series: '16', 'brand-id': 'canonical',
+                        model: 'core-24-kvm', base: 'core24', grade: 'signed',
+                        architecture: 'amd64', 'sign-key-sha3-384': 'stub-key-id',
+                        snaps: [
+                            { name: 'snapd', type: 'snapd', 'default-channel': 'latest/stable' },
+                            { name: 'core24', type: 'base', 'default-channel': 'latest/stable' },
+                            { name: 'kernel-noble', type: 'kernel', 'default-channel': 'noble/stable' },
+                            { name: 'gadget', type: 'gadget', 'default-channel': 'local' },
+                            { name: 'snap-store', type: 'app', presence: 'required', 'default-channel': 'latest/stable' },
                         ],
                     };
                 },
@@ -850,7 +884,7 @@ function mockFactoryJs() {
         const getRow = (n) => rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === n);
         const h = getRow('htop'); const o = getRow('old-tool');
         if (!h || !o) return { error: 'htop/old-tool row missing' };
-        const k = getRow('core24'); const g = getRow('gadget');
+        const k = getRow('core24'); const g = getRow('gadget'); const kn = getRow('kernel-noble'); const c22 = getRow('core22');
         const iconList = (r) => r ? Array.from(r.querySelectorAll('.ucm-iconbtn')).map((b) => { const i = b.querySelector('i'); return i ? i.className : ''; }) : null;
         const hbtns = Array.from(h.querySelectorAll('.ucm-iconbtn'));
         const obtns = Array.from(o.querySelectorAll('.ucm-iconbtn'));
@@ -861,7 +895,7 @@ function mockFactoryJs() {
         const oEn = obtns.find((b) => (b.getAttribute('aria-label') || '').startsWith('Enable'));
         return {
             hCount: hbtns.length, oCount: obtns.length,
-            sysCore: iconList(k), sysGadget: iconList(g),
+            sysCore: iconList(k), sysGadget: iconList(g), sysKernel: iconList(kn), baseC22: iconList(c22),
             hTextless: hbtns.length > 0 && hbtns.every((b) => strip(b) === ''),
             hTooltips: hbtns.map((b) => (b.getAttribute('data-tooltip') || '').length > 0),
             hAria: hbtns.map((b) => (b.getAttribute('aria-label') || '').length > 0),
@@ -903,10 +937,18 @@ function mockFactoryJs() {
         // round 46: system snaps (base/core/kernel/gadget/snapd) get ONLY
         // Refresh + Revert — snapd refuses config (500 'type base'),
         // disable and remove (400) on them, so no gear/power/trash icons.
+        // round 46b: SYSTEM snaps (model-assertion declared: top-level base +
+        // gadget/kernel/snapd entries) -> exactly Refresh + Revert.
         if (!col.sysCore || JSON.stringify(col.sysCore) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
-            console.log('PAGE ERROR: system snap core24 actions wrong (' + JSON.stringify(col.sysCore) + ', want exactly [refresh, revert], round 46)');
+            console.log('PAGE ERROR: system snap core24 actions wrong (' + JSON.stringify(col.sysCore) + ', want exactly [refresh, revert], round 46b)');
         if (!col.sysGadget || JSON.stringify(col.sysGadget) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
-            console.log('PAGE ERROR: system snap gadget actions wrong (' + JSON.stringify(col.sysGadget) + ', want exactly [refresh, revert], round 46)');
+            console.log('PAGE ERROR: system snap gadget actions wrong (' + JSON.stringify(col.sysGadget) + ', want exactly [refresh, revert], round 46b)');
+        if (!col.sysKernel || JSON.stringify(col.sysKernel) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
+            console.log('PAGE ERROR: system snap kernel actions wrong (' + JSON.stringify(col.sysKernel) + ', want exactly [refresh, revert], round 46b)');
+        // tier 2: a base-type snap the model does NOT declare keeps
+        // Refresh/Revert/Disable/Remove, only loses Config.
+        if (!col.baseC22 || JSON.stringify(col.baseC22) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert', 'p-icon--power', 'p-icon--delete']))
+            console.log('PAGE ERROR: non-model base core22 actions wrong (' + JSON.stringify(col.baseC22) + ', want [refresh, revert, power, delete] — no config, round 46b)');
                 if (!col.iTop || col.iTop.some((v) => v !== col.iTop[0])) console.log('PAGE ERROR: row icon boxes not vertically uniform in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, round 44c)');
         else if (col.btnH) { var c44 = (col.btnH - 16) / 2; if (col.iTop.some((v) => Math.abs(v - c44) > 1)) console.log('PAGE ERROR: row icons not centred in their buttons (offsets ' + JSON.stringify(col.iTop) + ' px, want ' + c44.toFixed(2) + ' +-1 - the suru icons lost the bundle vertical-align nudge, round 44c)'); }
     }
