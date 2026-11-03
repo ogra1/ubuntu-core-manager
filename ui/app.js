@@ -824,7 +824,8 @@ async function loadSnaps() {
                 p-icon--delete data-URI glyph, which read out of place
                 next to the suru set)
      System snaps (model-assertion: top-level `base` + gadget/kernel/
-     snapd entries — NOT the type field) show ONLY Refresh + Revert;
+     snapd entries — NOT the type field) show ONLY Refresh + Revert (a
+     local x-revision build of them drops Refresh, round 47j — Revert only);
      base-type snaps the model does not declare show everything
      except Config (live-verified refusals, round 46b).
    Each button IS its own Vanilla .p-tooltip--top-right trigger: the
@@ -918,14 +919,22 @@ function snapsRow(s) {
     const actions = el('div', { class: 'p-table__cell-action ucm-actions', style: 'text-align:right;' });
 
     if (isSystem && s.installed !== null) {
-        actions.append(
-            rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
-            rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
-        );
+        // Round 47j: a LOCAL build (x-prefixed revision — see
+        // isLocalSnap, round 47h) is never fetched from the store, so Refresh
+        // would only ever 400 'no updates available'. Omit the icon — the row
+        // is honest about what is actionable. A local SYSTEM snap (the
+        // user's VM gadget) therefore shows Revert only.
+        if (!isLocalSnap(s))
+            actions.append(rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')));
+        actions.append(rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')));
     } else if (s.installed !== null) {
         if (!isBase) actions.append(rowBtn('Configure ' + s.name, 'p-icon--settings', () => openConfigModal(s.name)));
+        // Round 47j: local (x-revision) builds never fetch from the store —
+        // the daemon would answer 'no updates available' — so the row omits
+        // the Refresh icon (settings / revert / power / delete only).
+        if (!isLocalSnap(s))
+            actions.append(rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')));
         actions.append(
-            rowBtn('Refresh ' + s.name, 'p-icon--refresh', () => snapOp(s.name, 'refresh')),
             rowBtn('Revert ' + s.name, 'p-icon--revert', () => snapOp(s.name, 'revert')),
             rowBtn(disabled ? ('Enable ' + s.name) : ('Disable ' + s.name),
                 disabled ? 'p-icon--power p-icon--power-red' : 'p-icon--power',

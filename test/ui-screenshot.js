@@ -37,6 +37,10 @@ const SNAPS = [
     { name: 'mosquitto', version: '2.0.19', revision: 14077, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'old-tool', version: '0.9', revision: 12, channel: 'candidate', 'tracking-channel': 'latest/candidate', status: 'installed', type: 'app', confinement: 'devmode' },
+    // a LOCAL sideloaded APP (x-prefixed revision, no channel — round 47j): a
+    // store refresh can never apply to it ('no updates available'), so its row
+    // must omit the Refresh icon. NOT in the mock STORE (find -> []).
+    { name: 'nextcloud', version: '30.0.1', revision: 'x42', status: 'active', type: 'app', confinement: 'strict' },
     // a base-type snap the MODEL does NOT declare (apps can depend on a
     // second base): NOT a system snap — it keeps Refresh/Revert/Disable/
     // Remove, only loses Config (round 46b tier 2).
@@ -949,6 +953,9 @@ function mockFactoryJs() {
             nameColor: firstTdCs ? firstTdCs.color : null,
             legacyWrap: !!document.querySelector('.ucm-table-wrap.ucm-snaps-table'),
             oldBody: !!document.querySelector('#snapsBody'),
+            // round 47j: the store-search placeholder leads with snaps that
+            // suit Ubuntu Core (no htop / firefox examples).
+            searchPh: (document.querySelector('#snapSearchName') || {}).placeholder || null,
         };
     });
     if (snCards.count !== 2) console.log('PAGE ERROR: snaps page must have exactly two cards (' + snCards.count + ')');
@@ -957,7 +964,7 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: card captions wrong (' + JSON.stringify(snCards.titles) + ', want ["OS","Installed Snaps"])');
         if (JSON.stringify(snCards.osNames) !== JSON.stringify(['core24', 'gadget', 'kernel-noble', 'snapd']))
             console.log('PAGE ERROR: OS card rows wrong (' + JSON.stringify(snCards.osNames) + ', want the four model system snaps, alphabetical)');
-        if (JSON.stringify(snCards.instNames) !== JSON.stringify(['core22', 'firefox', 'htop', 'mosquitto', 'old-tool']))
+        if (JSON.stringify(snCards.instNames) !== JSON.stringify(['core22', 'firefox', 'htop', 'mosquitto', 'nextcloud', 'old-tool']))
             console.log('PAGE ERROR: Installed Snaps rows not alphabetical (' + JSON.stringify(snCards.instNames) + ')');
         if (JSON.stringify(snCards.osHeads) !== JSON.stringify(['Snap', 'Version / Rev', 'Track/Channel', 'Actions']))
             console.log('PAGE ERROR: card table columns wrong (' + JSON.stringify(snCards.osHeads) + ')');
@@ -966,15 +973,17 @@ function mockFactoryJs() {
         if (snCards.osRowLen.some((n) => n !== 4) || snCards.instRowLen.some((n) => n !== 4))
             console.log('PAGE ERROR: rows must have 4 cells (Status/Type dropped) os=' + JSON.stringify(snCards.osRowLen) + ' inst=' + JSON.stringify(snCards.instRowLen));
         if (snCards.badTitle !== 0) console.log('PAGE ERROR: a non-name cell still carries a title tooltip (' + snCards.badTitle + ' — the Track/Channel tooltip was dropped)');
-        if (snCards.nameTitle !== 9) console.log('PAGE ERROR: snap-name info affordance missing (title on ' + snCards.nameTitle + ' of 9 name cells, want 9 — round 47c)');
+        if (snCards.nameTitle !== 10) console.log('PAGE ERROR: snap-name info affordance missing (title on ' + snCards.nameTitle + ' of 10 name cells, want 10 — round 47c)');
         if (snCards.titleSize !== '16.8px') console.log('PAGE ERROR: card title is not the ifaces-card 1.05rem size (' + snCards.titleSize + ')');
         if (snCards.titlePadTop !== '0px') console.log('PAGE ERROR: card heading keeps the bundle padding-top (' + snCards.titlePadTop + ')');
         if (snCards.nameWt !== '600') console.log('PAGE ERROR: snap name is not semibold like the interface identity column (weight ' + snCards.nameWt + ', round 47b)');
         if (snCards.nameFam && /mono/i.test(snCards.nameFam)) console.log('PAGE ERROR: snap name still uses a monospace font (' + snCards.nameFam + ', round 47b)');
         if (snCards.nameColor !== 'rgb(59, 59, 59)') console.log('PAGE ERROR: snap name color is not the softened #3b3b3b (' + (snCards.nameColor || 'n/a') + ', round 47c)');
-        if (snCards.counts[0] !== '4 snaps' || snCards.counts[1] !== '5 snaps')
-            console.log('PAGE ERROR: card meta counts wrong (' + JSON.stringify(snCards.counts) + ', want ["4 snaps","5 snaps"])');
+        if (snCards.counts[0] !== '4 snaps' || snCards.counts[1] !== '6 snaps')
+            console.log('PAGE ERROR: card meta counts wrong (' + JSON.stringify(snCards.counts) + ', want ["4 snaps","6 snaps"])');
         if (snCards.legacyWrap) console.log('PAGE ERROR: the old scrollable table wrap (.ucm-table-wrap.ucm-snaps-table) is still in the DOM');
+        const wantPh = 'e.g. rocketchat-server, nextcloud — Enter runs the search';
+        if (snCards.searchPh !== wantPh) console.log('PAGE ERROR: store-search placeholder is not the Ubuntu-Core examples (' + JSON.stringify(snCards.searchPh) + ', round 47j)');
         if (snCards.oldBody) console.log('PAGE ERROR: the old #snapsBody table is still in the DOM');
     }
     await page.screenshot({ path: path.join(SHOTS, '13a-snaps-cards.png'), fullPage: true });
@@ -1031,7 +1040,7 @@ function mockFactoryJs() {
             .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === n);
         const h = rowOf('htop'); const o = rowOf('old-tool');
         if (!h || !o) return { error: 'htop/old-tool row missing' };
-        const k = rowOf('core24'); const g = rowOf('gadget'); const kn = rowOf('kernel-noble'); const c22 = rowOf('core22');
+        const k = rowOf('core24'); const g = rowOf('gadget'); const kn = rowOf('kernel-noble'); const c22 = rowOf('core22'); const nc = rowOf('nextcloud');
         const iconList = (r) => r ? Array.from(r.querySelectorAll('.ucm-iconbtn')).map((b) => { const i = b.querySelector('i'); return i ? i.className : ''; }) : null;
         const hbtns = Array.from(h.querySelectorAll('.ucm-iconbtn'));
         const obtns = Array.from(o.querySelectorAll('.ucm-iconbtn'));
@@ -1042,7 +1051,7 @@ function mockFactoryJs() {
         const oEn = obtns.find((b) => (b.getAttribute('aria-label') || '').startsWith('Enable'));
         return {
             hCount: hbtns.length, oCount: obtns.length,
-            sysCore: iconList(k), sysGadget: iconList(g), sysKernel: iconList(kn), baseC22: iconList(c22),
+            sysCore: iconList(k), sysGadget: iconList(g), sysKernel: iconList(kn), baseC22: iconList(c22), localNc: iconList(nc),
             hTextless: hbtns.length > 0 && hbtns.every((b) => strip(b) === ''),
             hTooltips: hbtns.map((b) => (b.getAttribute('data-tooltip') || '').length > 0),
             hAria: hbtns.map((b) => (b.getAttribute('aria-label') || '').length > 0),
@@ -1095,8 +1104,14 @@ function mockFactoryJs() {
         // gadget/kernel/snapd entries) -> exactly Refresh + Revert.
         if (!col.sysCore || JSON.stringify(col.sysCore) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
             console.log('PAGE ERROR: system snap core24 actions wrong (' + JSON.stringify(col.sysCore) + ', want exactly [refresh, revert], round 46b)');
-        if (!col.sysGadget || JSON.stringify(col.sysGadget) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
-            console.log('PAGE ERROR: system snap gadget actions wrong (' + JSON.stringify(col.sysGadget) + ', want exactly [refresh, revert], round 46b)');
+        // round 47j: LOCAL (x-revision) builds are never refreshed from the
+        // store (the daemon would 400 'no updates available') — the row must
+        // omit the Refresh icon. gadget = the local SYSTEM case (Revert only);
+        // nextcloud = the local tier-3 app case (settings/revert/power/delete).
+        if (!col.sysGadget || JSON.stringify(col.sysGadget) !== JSON.stringify(['p-icon--revert']))
+            console.log('PAGE ERROR: local system snap gadget still offers a store refresh (' + JSON.stringify(col.sysGadget) + ', want exactly [revert] — round 47j)');
+        if (!col.localNc || JSON.stringify(col.localNc) !== JSON.stringify(['p-icon--settings', 'p-icon--revert', 'p-icon--power', 'p-icon--delete']))
+            console.log('PAGE ERROR: local app nextcloud still offers a store refresh (' + JSON.stringify(col.localNc) + ', want [settings, revert, power, delete] — round 47j)');
         if (!col.sysKernel || JSON.stringify(col.sysKernel) !== JSON.stringify(['p-icon--refresh', 'p-icon--revert']))
             console.log('PAGE ERROR: system snap kernel actions wrong (' + JSON.stringify(col.sysKernel) + ', want exactly [refresh, revert], round 46b)');
         // tier 2: a base-type snap the model does NOT declare keeps
