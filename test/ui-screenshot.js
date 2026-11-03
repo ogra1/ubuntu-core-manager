@@ -30,7 +30,9 @@ const SNAPS = [
     { name: 'core24', version: '24.04.3', revision: 4110, channel: 'stable', 'tracking-channel': '24.04/stable', status: 'active', type: 'base', confinement: 'strict' },
     { name: 'snapd', version: '2.68.4', revision: 23448, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'snapd', confinement: 'strict' },
     { name: 'kernel-noble', version: '6.8.0-40', revision: 1189, channel: 'stable', 'tracking-channel': 'noble/stable', status: 'active', type: 'kernel', confinement: 'strict' },
-    { name: 'gadget', version: '1.2', revision: 77, channel: 'local', status: 'active', type: 'gadget', confinement: 'jailmode' },
+    // a LOCAL gadget build (x-prefixed revision, no channel — the user's
+    // real VM's 'pc' gadget): round 47h must NOT offer it a store switch.
+    { name: 'gadget', version: '1.2', revision: 'x1', status: 'active', type: 'gadget', confinement: 'jailmode' },
     { name: 'htop', version: '3.3.0', revision: 5533, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'mosquitto', version: '2.0.19', revision: 14077, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
     { name: 'firefox', version: '141.0.2', revision: 543210, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' },
@@ -68,6 +70,10 @@ const SNAP_INFO = {
 // switcher). Snap absent here = a LOCAL snap (no store channels -> no
 // switcher, the 'local' marker instead).
 const STORE = {
+    // a same-named store snap exists for the (local) gadget — the round-47h
+    // foot-gun. The switcher must be suppressed by the x revision, NOT by
+    // this being empty (it is not empty).
+    gadget: { 'latest/stable': {}, 'pc/stable': {} },
     htop: { 'latest/stable': {}, 'latest/candidate': {}, 'latest/beta': {}, 'latest/edge': {},
         '3.3/stable': {}, '3.3/candidate': {}, '3.2/stable': {} },
     firefox: { 'latest/stable': {}, 'latest/candidate': {}, 'latest/edge': {},
@@ -355,10 +361,9 @@ function mockFactoryJs() {
                         else if (a === 'refresh' && extra && extra.channel && cur) {
                             cur.channel = extra.channel;
                             cur['tracking-channel'] = extra.channel;
-                            cur.prevRev = cur.revision;
-                            cur.revision = String(Number(cur.revision) + 1);
+                            if (!/^x/.test(String(cur.revision))) { cur.prevRev = cur.revision; cur.revision = String(Number(cur.revision) + 1); }
                         }
-                        else if (cur) { cur.prevRev = cur.revision; cur.revision = String(Number(cur.revision) + 1); cur.status = 'active'; }
+                        else if (cur) { if (!/^x/.test(String(cur.revision))) { cur.prevRev = cur.revision; cur.revision = String(Number(cur.revision) + 1); } cur.status = 'active'; }
                         CHANGES[id] = { id, status: 'Done' };
                     }, a === 'refresh' ? 400 : 1200); // refresh (channel switch) settles fast;
                     // remove/disable/etc. keep the 1.2s window so the inline
@@ -1311,11 +1316,14 @@ function mockFactoryJs() {
     await wait(200);
     const swGone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
     if (!swGone) console.log('PAGE ERROR: Esc did not close the modal after the channel switch');
-    // a LOCAL snap (core24 — no store channels) -> no switcher, a 'local' marker
+    // round 47h: a LOCAL build (x-prefixed revision) -> NO switcher, even
+    // though the mock STORE has channels for the same-named store snap.
+    // This is the foot-gun: a locally modified gadget must not be offerable
+    // a store refresh that would replace it.
     await page.evaluate(() => {
         const n = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name'))
-            .find((n) => n.textContent.trim() === 'core24');
-        if (!n) throw new Error('core24 name cell missing (4g)');
+            .find((n) => n.textContent.trim() === 'gadget');
+        if (!n) throw new Error('gadget name cell missing (4g)');
         n.click();
     });
     await wait(700);
@@ -1323,11 +1331,14 @@ function mockFactoryJs() {
         const body = document.querySelector('.ucm-modal .ucm-info');
         const dd = (label) => { for (const d of body.querySelectorAll('.ucm-kv > div')) if ((d.querySelector('dt')||{}).textContent === label) return d.querySelector('dd'); return null; };
         const chDd = dd('Track/Channel');
+        const verDd = dd('Version');
         return { hasSwitcher: !!(chDd && chDd.querySelector('.ucm-info__switcher')),
-                 local: (chDd ? chDd.textContent : '').includes('local') };
+                 local: (chDd ? chDd.textContent : '').includes('local'),
+                 version: verDd ? verDd.textContent.trim() : null };
     });
-    if (swLocal.hasSwitcher) console.log('PAGE ERROR: a local snap (no store channels) offers a Switch channel button');
-    if (!swLocal.local) console.log('PAGE ERROR: a local snap is not marked local in the channel row');
+    if (swLocal.hasSwitcher) console.log('PAGE ERROR: a locally-built snap (x revision) offers a Switch channel button (round 47h)');
+    if (!swLocal.local) console.log('PAGE ERROR: a locally-built snap is not marked local in the channel row (round 47h)');
+    if (swLocal.version !== '1.2 (x1)') console.log('PAGE ERROR: the local gadget revision is not x-prefixed in the mock (' + swLocal.version + ', want 1.2 (x1))');
     await page.keyboard.down('Escape');
     await page.keyboard.up('Escape');
     await wait(200);

@@ -1160,6 +1160,16 @@ function infoPlain(t) {
         .replace(/<([a-z]+:\/\/[^\s>]+)>/gi, '$1');
 }
 
+/* A locally built / sideloaded snap carries a negative revision, which
+   snapd serializes with an 'x' prefix (snap/revision.go: Revision.N < 0 ->
+   "x%d"). Store snaps have a numeric revision. So an x-prefixed revision is
+   the reliable "this is a local build" marker — and such a snap must NOT be
+   offered a store channel switch: refreshing it to a store channel would
+   REPLACE the local build (a locally modified gadget could break the OS). */
+function isLocalSnap(snap) {
+    return /^x/.test(String(snap && snap.revision));
+}
+
 function openSnapInfo(name) {
     // Esc closes the modal (round 47e, robustified in 47g): the listener
     // lives on `document` for the modal's whole life — focus can fall to
@@ -1297,16 +1307,20 @@ function openSnapInfo(name) {
         const chanMap = (store[0] && store[0].channels) || {};
         dd.innerHTML = '';
         dd.append(val);
-        if (Object.keys(chanMap).length > 0) {
-            // store channels available -> the quiet ghost switcher
+        // round 47h: a local build (x revision) is NEVER offered a store
+        // switch, even if a same-named store snap has channels — refreshing
+        // to one would replace the local build. The 'local' marker covers
+        // both local builds and snaps with no store channels.
+        const local = isLocalSnap(info);
+        if (!local && Object.keys(chanMap).length > 0) {
+            // store channels available AND not a local build -> the quiet
+            // ghost switcher
             dd.append(el('button', {
                 class: 'p-button--base p-button ucm-info__switcher', type: 'button',
                 'aria-label': 'Switch channel for ' + nm, text: 'Switch channel',
                 onclick: () => renderPicker(nm, cur, chanMap),
             }));
         } else {
-            // no store channels -> a local snap (or store unavailable): no
-            // switcher, a quiet 'local' marker instead
             dd.append(el('span', { class: 'ucm-muted ucm-info__local', style: 'margin-left:.5rem; font-size:.8rem;', text: 'local' }));
         }
     }
