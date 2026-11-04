@@ -439,6 +439,9 @@ function mockFactoryJs() {
                 // contract: omitempty state, async change, the start/stop
                 // + enable/disable coupling (no boot-only op exists).
                 async services(n) {
+                    // Models the BRIDGE surface: main.js already maps the
+                    // live 404 app-not-found to [] (socket-level honesty lives
+                    // in stub-snapd.js + the integration suite).
                     const list = SERVICES[n] || [];
                     return list.map((sv) => {
                         const o = { snap: sv.snap, name: sv.name };
@@ -991,6 +994,7 @@ function mockFactoryJs() {
             title: head ? head.textContent.trim() : null,
             closeFilter: ic ? getComputedStyle(ic).filter : '',
             noService: box ? box.textContent.includes('ships no services') : false,
+            noErrorChip: box ? !box.querySelector('.p-status-label--negative') : true,
         };
     });
     if (!svc1 || svc1.title !== 'Configure htop')
@@ -999,6 +1003,8 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: config popup close icon is not whitened (filter ' + (svc1 && svc1.closeFilter) + ', round 48a)');
     if (!svc1 || !svc1.noService)
         console.log('PAGE ERROR: a snap without services does not show the quiet note (round 48a)');
+    if (!svc1 || !svc1.noErrorChip)
+        console.log('PAGE ERROR: a snap without services must not show an error chip (the 404 is "none", not fatal) (round 48a)');
     await page.screenshot({ path: path.join(SHOTS, '13n-config-no-services.png') });
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);

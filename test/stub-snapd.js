@@ -412,6 +412,12 @@ function makeServer(socketPath, state) {
             if (p === '/v2/apps' && req.method === 'GET') {
                 const names = (url.searchParams.get('names') || '').split(',').filter(Boolean);
                 if (names.length) {
+                    // LIVE contract (snapd 2.77): a service-less name is a
+                    // 404 app-not-found envelope — NOT a 200 with [].
+                    const missing = names.map((n) => decodeURIComponent(n)).find((n) => !(state.services[n] || []).length);
+                    if (missing) {
+                        return json(res, 404, { kind: 'app-not-found', message: `snap "${missing}" has no services` });
+                    }
                     const list = names.reduce((acc, n) => acc.concat(state.services[decodeURIComponent(n)] || []), []);
                     return json(res, 200, list.map((s) => {
                         const o = { snap: s.snap, name: s.name };

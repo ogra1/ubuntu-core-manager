@@ -1682,17 +1682,22 @@ function openConfigModal(name) {
 
     (async () => {
         let list = [];
+        let loadErr = null;
         try { list = await core.snaps.services(name); }
-        catch (e) {
-            servicesSec.append(
-                el('p', { class: 'ucm-info__sec', text: 'Services' }),
-                el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load services: ' + e.message }),
-            );
-        }
+        catch (e) { loadErr = e; }
         const loading = bodyBox.querySelector('.ucm-config__loading');
         if (loading) loading.remove();
         bodyBox.append(servicesSec);
-        if (!bodyBox.querySelector('.p-status-label--negative')) renderServices(list);
+        // A genuine load failure renders the red chip; a service-less snap
+        // (main.js maps its 404 to []) gets the quiet note — never "fatal".
+        if (loadErr) {
+            servicesSec.append(
+                el('p', { class: 'ucm-info__sec', text: 'Services' }),
+                el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load services: ' + loadErr.message }),
+            );
+        } else {
+            renderServices(list);
+        }
         // (48b appends the config cards here, 48c the add-config form)
     })();
 }

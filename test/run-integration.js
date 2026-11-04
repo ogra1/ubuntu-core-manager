@@ -574,7 +574,7 @@ function ok(name, cond, extra = '') {
     ok('services-get returns the service list', Array.isArray(svcs) && svcs.length === 1 && svcs[0].name === 'server', JSON.stringify(svcs));
     ok('service state fields are honest (active+enabled only when true)', svcs[0].active === true && svcs[0].enabled === true, JSON.stringify(svcs[0]));
     const noSvc = await m.getSnapServices('core24');
-    ok('a snap without services -> [] (not an error)', Array.isArray(noSvc) && noSvc.length === 0, JSON.stringify(noSvc));
+    ok('a snap without services -> [] (the 404 app-not-found maps to none)', Array.isArray(noSvc) && noSvc.length === 0, JSON.stringify(noSvc));
     let svErr = null;
     try { await m.getSnapServices('bad name!'); } catch (e) { svErr = e; }
     ok('reject invalid snap name for services before socket', !!svErr && /invalid snap name/.test(svErr.message), svErr && svErr.message);

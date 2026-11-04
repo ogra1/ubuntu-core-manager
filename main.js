@@ -726,8 +726,9 @@ async function snapComponent(name, action, component) {
  *     boot) are omitempty booleans, present only when true, and only
  *     decorated while the SNAP itself is active (a disabled snap's services
  *     read as neither active nor enabled). A snap without services answers
- *     {kind:'app-not-found', message:'snap "X" has no services'} — treated
- *     as an empty list, not an error.
+ *     HTTP 404 {kind:'app-not-found', message:'snap "X" has no services'}
+ *     (verified live: the 404 envelope, NOT a 200 + []), which the client
+ *     maps to an empty list — not an error.
  * Control is one ASYNC route:
  *   POST /v2/apps {action: start|stop|restart, names:[snap | snap.app],
  *                  enable?: bool, disable?: bool}
@@ -744,10 +745,18 @@ async function snapComponent(name, action, component) {
 async function getSnapServices(name) {
     if (!validSnapName(name)) throw new Error('invalid snap name');
     const p = '/v2/apps?select=service&names=' + encodeURIComponent(name);
-    const res = await snapdRequest('GET', p, { auth: A() });
+    let res;
+    try {
+        res = await snapdRequest('GET', p, { auth: A() });
+    } catch (e) {
+        // LIVE: a snap WITHOUT services is a 404 {kind:'app-not-found',
+        // message:'snap "X" has no services'} — not an error, just "none".
+        // (An unknown snap 404s as kind:'snap-not-found' — still "none".)
+        if (e.name === 'SnapdError' && e.status === 404 && (e.kind === 'app-not-found' || e.kind === 'snap-not-found')) return [];
+        throw e;
+    }
     if (!res || Array.isArray(res)) return res || [];
-    // {kind:'app-not-found', message:'snap "X" has no services'} — not an error.
-    if (res.kind === 'app-not-found') return [];
+    if (res.kind === 'app-not-found') return []; // defensive: a 200 + app-not-found shape
     throw new Error('unexpected services response for ' + name);
 }
 
