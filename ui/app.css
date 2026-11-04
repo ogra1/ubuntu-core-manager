@@ -468,11 +468,17 @@ html, body {
 .p-accordion .p-accordion__panel { padding: 1rem 1.4rem; }
 
 /* ---- toasts / notifications container ----------------------------------- */
+/* round 47n: the toast stack sits TOP-CENTER, above the modal (z 60). The old
+   bottom-right corner is covered by the snap-info modal's 52rem card while an
+   in-modal operation runs (component install, channel switch), so the toasts
+   were invisible exactly when they mattered most. Top-center is clear of the
+   centered card, with and without a modal open; z 80 > modal 60 keeps a toast
+   in front even if a very tall card reaches near the top. */
 .ucm-toasts {
-    position: fixed; right: 1.2rem; bottom: 1.2rem;
+    position: fixed; top: 1.2rem; left: 50%; transform: translateX(-50%);
     display: flex; flex-direction: column; gap: .6rem;
-    width: 24rem; max-width: calc(100vw - 2.4rem);
-    z-index: 50;
+    width: 26rem; max-width: calc(100vw - 2.4rem);
+    z-index: 80;
 }
 .ucm-toasts .p-notification { box-shadow: 0 8px 24px rgba(0,0,0,.18); }
 

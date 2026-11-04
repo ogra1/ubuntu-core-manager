@@ -88,6 +88,10 @@ const STORE = {
     mosquitto: { 'latest/stable': {}, 'latest/edge': {}, '2.0/stable': {} },
 };
 
+// Store DOWNLOAD sizes (bytes) per snap (round 47n) — the /v2/find result's
+// download-size field; feeds the store-results Size column.
+const SIZES = { mosquitto: 4841472, htop: 8948736, firefox: 52428800, gadget: 1048576 };
+
 // Snap COMPONENTS (round 47m) — the single-snap object's `components` list.
 // revision "unset" = offered but NOT installed; numeric revision (+ installed-
 // size/install-date) = installed. LIVE shape from GET /v2/snaps/llama-cpp.
@@ -96,7 +100,7 @@ const COMPONENTS = {
         { name: 'extra', type: 'standard', version: '3.3', summary: 'Extra theme pack',
           description: 'Extra theme pack for htop.', revision: 'unset' },
         { name: 'plugin', type: 'standard', version: '3.3', summary: 'Extra plugin',
-          description: 'Extra plugin for htop.', revision: 88, installedSize: 1048576,
+          description: 'Extra plugin for htop.', revision: 88, 'installed-size': 1048576,
           installDate: '2026-10-20T09:15:00Z' },
     ],
 };
@@ -165,6 +169,7 @@ function mockFactoryJs() {
         const CONF = ${JSON.stringify(SNAP_CONF)};
         const INFO = ${JSON.stringify(SNAP_INFO)};
         const STORE = ${JSON.stringify(STORE)};
+        const SIZES = ${JSON.stringify(SIZES)};
         const COMPONENTS = ${JSON.stringify(COMPONENTS)};
         const CHANGES = {};
         let IFC = ${JSON.stringify(IFACES)};
@@ -347,10 +352,10 @@ function mockFactoryJs() {
                     // the info modal queries the STORE for one installed
                     // snap's channels (round 47g) — resolve it first; a
                     // missing entry (e.g. 'core24') = a local snap -> [].
-                    if (STORE[q]) return [{ name: q, channels: STORE[q] }];
+                    if (STORE[q]) return [{ name: q, channels: STORE[q], 'download-size': SIZES[q] }];
                     return [
-                        { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
-                        { name: 'mqtt-spy', summary: 'Simple MQTT traffic inspector', publisher: { username: 'iot-labs' }, channels: { 'latest/stable': {} } },
+                        { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, 'download-size': 4841472, channels: { 'latest/stable': {} } },
+                        { name: 'mqtt-spy', summary: 'Simple MQTT traffic inspector', publisher: { username: 'iot-labs' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
                     ].filter((s) => s.name.includes((q || '').toLowerCase()));
                 },
                 async install(n, ch) {
@@ -400,8 +405,8 @@ function mockFactoryJs() {
                     const id = '900';
                     CHANGES[id] = { id, status: 'Doing', kind: a + '-component', t0: Date.now() };
                     setTimeout(() => {
-                        if (a === 'install') { comp.revision = String(Number(comp.revision === 'unset' ? 0 : comp.revision) + 1); comp.installedSize = 2097152; comp.installDate = new Date().toISOString(); }
-                        else { comp.revision = 'unset'; delete comp.installedSize; delete comp.installDate; }
+                        if (a === 'install') { comp.revision = String(Number(comp.revision === 'unset' ? 0 : comp.revision) + 1); comp['installed-size'] = 2097152; comp['install-date'] = new Date().toISOString(); }
+                        else { comp.revision = 'unset'; delete comp['installed-size']; delete comp['install-date']; }
                         CHANGES[id] = { id, status: 'Done' };
                     }, 400);
                     return { id, change: id };
@@ -884,6 +889,26 @@ function mockFactoryJs() {
 
     // ---- 4a. Round 47i: the Store results card auto-hides after a
     // successful install, and its close button is icon-only. ----
+    // round 47n: the results table carries a Size column (download-size) and the
+    // toast stack is pinned top-center (z 80 > the modal's 60) so a toast never
+    // hides behind the store card or the snap-info modal.
+    const storeSize = await page.evaluate(() => {
+        const head = Array.from(document.querySelector('#snapSearchBody').closest('table').querySelectorAll('thead th')).map((t) => t.textContent.trim());
+        const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))
+            .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        const toast = document.querySelector('.ucm-toasts');
+        const tcs = toast ? getComputedStyle(toast) : null;
+        const tb = toast.getBoundingClientRect();
+        return { head, cells: row ? row.cells.length : null, size: row && row.cells[4] ? row.cells[4].textContent.trim() : null,
+                 toastTop: tb.top, toastZ: tcs.zIndex, toastW: tb.width };
+    });
+    if (JSON.stringify(storeSize.head) !== JSON.stringify(['Name', 'Summary', 'Publisher', 'Channel', 'Size', 'Install']))
+        console.log('PAGE ERROR: store results header is not the six columns with Size (' + JSON.stringify(storeSize.head) + ', round 47n)');
+    if (storeSize.cells !== 6) console.log('PAGE ERROR: store result rows have ' + storeSize.cells + ' cells (want 6 incl. Size, round 47n)');
+    if (storeSize.size !== '4.6 MiB') console.log('PAGE ERROR: the store Size cell is not the formatted download-size (got ' + JSON.stringify(storeSize.size) + ', want 4.6 MiB — round 47n)');
+    if (!(storeSize.toastTop < 60) || storeSize.toastZ !== '80' || !(storeSize.toastW >= 300))
+        console.log('PAGE ERROR: the toast stack is not pinned top-center above the modal (top ' + storeSize.toastTop + ', z ' + storeSize.toastZ + ', w ' + storeSize.toastW + ' — want top ~1.2rem, z 80 > modal 60 — round 47n)');
+
     const clearBtn = await page.evaluate(() => {
         const b = document.querySelector('#snapSearchClear');
         return { text: b ? b.textContent.trim() : null, aria: b ? (b.getAttribute('aria-label') || '') : null };
@@ -1464,8 +1489,8 @@ function mockFactoryJs() {
         if (comp.count !== 2) console.log('PAGE ERROR: htop should list 2 components (' + comp.count + ', round 47m)');
         if (!comp.plugin || !comp.plugin.installed || comp.plugin.btn !== 'Remove')
             console.log('PAGE ERROR: the installed component (plugin) is not marked installed with a Remove button: ' + JSON.stringify(comp.plugin));
-        if (comp.plugin && comp.plugin.meta.indexOf('Installed') !== 0)
-            console.log('PAGE ERROR: the installed component meta is not "Installed …" (got ' + JSON.stringify(comp.plugin.meta) + ')');
+        if (comp.plugin && comp.plugin.meta !== 'Installed · 1.0 MiB')
+            console.log('PAGE ERROR: the installed component meta is not "Installed · <size>" (got ' + JSON.stringify(comp.plugin.meta) + ' — round 47n: the installed-size read)');
         if (!comp.extra || comp.extra.installed || comp.extra.btn !== 'Install')
             console.log('PAGE ERROR: the not-installed component (extra) should show an Install button: ' + JSON.stringify(comp.extra));
         if (comp.extra && comp.extra.meta.indexOf('Not installed') !== 0)
@@ -1477,7 +1502,27 @@ function mockFactoryJs() {
             const r = rows.find((r) => r.querySelector('.ucm-info__comp-name').textContent.trim().indexOf('extra') === 0);
             r.querySelector('.ucm-info__comp-btn').click();
         });
-        await wait(800); // 400ms mock settle + margin
+        // round 47n: the "… is being installed…" toast must be visible while the
+        // modal is open AND its z-index must sit above the modal's (the invariant
+        // that keeps it in front, even if a tall card reaches near the top).
+        await wait(150);
+        const compToast = await page.evaluate(() => {
+            const t = document.querySelector('.ucm-toasts .p-notification');
+            if (!t) return null;
+            const r = t.getBoundingClientRect();
+            const modal = document.querySelector('.ucm-modal');
+            const toastc = document.querySelector('.ucm-toasts');
+            return { text: t.textContent, top: r.top,
+                     inVp: r.top >= 0 && r.top < window.innerHeight && r.width > 0,
+                     modalOpen: !!modal,
+                     toastZ: toastc ? getComputedStyle(toastc).zIndex : null,
+                     modalZ: modal ? getComputedStyle(modal).zIndex : null };
+        });
+        if (!compToast || !compToast.modalOpen || !compToast.inVp)
+            console.log('PAGE ERROR: the component-install toast is not visible while the modal is open (got ' + JSON.stringify(compToast) + ' — round 47n)');
+        if (compToast && !(Number(compToast.toastZ) > Number(compToast.modalZ)))
+            console.log('PAGE ERROR: the toast z-index is not above the modal (toast ' + compToast.toastZ + ' vs modal ' + compToast.modalZ + '), so it hides behind it (round 47n)');
+        await wait(700); // 400ms mock settle + margin
         const comp2 = await page.evaluate(() => {
             const body = document.querySelector('.ucm-modal .ucm-info');
             const rows = Array.from(body.querySelectorAll('.ucm-info__comp'));

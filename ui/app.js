@@ -1160,6 +1160,9 @@ async function searchStore() {
                 el('td', { class: 'ucm-wrap', text: r.summary || '' }),
                 el('td', { text: publisher || '—' }),
                 el('td', {}, chSel),
+                // round 47n: the store size (download-size, LIVE-verified on
+                // /v2/find); em-dash when the store omits it.
+                el('td', { class: 'ucm-mono', text: r['download-size'] != null ? fmtBytes(r['download-size']) : '—' }),
                 el('td', { style: 'text-align:right;', onclick: (e) => { e.stopPropagation(); } }, installBtn),
             ));
         });
@@ -1350,7 +1353,9 @@ function openSnapInfo(name) {
         comps.forEach((c) => {
             const installed = c.revision != null && String(c.revision) !== 'unset';
             const ver = c.version ? ' ' + c.version : '';
-            const meta = c.installedSize != null ? ' · ' + fmtBytes(c.installedSize) : '';
+            // snapd sends installed-size HYPHENATED (Go json tag), not
+            // installedSize (round 47n; the 47m camelCase read never matched).
+            const meta = (installed && c['installed-size'] != null) ? ' · ' + fmtBytes(c['installed-size']) : '';
             clist.append(el('div', { class: 'ucm-info__comp' + (installed ? ' is-installed' : '') },
                 el('div', { class: 'ucm-info__comp-main' },
                     el('span', { class: 'ucm-info__comp-name', text: c.name + ver }),
