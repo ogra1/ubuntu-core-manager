@@ -1230,6 +1230,119 @@ function mockFactoryJs() {
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 
+    // ---- 4c-cfg. Round 48c: the add-config form — a dotted KEY + a shorter
+    // single-line VALUE; the suru document icon expands the value into a
+    // multiline textarea (and back); Save appends the key to the tree.
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const mc = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        mc.querySelectorAll('.ucm-actions button')[0].click(); // the gear
+    });
+    await wait(600);
+    const cf3 = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal');
+        const sec = box.querySelector('.ucm-conf-formsec');
+        const icon = sec ? sec.querySelector('.ucm-conf-form__iconbtn i') : null;
+        const keyW = sec ? sec.querySelector('#cfgk').getBoundingClientRect().width : null;
+        const valW = sec ? sec.querySelector('#cfgv').getBoundingClientRect().width : null;
+        const baseCards = box.querySelectorAll('.ucm-conf-sec > .p-card').length;
+        return {
+            baseCards,
+            secHead: sec && sec.querySelector('.ucm-info__sec') ? sec.querySelector('.ucm-info__sec').textContent.trim() : null,
+            keyId: sec ? !!sec.querySelector('#cfgk') : false,
+            valIsInput: sec ? !!sec.querySelector('#cfgv') && sec.querySelector('#cfgv').tagName === 'INPUT' : false,
+            iconBg: icon ? getComputedStyle(icon).backgroundImage : '',
+            keyW, valW,
+            saveText: sec ? (sec.querySelector('.ucm-conf-form__save') || {}).textContent : null,
+        };
+    });
+    if (!cf3 || cf3.secHead !== 'Add configuration')
+        console.log('PAGE ERROR: no Add configuration section (' + (cf3 && cf3.secHead) + ', round 48c)');
+    if (!cf3 || !cf3.keyId || !cf3.valIsInput)
+        console.log('PAGE ERROR: the add-config form does not start as key + single-line value (' + JSON.stringify(cf3) + ', round 48c)');
+    if (!cf3 || !/suru-document\.svg/.test(cf3.iconBg || ''))
+        console.log('PAGE ERROR: the value field is not beside the suru document icon (' + (cf3 && cf3.iconBg) + ', round 48c)');
+    if (!cf3 || !(cf3.keyW > 0 && cf3.valW > 0 && (cf3.keyW - cf3.valW) >= 60))
+        console.log('PAGE ERROR: the value field is not meaningfully shorter than the key field (key ' + cf3.keyW + ' value ' + cf3.valW + ' diff ' + (cf3.keyW - cf3.valW) + ', want >=60, round 48c)');
+    if (!cf3 || cf3.saveText !== 'Add value')
+        console.log('PAGE ERROR: the save button is not labeled "Add value" (' + (cf3 && cf3.saveText) + ', round 48c)');
+    await page.evaluate(() => { const b = document.querySelector('.ucm-modal__body'); if (b) b.scrollTop = b.scrollHeight; });
+    await wait(150);
+    await page.screenshot({ path: path.join(SHOTS, '13t-config-add-form.png') });
+
+    // Expand to multiline: the input becomes a textarea + the icon swaps to
+    // the collapse glyph.
+    await page.evaluate(() => { document.querySelector('.ucm-conf-form__iconbtn').click(); });
+    await wait(150);
+    const cf4 = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-formsec');
+        const icon = sec.querySelector('.ucm-conf-form__iconbtn i');
+        const ta = sec.querySelector('#cfgv');
+        return {
+            isTextarea: ta ? ta.tagName === 'TEXTAREA' : false,
+            iconClass: icon ? icon.className : null,
+            label: sec.querySelector('.ucm-conf-form__vlabel') ? sec.querySelector('.ucm-conf-form__vlabel').textContent.trim() : null,
+        };
+    });
+    if (!cf4 || !cf4.isTextarea)
+        console.log('PAGE ERROR: clicking the document icon did not expand the value to multiline (' + JSON.stringify(cf4) + ', round 48c)');
+    if (!cf4 || !/p-icon--collapse/.test(cf4.iconClass || ''))
+        console.log('PAGE ERROR: the icon did not swap to the collapse glyph when expanded (' + (cf4 && cf4.iconClass) + ', round 48c)');
+    await page.evaluate(() => {
+        const ta = document.querySelector('.ucm-conf-formsec #cfgv');
+        ta.value = '{\n  "test": true\n}';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await wait(100);
+    const cf4b = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-formsec');
+        return { label: sec.querySelector('.ucm-conf-form__vlabel') ? sec.querySelector('.ucm-conf-form__vlabel').textContent.trim() : null };
+    });
+    if (!cf4b || !/multiline/.test(cf4b.label) || !/3 lines/.test(cf4b.label))
+        console.log('PAGE ERROR: the multiline label does not count the pasted lines (' + (cf4b && cf4b.label) + ', round 48c)');
+    await page.evaluate(() => { const b = document.querySelector('.ucm-modal__body'); if (b) b.scrollTop = b.scrollHeight; });
+    await wait(150);
+    await page.screenshot({ path: path.join(SHOTS, '13u-config-add-multiline.png') });
+
+    // Collapse back to the single line.
+    await page.evaluate(() => { document.querySelector('.ucm-conf-form__iconbtn').click(); });
+    await wait(150);
+    const cf4c = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-formsec');
+        return { isInput: sec.querySelector('#cfgv').tagName === 'INPUT', icon: sec.querySelector('.ucm-conf-form__iconbtn i').className };
+    });
+    if (!cf4c || !cf4c.isInput || !/p-icon--document/.test(cf4c.icon))
+        console.log('PAGE ERROR: clicking the collapse icon did not restore the single-line value (' + JSON.stringify(cf4c) + ', round 48c)');
+
+    // Save a dotted key + value -> it joins the tree as a new card.
+    await page.evaluate(() => {
+        document.querySelector('.ucm-conf-formsec #cfgk').value = 'max_inflight_messages';
+        document.querySelector('.ucm-conf-formsec #cfgv').value = '2048';
+        document.querySelector('.ucm-conf-formsec .ucm-conf-form__save').click();
+    });
+    await wait(1000);
+    const cf5 = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal');
+        const cards = box.querySelectorAll('.ucm-conf-sec > .p-card');
+        return {
+            cardCount: cards.length,
+            hasNew: box.querySelector('.ucm-conf-sec').textContent.includes('max_inflight_messages'),
+            toast: document.body.textContent.includes('Value added'),
+            noError: !document.querySelector('.ucm-modal .p-status-label--negative'),
+        };
+    });
+    if (!cf5 || cf5.cardCount !== cf3.baseCards + 1 || !cf5.hasNew)
+        console.log('PAGE ERROR: saving the new key did not add exactly one card to the tree (base ' + (cf3 && cf3.baseCards) + ', now ' + (cf5 && cf5.cardCount) + ', round 48c)');
+    if (!cf5 || !cf5.toast)
+        console.log('PAGE ERROR: the add did not toast (round 48c)');
+    if (!cf5 || !cf5.noError)
+        console.log('PAGE ERROR: the add left an error chip (round 48c)');
+    await page.evaluate(() => { const b = document.querySelector('.ucm-modal__body'); if (b) b.scrollTop = b.scrollHeight; });
+    await wait(150);
+    await page.screenshot({ path: path.join(SHOTS, '13v-config-after-add.png') });
+    await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
+    await wait(200);
+
     // ---- 4c. Round 47: two interface-card-style cards replace the
     // scrollable table. Card 1 "OS" = the model-assertion system snaps
     // (round-46b definition — the harness mock's model lists

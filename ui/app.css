@@ -591,6 +591,17 @@ html, body {
     background-position: center;
     background-image: url("../build/images/suru-delete.svg");
 }
+/* round 48c: the suru stock-document glyph — the add-config form's
+   "multiline value" toggle (cleaned + shipped like the other suru icons;
+   see build/images/suru-document.svg for provenance). */
+.p-icon--document{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-document.svg");
+}
 /* Snap-row action icons centred in their hover square (round-44c). The 16px
    glyph sits in a 36px button (a 24px line box); baseline-aligned it lands ~2px
    ABOVE the box centre, so the four suru icons read as shifted toward the top
@@ -706,6 +717,26 @@ html, body {
    but its message span must stay display:none until hover/focus (the
    .ucm-iconbtn override only hides it; the base is .p-iconbtn). */
 .ucm-conf__trash { flex: 0 0 auto; margin-left: .2rem; }
+/* ---- add-config form (round 48c) -----------------------------------------
+   A single-line KEY (dotted) + a slightly SHORTER single-line VALUE; the
+   suru document icon right of the value expands it into a multiline
+   textarea (for big pastes such as lxd's daemon.preseed), clicking again
+   collapses it back to the line. The document glyph is the suru
+   stock-document icon (build/images/suru-document.svg, pixel-verified);
+   the collapse state reuses the bundle's p-icon--collapse. */
+.ucm-conf-form .p-form__group { margin-bottom: .9rem; }
+/* the value field is deliberately a touch shorter than the key field: the
+   key (the identity) is the full width, the value + its icon sit in a
+   narrower row so the icon reads as "attached to the value". */
+.ucm-conf-form__valgroup .ucm-conf-form__valrow { max-width: 20rem; }
+.ucm-conf-form__iconbtn { display: inline-flex; align-items: center; justify-content: center; height: 1.9rem; width: 1.9rem; flex: 0 0 auto; padding: 0; margin-left: .5rem; }
+.ucm-conf-form__iconbtn .p-tooltip__message { display: none; }
+/* multiline mode: the textarea replaces the input in the same flex row */
+.ucm-conf-form__valrow { display: flex; align-items: center; }
+.ucm-conf-form__valholder { flex: 1 1 auto; min-width: 0; display: flex; }
+.ucm-conf-form__valholder > * { flex: 1 1 auto; min-width: 0; }
+.ucm-conf-form__ta { resize: vertical; min-height: 6.5rem; line-height: 1.5; }
+.ucm-conf-form__save { margin-top: .2rem; }
 
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }

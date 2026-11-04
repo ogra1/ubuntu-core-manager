@@ -1830,7 +1830,100 @@ function openConfigModal(name) {
         } else {
             renderConfig(root);
         }
-        // (48c appends the add-config form here)
+        // 48c: the add-config form (dotted key + value; the suru document
+        // icon expands the value into multiline for big pastes, e.g. lxd's
+        // daemon.preseed). Saving appends the key to the SAME document the
+        // cards above show, so it re-renders into the tree on success.
+        const formSec = el('div', { class: 'ucm-svc-sec ucm-conf-sec ucm-conf-formsec' });
+        bodyBox.append(formSec);
+        let multi = false;
+
+        function formRenderValue() {
+            const holder = formSec.querySelector('.ucm-conf-form__valholder');
+            const icon = formSec.querySelector('.ucm-conf-form__iconbtn');
+            const label = formSec.querySelector('.ucm-conf-form__vlabel');
+            if (!multi) {
+                const input = el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgv', type: 'text', spellcheck: 'false', placeholder: 'e.g. 8080 or true' });
+                holder.replaceChildren(input);
+                icon.querySelector('i').className = 'p-icon--document';
+                icon.setAttribute('aria-label', 'Use a multiline value (expand)');
+                icon.setAttribute('data-tooltip', 'Use a multiline value');
+                label.textContent = 'Value';
+            } else {
+                const ta = el('textarea', { class: 'p-form-validation__input ucm-mono ucm-conf-form__ta', id: 'cfgv', spellcheck: 'false', rows: '6', placeholder: 'Paste a multiline value here (JSON, YAML, …)' });
+                holder.replaceChildren(ta);
+                icon.querySelector('i').className = 'p-icon--collapse';
+                icon.setAttribute('aria-label', 'Use a single-line value (collapse)');
+                icon.setAttribute('data-tooltip', 'Use a single-line value');
+                const countLines = () => { label.textContent = 'Value (multiline — ' + (ta.value ? ta.value.split('\n').length : 1) + ' lines)'; };
+                ta.addEventListener('input', countLines); // keep the live line count honest as the user pastes/types
+                countLines();
+            }
+        }
+
+        (function addConfigForm() {
+            const form = el('form', { class: 'ucm-conf-form', novalidate: '' });
+            form.addEventListener('submit', (e) => e.preventDefault());
+            const keyGroup = el('div', { class: 'p-form__group', id: 'cfgkGroup' });
+            keyGroup.append(
+                el('label', { class: 'p-form__label', for: 'cfgk', text: 'Key' }),
+                el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgk', type: 'text', spellcheck: 'false', placeholder: 'e.g. foo.bar.baz' }),
+                el('p', { class: 'p-form-help-text', text: 'Dotted identifier (a–z, 0–9, “-”, “_”, “.”).' }),
+                el('p', { class: 'p-form-validation__message' }),
+            );
+            const valGroup = el('div', { class: 'p-form__group ucm-conf-form__valgroup', id: 'cfgvGroup' });
+            const vlabel = el('label', { class: 'p-form__label ucm-conf-form__vlabel', for: 'cfgv', text: 'Value' });
+            const valholder = el('div', { class: 'ucm-conf-form__valholder' });
+            valholder.append(el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgv', type: 'text', spellcheck: 'false', placeholder: 'e.g. 8080 or true' }));
+            const iconbtn = el('button', { class: 'p-button--base p-button ucm-iconbtn ucm-conf-form__iconbtn p-tooltip--top-right', type: 'button', 'aria-label': 'Use a multiline value (expand)', 'data-tooltip': 'Use a multiline value' },
+                el('i', { class: 'p-icon--document' }),
+                el('span', { class: 'p-tooltip__message', text: 'Use a multiline value' }));
+            iconbtn.addEventListener('click', () => { multi = !multi; formRenderValue(); });
+            const valrow = el('div', { class: 'ucm-conf-form__valrow' }, valholder, iconbtn);
+            valGroup.append(vlabel, valrow,
+                el('p', { class: 'p-form-help-text', text: 'A single line, or click the document icon to paste a multiline value (JSON, YAML, …).' }),
+                el('p', { class: 'p-form-validation__message' }));
+            const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf-form__save', type: 'button', text: 'Add value' });
+            form.append(keyGroup, valGroup, saveBtn);
+            formSec.append(el('p', { class: 'ucm-info__sec', text: 'Add configuration' }), form);
+            formRenderValue();
+
+            saveBtn.onclick = async () => {
+                const key = document.getElementById('cfgk').value.trim();
+                const valEl = document.getElementById('cfgv');
+                const raw = (valEl && valEl.value) ? valEl.value : '';
+                let ok = true;
+                if (!RE_CONF_KEY_UI.test(key)) {
+                    setFieldState('cfgkGroup', 'error', 'Invalid key (use a dotted identifier: a–z, 0–9, “-”, “_”, “.”).');
+                    ok = false;
+                } else {
+                    setFieldState('cfgkGroup', '');
+                }
+                if (raw === '') {
+                    setFieldState('cfgvGroup', 'error', 'Enter a value (or remove it with the trash icon).');
+                    ok = false;
+                } else {
+                    setFieldState('cfgvGroup', '');
+                }
+                if (!ok) return;
+                saveBtn.classList.add('is-disabled');
+                try {
+                    const change = await core.snaps.confSet(name, { [key]: raw });
+                    const done = await waitChangeSettled(change);
+                    if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
+                        toast('negative', 'Saving the value failed', name + ': ' + key + ' — ' + (done.err || done.status));
+                    } else {
+                        toast('positive', 'Value added', name + ': ' + key);
+                    }
+                    let freshRoot = null;
+                    try { freshRoot = await core.snaps.confGet(name); } catch { freshRoot = null; }
+                    if (freshRoot) renderConfig(freshRoot); // the doc changed — the new key joins the tree
+                    document.getElementById('cfgk').value = '';
+                    if (document.getElementById('cfgv')) document.getElementById('cfgv').value = '';
+                } catch (e) { toastErr(e); }
+                finally { saveBtn.classList.remove('is-disabled'); }
+            };
+        })();
     })();
 }
 
