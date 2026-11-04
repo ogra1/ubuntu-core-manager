@@ -395,16 +395,31 @@ function makeServer(socketPath, state) {
                     if (!auth.ok) return json(res, 401, { kind: 'unauthenticated', message: 'unauthenticated access' });
                     const data = JSON.parse(await body());
                     state.confSets.push({ name, data });
-                    if (name === 'core' && data['system.network.netplan']) {
-                        state.netplanYaml = data['system.network.netplan'];
-                    } else {
-                        if (!state.conf[name]) state.conf[name] = {};
-                        for (const [k, v] of Object.entries(data)) {
-                            if (v === null) delete state.conf[name][k];
-                            else state.conf[name][k] = v;
+                    // LIVE contract (round 48b probe): a conf PUT is an ASYNC
+                    // 202 (change id at the envelope top) — the daemon runs
+                    // the snap's configure hook. The doc flips atomically when
+                    // the change settles (netplan: pushed to the backend).
+                    const confId = String((state.confChg = (state.confChg || 400) + 1));
+                    state.changes.push({ id: confId, kind: 'configure-snap', summary: 'Configure snap "' + name + '"', status: 'Doing' });
+                    setTimeout(() => {
+                        const st = state.changes.find((c) => c.id === confId);
+                        if (st) st.status = 'Done';
+                        if (name === 'core' && data['system.network.netplan']) {
+                            state.netplanYaml = data['system.network.netplan'];
+                        } else {
+                            if (!state.conf[name]) state.conf[name] = {};
+                            for (const [k, v] of Object.entries(data)) {
+                                if (v === null) delete state.conf[name][k];
+                                else state.conf[name][k] = v;
+                            }
                         }
-                    }
-                    return json(res, 200, {});
+                    }, 250);
+                    const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: confId });
+                    return new Promise((resolve) => {
+                        res.writeHead(202, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
+                        res.end(payload);
+                        resolve();
+                    });
                 }
             }
 

@@ -543,6 +543,9 @@ function ok(name, cond, extra = '') {
     // (The guarded reset above wiped the volatile store session — expected:
     // a reset returns the device to first-boot state, so re-login first.)
     await m.storeLogin('admin@example.com', 'correct-horse');
+    const confPutId = await m.setSnapConfig('htop', { 'probe.key': 1 });
+    ok('conf PUT returns an async change id (live: 202, not a sync 200)', confPutId && confPutId.id, JSON.stringify(confPutId));
+    await new Promise((r) => setTimeout(r, 320)); // the stub settles at 250ms (atomic doc flip)
     const confAll = await m.getSnapConfig('htop');
     ok('conf-get returns the snap doc', confAll && confAll.port === '8080' && confAll['logging.level'] === 'info', JSON.stringify(confAll));
     const confOne = await m.getSnapConfig('htop', 'port');
@@ -550,6 +553,7 @@ function ok(name, cond, extra = '') {
     const confMiss = await m.getSnapConfig('htop', 'no.such.key');
     ok('conf-get unknown key -> null value (not an error)', confMiss && 'no.such.key' in confMiss && confMiss['no.such.key'] === null, JSON.stringify(confMiss));
     await m.setSnapConfig('htop', { port: 9090 });
+    await new Promise((r) => setTimeout(r, 320)); // async conf PUT: the doc flips when the change settles
     const confAfter = await m.getSnapConfig('htop');
     ok('conf-set persists the value (number kept native)', confAfter.port === 9090, JSON.stringify(confAfter));
     const confPut = state.confSets[state.confSets.length - 1];
@@ -563,6 +567,7 @@ function ok(name, cond, extra = '') {
     try { await m.setSnapConfig('htop', { port: { nested: true } }); } catch (e) { confValErr = e; }
     ok('reject non-scalar config value', !!confValErr && /scalar/.test(confValErr.message), confValErr && confValErr.message);
     await m.setSnapConfig('htop', { 'logging.level': null });
+    await new Promise((r) => setTimeout(r, 320));
     const confDel = await m.getSnapConfig('htop');
     ok('conf-set null removes the key', confDel && !('logging.level' in confDel) && confDel.port === 9090, JSON.stringify(confDel));
 

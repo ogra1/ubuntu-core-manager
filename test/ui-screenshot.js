@@ -107,8 +107,18 @@ const COMPONENTS = {
 
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
+    // mosquitto (round 48b): a single top-level key with nested dotted
+    // sub-keys + a boolean + a multiline (block-style) string value — the
+    // full card/tree shape the config UI must render.
+    mosquitto: {
+        'log_dest': 'stdout',
+        'per_listener_settings': true,
+        'persistence': true,
+        'persistence_file': 'mosquitto.db',
+        'security_options.tls_version': 'tlsv1.2',
+        'daemon.preseed': '{\n  "net": {\n    "allow": ["10.0.0.0/8"]\n  }\n}',
+    },
     htop: { port: '8080', 'logging.level': 'info' },
-    mosquitto: { listener: '127.0.0.1' },
 };
 
 // Snap services (snapd GET /v2/apps?select=service, chunk 48a): in the live
@@ -429,11 +439,19 @@ function mockFactoryJs() {
                     return doc;
                 },
                 async confSet(n, obj) {
+                    // LIVE (round 48b): a conf PUT is async — 202 + a change;
+                    // the doc flips atomically when the change settles.
                     if (!CONF[n]) CONF[n] = {};
-                    for (const [k, v] of Object.entries(obj)) {
-                        if (v === null) delete CONF[n][k]; else CONF[n][k] = v;
-                    }
-                    return {};
+                    CHANGES.svc = CHANGES.svc + 1;
+                    const id = 'conf' + CHANGES.svc;
+                    CHANGES[id] = { id, status: 'Doing', kind: 'configure-snap' };
+                    setTimeout(() => {
+                        for (const [k, v] of Object.entries(obj)) {
+                            if (v === null) delete CONF[n][k]; else CONF[n][k] = v;
+                        }
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 250);
+                    return { id, change: id };
                 },
                 // Snap services (chunk 48a) — mirrors the live GET/POST /v2/apps
                 // contract: omitempty state, async change, the start/stop
@@ -1092,7 +1110,79 @@ function mockFactoryJs() {
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 
+    // ---- 4b-cfg. Round 48b: existing config as per-top-level-key YAML cards
+    // with a trash per value; removing a leaf re-renders, and a card vanishes
+    // once its last leaf is gone.
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const mc = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        mc.querySelectorAll('.ucm-actions button')[0].click(); // the gear
+    });
+    await wait(600);
+    const cf1 = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal');
+        const sec = box.querySelector('.ucm-conf-sec');
+        const cards = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')) : [];
+        const title = (c) => { const t = c.querySelector('.ucm-conf__toptitle'); return t ? t.textContent.trim() : null; };
+        const readLeaf = (l) => {
+            const kv = l.querySelector('.ucm-conf__kv');
+            if (!kv) return null;
+            const v = kv.querySelector('.ucm-conf__val');
+            const pre = kv.querySelector('.ucm-conf__multi');
+            return { key: kv.querySelector('.ucm-conf__key').textContent.trim().replace(/:$/, ''), val: v ? v.textContent.trim() : null, pre: pre ? pre.textContent : null, pad: l.style.paddingLeft };
+        };
+        const leavesOf = (c) => (c ? Array.from(c.querySelectorAll('.ucm-conf__leaf')).map(readLeaf).filter(Boolean) : null);
+        return {
+            secHead: sec && sec.querySelector('.ucm-info__sec') ? sec.querySelector('.ucm-info__sec').textContent.trim() : null,
+            titles: cards.map(title),
+            daemonCard: leavesOf(cards.find((c) => title(c) === 'daemon:')),
+            secCard: leavesOf(cards.find((c) => title(c) === 'security_options:')),
+            logdest: leavesOf(cards.find((c) => title(c) === 'log_dest:')),
+            trashCount: sec ? sec.querySelectorAll('.p-icon--delete').length : 0,
+        };
+    });
+    if (!cf1 || cf1.secHead !== 'Configuration')
+        console.log('PAGE ERROR: no Configuration section in the config popup (' + (cf1 && cf1.secHead) + ', round 48b)');
+    if (!cf1 || JSON.stringify(cf1.titles) !== JSON.stringify(['daemon:', 'log_dest:', 'per_listener_settings:', 'persistence:', 'persistence_file:', 'security_options:']))
+        console.log('PAGE ERROR: config cards are not one per top-level key, sorted (' + (cf1 && JSON.stringify(cf1.titles)) + ', round 48b)');
+    if (!cf1 || !cf1.daemonCard || cf1.daemonCard.length !== 1 || cf1.daemonCard[0].key !== 'preseed' || !cf1.daemonCard[0].pre || cf1.daemonCard[0].pad !== '8px')
+        console.log('PAGE ERROR: the daemon card is not its single nested multiline leaf (daemon.preseed, 8px indent) (' + (cf1 && JSON.stringify(cf1.daemonCard)) + ', round 48b)');
+    if (!cf1 || !cf1.secCard || cf1.secCard.length !== 1 || cf1.secCard[0].key !== 'tls_version' || cf1.secCard[0].val !== 'tlsv1.2' || cf1.secCard[0].pad !== '8px')
+        console.log('PAGE ERROR: the nested dotted key is not indented one level deeper (security_options.tls_version) (' + (cf1 && JSON.stringify(cf1.secCard)) + ', round 48b)');
+    if (!cf1 || !cf1.logdest || cf1.logdest.length !== 1 || cf1.logdest[0].key !== 'log_dest' || cf1.logdest[0].val !== 'stdout' || cf1.logdest[0].pad !== '4px')
+        console.log('PAGE ERROR: the top-level scalar card is not its 4px leaf (log_dest: stdout) (' + (cf1 && JSON.stringify(cf1.logdest)) + ', round 48b)');
+    // 6 top-level keys, each one leaf (one of them multiline) = 6 trash icons
+    if (!cf1 || cf1.trashCount !== 6)
+        console.log('PAGE ERROR: trash icon count does not match the leaf count (' + (cf1 && cf1.trashCount) + ', round 48b)');
+    await page.screenshot({ path: path.join(SHOTS, '13r-config-yaml-cards.png') });
 
+    // Remove the daemon.preseed leaf (no confirm — it is a config value, not a
+    // running-state op) -> the daemon card vanishes (its last child is gone)
+    // and the toast reports the removal.
+    await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const card = Array.from(sec.querySelectorAll(':scope > .p-card')).find((c) => {
+            const t = c.querySelector('.ucm-conf__toptitle');
+            return t && t.textContent.trim() === 'daemon:';
+        });
+        card.querySelector('.ucm-conf__leaf .ucm-iconbtn').click();
+    });
+    await wait(800);
+    const cf2 = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const title = (c) => { const t = c.querySelector('.ucm-conf__toptitle'); return t ? t.textContent.trim() : null; };
+        const titles = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')).map(title) : null;
+        return { titles, toast: document.body.textContent.includes('Value removed'), noError: !document.querySelector('.ucm-modal .p-status-label--negative') };
+    });
+    if (!cf2 || !cf2.titles || cf2.titles.includes('daemon:'))
+        console.log('PAGE ERROR: removing the last leaf of a top-level key did not drop the card (' + JSON.stringify(cf2 && cf2.titles) + ', round 48b)');
+    if (!cf2 || !cf2.toast)
+        console.log('PAGE ERROR: the value removal did not toast (round 48b)');
+    if (!cf2 || !cf2.noError)
+        console.log('PAGE ERROR: a config removal left an error chip (round 48b)');
+    await page.screenshot({ path: path.join(SHOTS, '13s-config-yaml-after-remove.png') });
+    await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
+    await wait(200);
 
     // ---- 4c. Round 47: two interface-card-style cards replace the
     // scrollable table. Card 1 "OS" = the model-assertion system snaps

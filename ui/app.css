@@ -680,6 +680,25 @@ html, body {
 .ucm-svc .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
 .ucm-svc .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
 .ucm-svc .p-switch__slider { background: #e0e0e0; }
+/* sections inside the config popup (Services, 48a / Configuration, 48b):
+   each owns its vertical gap so a trailing inline confirm row can tuck
+   below without doubling the space. */
+.ucm-svc-sec { margin: 0 0 1.1rem; }
+/* a config card's title is the bare top-level key — no trailing space,
+   tight left alignment (the services title is a plain word). */
+.ucm-conf__toptitle { padding-left: 0; }
+.ucm-conf__kv { display: flex; align-items: baseline; gap: .55rem; min-width: 0; }
+.ucm-conf__key { color: #3b3b3b; font-weight: 600; white-space: nowrap; }
+.ucm-conf__val { color: #555; word-break: break-word; }
+.ucm-conf__leaf { padding-top: .45rem; padding-bottom: .45rem; }
+.ucm-conf__leaf + .ucm-conf__leaf, .ucm-conf__leaf + .ucm-conf__node { border-top: 1px solid #f5f5f5; }
+.ucm-conf__node { padding-top: .45rem; padding-bottom: .1rem; }
+/* multiline string values: a pre block (like a YAML block scalar) */
+.ucm-conf__multi { margin: .1rem 0 0; padding: .45rem .6rem; background: #fafafa; border: 1px solid #eee; border-radius: .25rem; overflow-x: auto; white-space: pre; font-size: .8rem; line-height: 1.45; color: #555; }
+/* the trash removal button: same icon + tight box as the snaps row icons,
+   but its message span must stay display:none until hover/focus (the
+   .ucm-iconbtn override only hides it; the base is .p-iconbtn). */
+.ucm-conf__trash { flex: 0 0 auto; margin-left: .2rem; }
 
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }

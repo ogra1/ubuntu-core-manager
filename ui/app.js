@@ -1532,6 +1532,43 @@ function openSnapInfo(name) {
         filter.focus();
     }
 }
+/* ---- configuration cards (round 48b) -------------------------------------
+   The snap's existing config (GET /v2/snaps/{name}/conf — a flat
+   {dotted.key: scalar} map) is shown the way YAML shows it: one card per
+   TOP-LEVEL key (a `foo:` card), its dotted sub-keys as an indented tree
+   (foo.bar.baz -> 4-space indents, one per level), and a leaf value with a
+   trash icon (the snaps-page removal icon, .p-icon--delete). Trash sends
+   {key: null} to PUT /v2/snaps/{name}/conf (async 202, the round-1 contract)
+   and re-renders the cards — when a top-level key's last leaf is removed its
+   whole card disappears. Values are JSON-ish scalars; multiline strings are
+   shown block-style (like a YAML block scalar). */
+function confTree(root) {
+    const tree = {};
+    for (const [k, v] of Object.entries(root || {})) {
+        if (v === null) continue;
+        const parts = k.split('.');
+        let node = tree;
+        for (let i = 0; i < parts.length - 1; i++) {
+            const k = parts[i];
+            // Create/enter the subtree for the intermediate segments. A config
+            // doc is a flat {dotted: scalar} map; the intermediate levels are
+            // implicit. A key that is BOTH a scalar leaf and the prefix of a
+            // deeper key is not expressible in YAML (a key can't be a scalar
+            // and a map) — if it somehow occurs, the nesting wins (the scalar
+            // is dropped) rather than throwing.
+            if (node[k] === undefined) node[k] = {};
+            else if (typeof node[k] !== 'object' || node[k] === null || Array.isArray(node[k])) node[k] = {};
+            node = node[k];
+        }
+        node[parts[parts.length - 1]] = v;
+    }
+    return tree;
+}
+function confPath(prefix, seg) {
+    return prefix ? prefix + '.' + seg : seg;
+}
+const confValText = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+
 function openConfigModal(name) {
     // Same close behaviour as the snap-info modal: the Esc listener lives on
     // `document` for the popup's whole life and every close path removes it.
@@ -1555,6 +1592,22 @@ function openConfigModal(name) {
     box.append(backdrop, inner);
     document.body.append(box);
     close.focus();
+
+    // Confirm-gated actions: an inline .ucm-confirm row (the round-45 idiom)
+    // appended at the bottom of the popup body; it removes itself on Cancel
+    // or after the change settles. One confirm at a time. (Shared by the
+    // service switches, 48a, and the config trash removal, 48b.)
+    const askConfirm = (msg, confirmLabel, doIt) => {
+        if (box.querySelector('.ucm-confirm')) return;
+        const cbox = el('div', { class: 'ucm-confirm ucm-confirm--negative', style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem; flex-wrap:wrap;' });
+        const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: confirmLabel });
+        const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+        b.onclick = async () => { b.classList.add('is-disabled'); try { await doIt(); } finally { cbox.remove(); } };
+        cancel.onclick = () => cbox.remove();
+        cbox.append(el('i', { class: 'p-icon--question ucm-confirm__ic' }), el('p', { class: 'p-notification__message ucm-confirm__msg', text: msg }), b, cancel);
+        bodyBox.append(cbox);
+        b.focus();
+    };
 
     /* ---- services (round 48a) ---------------------------------------------
        snapd's service control (POST /v2/apps, live-verified) couples boot
@@ -1642,20 +1695,6 @@ function openConfigModal(name) {
                 el('div', { class: 'ucm-svc__main' }, el('span', { class: 'ucm-svc__name', text: s.name }), states),
                 el('div', { class: 'ucm-svc__switches' }, swRun, swBoot),
             );
-            // Confirm-gated direction: an inline .ucm-confirm row (the
-            // round-45 idiom) appended inside the popup; it removes itself on
-            // Cancel or after the change settles. One confirm at a time.
-            const askConfirm = (msg, confirmLabel, doIt) => {
-                if (box.querySelector('.ucm-confirm')) return;
-                const cbox = el('div', { class: 'ucm-confirm ucm-confirm--negative', style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem; flex-wrap:wrap;' });
-                const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: confirmLabel });
-                const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
-                b.onclick = async () => { b.classList.add('is-disabled'); try { await doIt(); } finally { cbox.remove(); } };
-                cancel.onclick = () => cbox.remove();
-                cbox.append(el('i', { class: 'p-icon--question ucm-confirm__ic' }), el('p', { class: 'p-notification__message ucm-confirm__msg', text: msg }), b, cancel);
-                bodyBox.append(cbox);
-                b.focus();
-            };
             swRun.addEventListener('change', () => {
                 if (servicesBusy) { swRun.querySelector('input').checked = active; return; }
                 if (active) {
@@ -1680,6 +1719,81 @@ function openConfigModal(name) {
         servicesSec.append(el('p', { class: 'ucm-info__sec', text: 'Services' }), card);
     }
 
+    /* ---- configuration (round 48b) ---------------------------------------- */
+    const configSec = el('div', { class: 'ucm-svc-sec ucm-conf-sec' });
+    let confBusy = false;
+
+    function confRow(node, prefix) {
+        const frag = document.createDocumentFragment();
+        Object.keys(node).sort().forEach((seg) => {
+            const full = confPath(prefix, seg);
+            const child = node[seg];
+            if (child && typeof child === 'object' && !Array.isArray(child)) {
+                frag.append(el('div', { class: 'ucm-conf__node', style: 'padding-left:' + (prefix ? prefix.split('.').length * 4 + 4 : 4) + 'px;' },
+                    el('span', { class: 'ucm-mono ucm-conf__key', text: seg + ':' })));
+                frag.append(confRow(child, full));
+            } else {
+                frag.append(confLeafRow(child, full, prefix ? prefix.split('.').length * 4 + 4 : 4));
+            }
+        });
+        return frag;
+    }
+
+    function confLeafRow(value, full, indent) {
+        const isMulti = typeof value === 'string' && value.indexOf('\n') !== -1;
+        const row = el('div', { class: 'ucm-conf__leaf ' + (isMulti ? 'ucm-conf__leaf--multi' : ''), style: 'padding-left:' + indent + 'px; display:flex; align-items:flex-start; gap:.6rem;' });
+        const kv = el('div', { class: 'ucm-conf__kv', style: 'min-width:0;' });
+        kv.append(el('span', { class: 'ucm-mono ucm-conf__key', text: full.split('.').pop() + ':' }));
+        kv.append(isMulti
+            ? el('pre', { class: 'ucm-conf__multi', text: value })
+            : el('span', { class: 'ucm-mono ucm-conf__val', text: confValText(value) }));
+        const trash = rowBtn('Remove ' + full, 'p-icon--delete', async () => {
+            if (confBusy) return;
+            confBusy = true;
+            try {
+                const change = await core.snaps.confSet(name, { [full]: null });
+                const done = await waitChangeSettled(change);
+                if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
+                    toast('negative', 'Removing the value failed', name + ': ' + full + ' — ' + (done.err || done.status));
+                } else {
+                    toast('positive', 'Value removed', name + ': ' + full);
+                }
+                let freshRoot = null;
+                try { freshRoot = await core.snaps.confGet(name); } catch { freshRoot = null; }
+                if (freshRoot) renderConfig(freshRoot); // re-fetch: the async PUT settled, the doc changed
+            } catch (e) { toastErr(e); }
+            finally { confBusy = false; }
+        });
+        row.append(kv, trash);
+        return row;
+    }
+
+    function renderConfig(root) {
+        configSec.innerHTML = '';
+        const tree = confTree(root);
+        const tops = Object.keys(tree);
+        configSec.append(el('p', { class: 'ucm-info__sec', text: 'Configuration' }));
+        if (!tops.length) {
+            configSec.append(el('p', { class: 'ucm-muted', style: 'margin:.2rem 0 0; font-size:.85rem;', text: 'No configuration set for this snap.' }));
+            return;
+        }
+        tops.sort().forEach((top) => {
+            const node = tree[top];
+            const isLeaf = !(node && typeof node === 'object');
+            const card = el('div', { class: 'p-card ucm-config__card' });
+            card.append(el('div', { class: 'p-card__header' },
+                el('div', { style: 'display:flex; align-items:center; gap:.6rem;' },
+                    el('p', { class: 'p-heading--5 ucm-snaps-card__title ucm-conf__toptitle', style: 'margin:0;', text: top + ':' }),
+                    el('span', { class: 'ucm-muted ucm-ifaces-card__counts', text: isLeaf ? '1 value' : 'nested' }))));
+            const rows = el('div', { class: 'ucm-config__cardbody' });
+            rows.append(isLeaf
+                ? confLeafRow(node, top, 4)
+                : confRow(node, top));
+            card.append(rows);
+            configSec.append(card);
+        });
+    }
+
     (async () => {
         let list = [];
         let loadErr = null;
@@ -1698,7 +1812,21 @@ function openConfigModal(name) {
         } else {
             renderServices(list);
         }
-        // (48b appends the config cards here, 48c the add-config form)
+        // 48b: the snap's existing config as per-top-level-key cards.
+        let root = {};
+        let confErr = null;
+        try { root = await core.snaps.confGet(name); }
+        catch (e) { confErr = e; }
+        bodyBox.append(configSec);
+        if (confErr) {
+            configSec.append(
+                el('p', { class: 'ucm-info__sec', text: 'Configuration' }),
+                el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load configuration: ' + confErr.message }),
+            );
+        } else {
+            renderConfig(root);
+        }
+        // (48c appends the add-config form here)
     })();
 }
 
