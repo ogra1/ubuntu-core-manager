@@ -610,6 +610,26 @@ function ok(name, cond, extra = '') {
     try { await m.controlSnapService('llama-cpp', '../etc', 'stop', {}); } catch (e) { badSvc = e; }
     ok('reject an invalid service name before socket', !!badSvc && /invalid service name/.test(badSvc.message), badSvc && badSvc.message);
 
+    // 48c2: every shipped icon asset must be WELL-FORMED XML. Chromium (the
+    // renderer + the harness) parses SVG-in-<img> leniently and will happily
+    // render a file with an undefined namespace prefix, but strict parsers
+    // (librsvg / eog / the kiosk image stack) FATAL on it — the round-48c
+    // suru-document.svg bug (kept inkscape: attrs on an svg-only root) drew
+    // blank. Guard the class, not just the one file.
+    const svgs = fs.readdirSync(path.join(__dirname, '..', 'build', 'images')).filter((f) => f.endsWith('.svg'));
+    ok('shipped SVG assets exist', svgs.length >= 10, svgs.join(', '));
+    const svgErr = (txt) => {
+        const declared = (txt.match(/xmlns:(\w+)=/g) || []).map((x) => x.slice(6, -1));
+        for (const pref of ['inkscape', 'sodipodi']) {
+            if (new RegExp('\\s' + pref + ':[\\w-]+="').test(txt) && !declared.includes(pref)) {
+                return pref + ': attribute used but its namespace is never declared';
+            }
+        }
+        return null;
+    };
+    const badSvgs = svgs.map((f) => { const e = svgErr(fs.readFileSync(path.join(__dirname, '..', 'build', 'images', f), 'utf8')); return e ? f + ': ' + e : null; }).filter(Boolean);
+    ok('every shipped SVG is well-formed XML (no unbound namespace prefixes)', badSvgs.length === 0, badSvgs.join(' | '));
+
     console.log(`\n================= ${passed} passed, ${failed} failed =================`);
     fs.rmSync(STATE, { recursive: true, force: true });
     fs.unlinkSync(SOCK);

@@ -1248,6 +1248,9 @@ function mockFactoryJs() {
         const baseCards = box.querySelectorAll('.ucm-conf-sec > .p-card').length;
         return {
             baseCards,
+            formCard: !!sec.querySelector('.p-card .ucm-conf-form'),
+            keyHelp: !!sec.querySelector('#cfgkGroup .p-form-help-text'),
+            valHelp: !!sec.querySelector('#cfgvGroup .p-form-help-text'),
             secHead: sec && sec.querySelector('.ucm-info__sec') ? sec.querySelector('.ucm-info__sec').textContent.trim() : null,
             keyId: sec ? !!sec.querySelector('#cfgk') : false,
             valIsInput: sec ? !!sec.querySelector('#cfgv') && sec.querySelector('#cfgv').tagName === 'INPUT' : false,
@@ -1266,24 +1269,39 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the value field is not meaningfully shorter than the key field (key ' + cf3.keyW + ' value ' + cf3.valW + ' diff ' + (cf3.keyW - cf3.valW) + ', want >=60, round 48c)');
     if (!cf3 || cf3.saveText !== 'Add value')
         console.log('PAGE ERROR: the save button is not labeled "Add value" (' + (cf3 && cf3.saveText) + ', round 48c)');
+    if (!cf3 || !cf3.formCard)
+        console.log('PAGE ERROR: the add-config form is not wrapped in a card like the rest of the popup (round 48c2)');
+    if (!cf3 || cf3.keyHelp !== false)
+        console.log('PAGE ERROR: the Key field still carries its help text (round 48c2)');
+    if (!cf3 || cf3.valHelp !== true)
+        console.log('PAGE ERROR: the Value field lost its help text (round 48c2)');
     await page.evaluate(() => { const b = document.querySelector('.ucm-modal__body'); if (b) b.scrollTop = b.scrollHeight; });
     await wait(150);
     await page.screenshot({ path: path.join(SHOTS, '13t-config-add-form.png') });
 
-    // Expand to multiline: the input becomes a textarea + the icon swaps to
-    // the collapse glyph.
-    await page.evaluate(() => { document.querySelector('.ucm-conf-form__iconbtn').click(); });
+    // Expand to multiline: hover (arm the p-tooltip), then click — the input
+    // becomes a textarea, the icon swaps to the collapse glyph, AND the tooltip
+    // must NOT linger (a click fires neither blur nor mouseleave, so the
+    // p-tooltip message stays display:block otherwise — the 48c2 fix hides it).
+    const tipEl = await page.$('.ucm-conf-form__iconbtn');
+    await tipEl.hover();
+    await wait(150);
+    await tipEl.click();
     await wait(150);
     const cf4 = await page.evaluate(() => {
         const sec = document.querySelector('.ucm-modal .ucm-conf-formsec');
         const icon = sec.querySelector('.ucm-conf-form__iconbtn i');
         const ta = sec.querySelector('#cfgv');
+        const t = sec.querySelector('.ucm-conf-form__iconbtn .p-tooltip__message');
         return {
             isTextarea: ta ? ta.tagName === 'TEXTAREA' : false,
             iconClass: icon ? icon.className : null,
             label: sec.querySelector('.ucm-conf-form__vlabel') ? sec.querySelector('.ucm-conf-form__vlabel').textContent.trim() : null,
+            tipHidden: t ? getComputedStyle(t).display === 'none' : false,
         };
     });
+    if (!cf4 || !cf4.tipHidden)
+        console.log('PAGE ERROR: the document-icon tooltip does not hide after the click (round 48c2)');
     if (!cf4 || !cf4.isTextarea)
         console.log('PAGE ERROR: clicking the document icon did not expand the value to multiline (' + JSON.stringify(cf4) + ', round 48c)');
     if (!cf4 || !/p-icon--collapse/.test(cf4.iconClass || ''))

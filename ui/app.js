@@ -1868,7 +1868,6 @@ function openConfigModal(name) {
             keyGroup.append(
                 el('label', { class: 'p-form__label', for: 'cfgk', text: 'Key' }),
                 el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgk', type: 'text', spellcheck: 'false', placeholder: 'e.g. foo.bar.baz' }),
-                el('p', { class: 'p-form-help-text', text: 'Dotted identifier (a–z, 0–9, “-”, “_”, “.”).' }),
                 el('p', { class: 'p-form-validation__message' }),
             );
             const valGroup = el('div', { class: 'p-form__group ucm-conf-form__valgroup', id: 'cfgvGroup' });
@@ -1878,14 +1877,26 @@ function openConfigModal(name) {
             const iconbtn = el('button', { class: 'p-button--base p-button ucm-iconbtn ucm-conf-form__iconbtn p-tooltip--top-right', type: 'button', 'aria-label': 'Use a multiline value (expand)', 'data-tooltip': 'Use a multiline value' },
                 el('i', { class: 'p-icon--document' }),
                 el('span', { class: 'p-tooltip__message', text: 'Use a multiline value' }));
-            iconbtn.addEventListener('click', () => { multi = !multi; formRenderValue(); });
+            iconbtn.addEventListener('click', () => {
+                // The p-tooltip clears on blur/mouseleave — a click (especially
+                // via keyboard/touch) fires neither, so the message would linger
+                // over the just-expanded field. Force-hide it on the toggle.
+                const tip = iconbtn.querySelector('.p-tooltip__message');
+                if (tip) tip.style.display = 'none';
+                multi = !multi;
+                formRenderValue();
+            });
             const valrow = el('div', { class: 'ucm-conf-form__valrow' }, valholder, iconbtn);
             valGroup.append(vlabel, valrow,
                 el('p', { class: 'p-form-help-text', text: 'A single line, or click the document icon to paste a multiline value (JSON, YAML, …).' }),
                 el('p', { class: 'p-form-validation__message' }));
             const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf-form__save', type: 'button', text: 'Add value' });
             form.append(keyGroup, valGroup, saveBtn);
-            formSec.append(el('p', { class: 'ucm-info__sec', text: 'Add configuration' }), form);
+            // 48c2: the form lives in a card, like the Services and
+            // configuration cards (no header — its own "Key" label leads it).
+            const formCard = el('div', { class: 'p-card ucm-config__card' },
+                el('div', { class: 'ucm-config__cardbody' }, form));
+            formSec.append(el('p', { class: 'ucm-info__sec', text: 'Add configuration' }), formCard);
             formRenderValue();
 
             saveBtn.onclick = async () => {
