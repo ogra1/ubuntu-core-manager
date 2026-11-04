@@ -1741,7 +1741,7 @@ function openConfigModal(name) {
 
     function confLeafRow(value, full, indent) {
         const isMulti = typeof value === 'string' && value.indexOf('\n') !== -1;
-        const row = el('div', { class: 'ucm-conf__leaf ' + (isMulti ? 'ucm-conf__leaf--multi' : ''), style: 'padding-left:' + indent + 'px; display:flex; align-items:flex-start; gap:.6rem;' });
+        const row = el('div', { class: 'ucm-conf__leaf ' + (isMulti ? 'ucm-conf__leaf--multi' : ''), style: 'padding-left:' + indent + 'px; display:flex; align-items:' + (isMulti ? 'flex-start' : 'center') + '; gap:.6rem;' });
         const kv = el('div', { class: 'ucm-conf__kv', style: 'min-width:0;' });
         kv.append(el('span', { class: 'ucm-mono ucm-conf__key', text: full.split('.').pop() + ':' }));
         kv.append(isMulti
@@ -1778,17 +1778,21 @@ function openConfigModal(name) {
             return;
         }
         tops.sort().forEach((top) => {
+            // 48b2: NO card header — the top-level key is the FIRST LINE of the
+            // YAML tree itself (the 48b header repeated it directly above,
+            // which read as "daemon: / daemon: true"). A scalar top-level key
+            // renders as the leaf "top: value"; a subtree as the node line
+            // "top:" with its children indented beneath it.
             const node = tree[top];
-            const isLeaf = !(node && typeof node === 'object');
             const card = el('div', { class: 'p-card ucm-config__card' });
-            card.append(el('div', { class: 'p-card__header' },
-                el('div', { style: 'display:flex; align-items:center; gap:.6rem;' },
-                    el('p', { class: 'p-heading--5 ucm-snaps-card__title ucm-conf__toptitle', style: 'margin:0;', text: top + ':' }),
-                    el('span', { class: 'ucm-muted ucm-ifaces-card__counts', text: isLeaf ? '1 value' : 'nested' }))));
             const rows = el('div', { class: 'ucm-config__cardbody' });
-            rows.append(isLeaf
-                ? confLeafRow(node, top, 4)
-                : confRow(node, top));
+            if (node && typeof node === 'object') {
+                rows.append(el('div', { class: 'ucm-conf__node', style: 'padding-left:4px;' },
+                    el('span', { class: 'ucm-mono ucm-conf__key', text: top + ':' })));
+                rows.append(confRow(node, top));
+            } else {
+                rows.append(confLeafRow(node, top, 4));
+            }
             card.append(rows);
             configSec.append(card);
         });

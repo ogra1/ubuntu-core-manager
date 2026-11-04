@@ -684,9 +684,16 @@ html, body {
    each owns its vertical gap so a trailing inline confirm row can tuck
    below without doubling the space. */
 .ucm-svc-sec { margin: 0 0 1.1rem; }
-/* a config card's title is the bare top-level key — no trailing space,
-   tight left alignment (the services title is a plain word). */
-.ucm-conf__toptitle { padding-left: 0; }
+/* 48b2: the Services card header still pairs a .p-heading--5 title with the
+   muted count — the bundle's stacked-heading padding-top (6.56px, the
+   round-40/47 trap) sits above the title's GLYPHS, so the count reads high
+   next to them even though the boxes are centered. Zero it (scoped: the
+   config cards carry no header). */
+.ucm-config .p-card__header .p-heading--5 { padding-top: 0; }
+/* 48b2: the trash removal button — the bundle .p-button margin (18.88px
+   bottom, the round-7 phantom) would push its box high inside the leaf row;
+   the row centers it instead. */
+.ucm-conf__leaf .ucm-iconbtn { margin: 0; }
 .ucm-conf__kv { display: flex; align-items: baseline; gap: .55rem; min-width: 0; }
 .ucm-conf__key { color: #3b3b3b; font-weight: 600; white-space: nowrap; }
 .ucm-conf__val { color: #555; word-break: break-word; }

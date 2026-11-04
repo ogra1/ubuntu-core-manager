@@ -1110,9 +1110,12 @@ function mockFactoryJs() {
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 
-    // ---- 4b-cfg. Round 48b: existing config as per-top-level-key YAML cards
-    // with a trash per value; removing a leaf re-renders, and a card vanishes
-    // once its last leaf is gone.
+    // ---- 4b-cfg. Round 48b/48b2: existing config as HEADERLESS per-
+    // top-level-key YAML cards (the top-level key is the first tree line,
+    // not a repeated card header); trash per value; removing a leaf re-
+    // renders and a card vanishes with its last value. Also guards the two
+    // alignment fixes: the Services card header (glyph-mid vs count) and
+    // the trash button's zeroed .p-button margin.
     await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
         const mc = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
@@ -1123,7 +1126,6 @@ function mockFactoryJs() {
         const box = document.querySelector('.ucm-modal');
         const sec = box.querySelector('.ucm-conf-sec');
         const cards = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')) : [];
-        const title = (c) => { const t = c.querySelector('.ucm-conf__toptitle'); return t ? t.textContent.trim() : null; };
         const readLeaf = (l) => {
             const kv = l.querySelector('.ucm-conf__kv');
             if (!kv) return null;
@@ -1131,51 +1133,95 @@ function mockFactoryJs() {
             const pre = kv.querySelector('.ucm-conf__multi');
             return { key: kv.querySelector('.ucm-conf__key').textContent.trim().replace(/:$/, ''), val: v ? v.textContent.trim() : null, pre: pre ? pre.textContent : null, pad: l.style.paddingLeft };
         };
-        const leavesOf = (c) => (c ? Array.from(c.querySelectorAll('.ucm-conf__leaf')).map(readLeaf).filter(Boolean) : null);
+        const leafByKey = (key) => {
+            const l = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((x) => {
+                const k = x.querySelector('.ucm-conf__key');
+                return k && k.textContent.trim().replace(/:$/, '') === key;
+            });
+            return l ? readLeaf(l) : null;
+        };
+        const cardWith = (text) => cards.find((c) => c.textContent.includes(text));
+        const daemonCard = cardWith('daemon:');
+        const firstNode = daemonCard ? daemonCard.querySelector('.ucm-config__cardbody > .ucm-conf__node') : null;
+        // the Services card header: glyph mids of the title vs the count
+        // (the .p-heading--5 padding-top trap shifts the title glyphs low).
+        const glyphMid = (node) => {
+            const r = document.createRange(); r.selectNodeContents(node);
+            const rs = Array.from(r.getClientRects());
+            return rs.length ? rs[0].top + rs[0].height / 2 : null;
+        };
+        const svcTitle = box.querySelector('.p-card__header .p-heading--5');
+        const svcCount = box.querySelector('.p-card__header .ucm-ifaces-card__counts');
+        const firstTrash = sec.querySelector('.ucm-conf__leaf .ucm-iconbtn');
+        // the trash glyph vs its value line (the 48b2 alignment fix): the
+        // log_dest scalar leaf gives a one-line value to compare against.
+        const logLeaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'log_dest';
+        });
+        const logVal = logLeaf ? logLeaf.querySelector('.ucm-conf__val') : null;
+        const logTrashIc = logLeaf ? logLeaf.querySelector('.ucm-iconbtn i') : null;
+        const trashDelta = (logVal && logTrashIc) ? Math.abs(glyphMid(logVal) - (logTrashIc.getBoundingClientRect().top + logTrashIc.getBoundingClientRect().height / 2)) : null;
         return {
             secHead: sec && sec.querySelector('.ucm-info__sec') ? sec.querySelector('.ucm-info__sec').textContent.trim() : null,
-            titles: cards.map(title),
-            daemonCard: leavesOf(cards.find((c) => title(c) === 'daemon:')),
-            secCard: leavesOf(cards.find((c) => title(c) === 'security_options:')),
-            logdest: leavesOf(cards.find((c) => title(c) === 'log_dest:')),
+            cardCount: cards.length,
+            confHeaders: sec.querySelectorAll('.p-card__header').length,
+            confTopTitles: sec.querySelectorAll('.ucm-conf__toptitle').length,
+            daemonFirstNode: firstNode ? { text: firstNode.querySelector('.ucm-conf__key').textContent.trim(), pad: firstNode.style.paddingLeft } : null,
+            preseed: leafByKey('preseed'),
+            tls: leafByKey('tls_version'),
+            logdest: leafByKey('log_dest'),
             trashCount: sec ? sec.querySelectorAll('.p-icon--delete').length : 0,
+            svcDelta: (svcTitle && svcCount) ? Math.abs(glyphMid(svcTitle) - glyphMid(svcCount)) : null,
+            trashMarginBottom: firstTrash ? getComputedStyle(firstTrash).marginBottom : null,
+            trashDelta,
         };
     });
     if (!cf1 || cf1.secHead !== 'Configuration')
         console.log('PAGE ERROR: no Configuration section in the config popup (' + (cf1 && cf1.secHead) + ', round 48b)');
-    if (!cf1 || JSON.stringify(cf1.titles) !== JSON.stringify(['daemon:', 'log_dest:', 'per_listener_settings:', 'persistence:', 'persistence_file:', 'security_options:']))
-        console.log('PAGE ERROR: config cards are not one per top-level key, sorted (' + (cf1 && JSON.stringify(cf1.titles)) + ', round 48b)');
-    if (!cf1 || !cf1.daemonCard || cf1.daemonCard.length !== 1 || cf1.daemonCard[0].key !== 'preseed' || !cf1.daemonCard[0].pre || cf1.daemonCard[0].pad !== '8px')
-        console.log('PAGE ERROR: the daemon card is not its single nested multiline leaf (daemon.preseed, 8px indent) (' + (cf1 && JSON.stringify(cf1.daemonCard)) + ', round 48b)');
-    if (!cf1 || !cf1.secCard || cf1.secCard.length !== 1 || cf1.secCard[0].key !== 'tls_version' || cf1.secCard[0].val !== 'tlsv1.2' || cf1.secCard[0].pad !== '8px')
-        console.log('PAGE ERROR: the nested dotted key is not indented one level deeper (security_options.tls_version) (' + (cf1 && JSON.stringify(cf1.secCard)) + ', round 48b)');
-    if (!cf1 || !cf1.logdest || cf1.logdest.length !== 1 || cf1.logdest[0].key !== 'log_dest' || cf1.logdest[0].val !== 'stdout' || cf1.logdest[0].pad !== '4px')
-        console.log('PAGE ERROR: the top-level scalar card is not its 4px leaf (log_dest: stdout) (' + (cf1 && JSON.stringify(cf1.logdest)) + ', round 48b)');
-    // 6 top-level keys, each one leaf (one of them multiline) = 6 trash icons
+    if (!cf1 || cf1.cardCount !== 6)
+        console.log('PAGE ERROR: expected one card per top-level key (6), got ' + (cf1 && cf1.cardCount) + ' (round 48b)');
+    if (!cf1 || cf1.confHeaders !== 0 || cf1.confTopTitles !== 0)
+        console.log('PAGE ERROR: the config cards still carry a redundant header (' + (cf1 && cf1.confHeaders) + ' headers / ' + (cf1 && cf1.confTopTitles) + ' titles, round 48b2)');
+    if (!cf1 || !cf1.daemonFirstNode || cf1.daemonFirstNode.text !== 'daemon:' || cf1.daemonFirstNode.pad !== '4px')
+        console.log('PAGE ERROR: the top-level key is not the first (4px) line of its card tree (' + (cf1 && JSON.stringify(cf1.daemonFirstNode)) + ', round 48b2)');
+    if (!cf1 || !cf1.preseed || cf1.preseed.pre === null || cf1.preseed.pad !== '8px')
+        console.log('PAGE ERROR: the nested multiline value is not the indented (8px) block leaf (daemon.preseed) (' + (cf1 && JSON.stringify(cf1.preseed)) + ', round 48b)');
+    if (!cf1 || !cf1.tls || cf1.tls.val !== 'tlsv1.2' || cf1.tls.pad !== '8px')
+        console.log('PAGE ERROR: the nested dotted key is not indented one level deeper (security_options.tls_version) (' + (cf1 && JSON.stringify(cf1.tls)) + ', round 48b)');
+    if (!cf1 || !cf1.logdest || cf1.logdest.val !== 'stdout' || cf1.logdest.pad !== '4px')
+        console.log('PAGE ERROR: the top-level scalar leaf is not at 4px (log_dest: stdout) (' + (cf1 && JSON.stringify(cf1.logdest)) + ', round 48b)');
     if (!cf1 || cf1.trashCount !== 6)
-        console.log('PAGE ERROR: trash icon count does not match the leaf count (' + (cf1 && cf1.trashCount) + ', round 48b)');
+        console.log('PAGE ERROR: trash icon count does not match the value count (' + (cf1 && cf1.trashCount) + ', round 48b)');
+    if (!cf1 || cf1.svcDelta === null || cf1.svcDelta > 1)
+        console.log('PAGE ERROR: the Services header title/count glyph mids differ by ' + (cf1 && cf1.svcDelta) + 'px (want <=1, round 48b2)');
+    if (!cf1 || cf1.trashMarginBottom !== '0px')
+        console.log('PAGE ERROR: the config trash button still carries the .p-button margin (' + (cf1 && cf1.trashMarginBottom) + ', round 48b2)');
+    if (!cf1 || cf1.trashDelta === null || cf1.trashDelta > 1)
+        console.log('PAGE ERROR: the trash glyph is not vertically centred against its value (' + (cf1 && cf1.trashDelta) + 'px, want <=1, round 48b2)');
     await page.screenshot({ path: path.join(SHOTS, '13r-config-yaml-cards.png') });
 
-    // Remove the daemon.preseed leaf (no confirm — it is a config value, not a
-    // running-state op) -> the daemon card vanishes (its last child is gone)
+    // Remove the daemon.preseed value (no confirm — it is a config value, not
+    // a running-state op) -> the daemon card vanishes (its last line is gone)
     // and the toast reports the removal.
     await page.evaluate(() => {
         const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
-        const card = Array.from(sec.querySelectorAll(':scope > .p-card')).find((c) => {
-            const t = c.querySelector('.ucm-conf__toptitle');
-            return t && t.textContent.trim() === 'daemon:';
-        });
+        const card = Array.from(sec.querySelectorAll(':scope > .p-card')).find((c) => c.textContent.includes('preseed'));
         card.querySelector('.ucm-conf__leaf .ucm-iconbtn').click();
     });
     await wait(800);
     const cf2 = await page.evaluate(() => {
         const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
-        const title = (c) => { const t = c.querySelector('.ucm-conf__toptitle'); return t ? t.textContent.trim() : null; };
-        const titles = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')).map(title) : null;
-        return { titles, toast: document.body.textContent.includes('Value removed'), noError: !document.querySelector('.ucm-modal .p-status-label--negative') };
+        const cards = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')) : [];
+        return {
+            cardCount: cards.length,
+            daemonGone: !cards.some((c) => c.textContent.includes('preseed') || c.textContent.includes('daemon:')),
+            toast: document.body.textContent.includes('Value removed'),
+            noError: !document.querySelector('.ucm-modal .p-status-label--negative'),
+        };
     });
-    if (!cf2 || !cf2.titles || cf2.titles.includes('daemon:'))
-        console.log('PAGE ERROR: removing the last leaf of a top-level key did not drop the card (' + JSON.stringify(cf2 && cf2.titles) + ', round 48b)');
+    if (!cf2 || cf2.cardCount !== 5 || !cf2.daemonGone)
+        console.log('PAGE ERROR: removing the last value of a top-level key did not drop the card (' + JSON.stringify(cf2) + ', round 48b)');
     if (!cf2 || !cf2.toast)
         console.log('PAGE ERROR: the value removal did not toast (round 48b)');
     if (!cf2 || !cf2.noError)
