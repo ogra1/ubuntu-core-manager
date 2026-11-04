@@ -1328,8 +1328,61 @@ function openSnapInfo(name) {
                 el('dd', { text: links[k], class: 'mono' }))));
             bodyBox.append(lk);
         }
+        // components (round 47m) — offered by the snap, each install/removeable;
+        // renders nothing when the snap has none (most snaps don't)
+        renderComponents();
         // the channel switcher panel (round 47g) — empty until opened
         bodyBox.append(el('div', { id: 'snapsInfoPicker' }));
+    }
+
+    // ---------------- components (round 47m) -------------------------
+    // The single-snap object carries `components[]`. A component's installed
+    // state is its revision: "unset" = offered but NOT installed; a numeric
+    // revision (plus installed-size / install-date) = installed (LIVE-verified
+    // against llama-cpp on snapd 2.77.1). Install/remove POST the SAME route
+    // as a snap action but with a `components` array — a component op never
+    // touches the parent snap.
+    function renderComponents() {
+        const comps = (info && Array.isArray(info.components)) ? info.components : [];
+        if (!comps.length) return;
+        bodyBox.append(el('p', { class: 'ucm-info__sec', text: 'Components' }));
+        const clist = el('div', { class: 'ucm-info__comps' });
+        comps.forEach((c) => {
+            const installed = c.revision != null && String(c.revision) !== 'unset';
+            const ver = c.version ? ' ' + c.version : '';
+            const meta = c.installedSize != null ? ' · ' + fmtBytes(c.installedSize) : '';
+            clist.append(el('div', { class: 'ucm-info__comp' + (installed ? ' is-installed' : '') },
+                el('div', { class: 'ucm-info__comp-main' },
+                    el('span', { class: 'ucm-info__comp-name', text: c.name + ver }),
+                    c.summary ? el('span', { class: 'ucm-info__comp-summary', text: c.summary }) : null,
+                    el('span', { class: 'ucm-info__comp-meta', text: (installed ? 'Installed' : 'Not installed') + meta })),
+                el('button', {
+                    class: 'p-button--base p-button ucm-info__comp-btn', type: 'button',
+                    'aria-label': (installed ? 'Remove component ' : 'Install component ') + c.name + ' of ' + info.name,
+                    text: installed ? 'Remove' : 'Install',
+                    onclick: (e) => compOp(c, installed, e.currentTarget),
+                })));
+        });
+        bodyBox.append(clist);
+    }
+
+    async function compOp(c, installed, btn) {
+        const nm = info.name;
+        const act = installed ? 'remove' : 'install';
+        if (btn) { btn.classList.add('is-disabled'); btn.disabled = true; }
+        try {
+            const change = await core.snaps.component(nm, act, c.name);
+            toast('positive', (installed ? 'Component removal started' : 'Component install started'),
+                nm + '+' + c.name + ' is ' + (installed ? 'being removed' : 'being installed') + '…');
+            const done = await waitChangeSettled(change);
+            info = await core.snaps.info(nm); // reload (component revision + size)
+            renderSnapInfo();
+            let store2 = null;
+            try { store2 = await core.snaps.search(nm); } catch (e2) { /* keep the row as-is */ }
+            renderChannelRow(nm, (store2 && store2[0]) ? store2 : []);
+            if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
+                toast('negative', 'Component change finished with an error', nm + '+' + c.name + ': ' + (done.err || done.status));
+        } catch (e) { toastErr(e); }
     }
 
     function renderChannelRow(nm, store) {

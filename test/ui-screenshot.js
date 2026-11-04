@@ -88,6 +88,19 @@ const STORE = {
     mosquitto: { 'latest/stable': {}, 'latest/edge': {}, '2.0/stable': {} },
 };
 
+// Snap COMPONENTS (round 47m) — the single-snap object's `components` list.
+// revision "unset" = offered but NOT installed; numeric revision (+ installed-
+// size/install-date) = installed. LIVE shape from GET /v2/snaps/llama-cpp.
+const COMPONENTS = {
+    htop: [
+        { name: 'extra', type: 'standard', version: '3.3', summary: 'Extra theme pack',
+          description: 'Extra theme pack for htop.', revision: 'unset' },
+        { name: 'plugin', type: 'standard', version: '3.3', summary: 'Extra plugin',
+          description: 'Extra plugin for htop.', revision: 88, installedSize: 1048576,
+          installDate: '2026-10-20T09:15:00Z' },
+    ],
+};
+
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
     htop: { port: '8080', 'logging.level': 'info' },
@@ -152,6 +165,7 @@ function mockFactoryJs() {
         const CONF = ${JSON.stringify(SNAP_CONF)};
         const INFO = ${JSON.stringify(SNAP_INFO)};
         const STORE = ${JSON.stringify(STORE)};
+        const COMPONENTS = ${JSON.stringify(COMPONENTS)};
         const CHANGES = {};
         let IFC = ${JSON.stringify(IFACES)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
@@ -324,7 +338,8 @@ function mockFactoryJs() {
                 async info(n) {
                     const s = SNAPS.find((x) => x.name === n);
                     if (!s) return null;
-                    return Object.assign({}, s, INFO[n] || {});
+                    return Object.assign({}, s, INFO[n] || {},
+                        (COMPONENTS[n] ? { components: JSON.parse(JSON.stringify(COMPONENTS[n])) } : {}));
                 },
                 // Store search/install: unauthenticated by design (model
                 // attachment at image build time) — no store login needed.
@@ -375,6 +390,20 @@ function mockFactoryJs() {
                     }, a === 'refresh' ? 400 : 1200); // refresh (channel switch) settles fast;
                     // remove/disable/etc. keep the 1.2s window so the inline
                     // confirm cards stay visible for their shots (rounds 45/47c)
+                    return { id, change: id };
+                },
+                async component(n, a, c) {
+                    if (a !== 'install' && a !== 'remove') throw new Error('component action not permitted: ' + a);
+                    const list = COMPONENTS[n] || [];
+                    const comp = list.find((x) => x.name === c);
+                    if (!comp) throw new Error('component not found: ' + c);
+                    const id = '900';
+                    CHANGES[id] = { id, status: 'Doing', kind: a + '-component', t0: Date.now() };
+                    setTimeout(() => {
+                        if (a === 'install') { comp.revision = String(Number(comp.revision === 'unset' ? 0 : comp.revision) + 1); comp.installedSize = 2097152; comp.installDate = new Date().toISOString(); }
+                        else { comp.revision = 'unset'; delete comp.installedSize; delete comp.installDate; }
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 400);
                     return { id, change: id };
                 },
                 async confGet(n, key) {
@@ -1398,6 +1427,84 @@ function mockFactoryJs() {
     if (swLocal.hasSwitcher) console.log('PAGE ERROR: a locally-built snap (x revision) offers a Switch channel button (round 47h)');
     if (!swLocal.local) console.log('PAGE ERROR: a locally-built snap is not marked local in the channel row (round 47h)');
     if (swLocal.version !== '1.2 (x1)') console.log('PAGE ERROR: the local gadget revision is not x-prefixed in the mock (' + swLocal.version + ', want 1.2 (x1))');
+    await page.keyboard.down('Escape');
+    await page.keyboard.up('Escape');
+    await wait(200);
+
+    // ---- 4m. Round 47m: snap COMPONENTS in the info modal. htop offers two
+    // (plugin = installed, extra = not). Each is an install/remove button; a
+    // component op flips the component's revision and reloads the card. (No
+    // remove is driven here — it would leave the mock state changed for the
+    // later Disable/config steps; the remove path is covered by integration.)
+    await page.evaluate(() => {
+        const n = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name'))
+            .find((n) => n.textContent.trim() === 'htop');
+        if (!n) throw new Error('htop name cell missing (4m)');
+        n.click();
+    });
+    await wait(700);
+    const comp = await page.evaluate(() => {
+        const body = document.querySelector('.ucm-modal .ucm-info');
+        const sec = Array.from(body.querySelectorAll('.ucm-info__sec')).find((h) => h.textContent.trim() === 'Components');
+        const rows = Array.from(body.querySelectorAll('.ucm-info__comp'));
+        const rowOf = (nm) => rows.find((r) => { const s = r.querySelector('.ucm-info__comp-name'); return s && s.textContent.indexOf(nm) === 0; });
+        const read = (r) => r ? {
+            name: r.querySelector('.ucm-info__comp-name').textContent.trim(),
+            summary: r.querySelector('.ucm-info__comp-summary') ? r.querySelector('.ucm-info__comp-summary').textContent.trim() : null,
+            meta: r.querySelector('.ucm-info__comp-meta').textContent.trim(),
+            installed: r.classList.contains('is-installed'),
+            btn: r.querySelector('.ucm-info__comp-btn').textContent.trim(),
+            aria: r.querySelector('.ucm-info__comp-btn').getAttribute('aria-label'),
+        } : null;
+        const extra = rowOf('extra'); const plugin = rowOf('plugin');
+        return { hasSec: !!sec, count: rows.length, extra: read(extra), plugin: read(plugin) };
+    });
+    if (!comp.hasSec) console.log('PAGE ERROR: htop shows no Components section (it offers two, round 47m)');
+    else {
+        if (comp.count !== 2) console.log('PAGE ERROR: htop should list 2 components (' + comp.count + ', round 47m)');
+        if (!comp.plugin || !comp.plugin.installed || comp.plugin.btn !== 'Remove')
+            console.log('PAGE ERROR: the installed component (plugin) is not marked installed with a Remove button: ' + JSON.stringify(comp.plugin));
+        if (comp.plugin && comp.plugin.meta.indexOf('Installed') !== 0)
+            console.log('PAGE ERROR: the installed component meta is not "Installed …" (got ' + JSON.stringify(comp.plugin.meta) + ')');
+        if (!comp.extra || comp.extra.installed || comp.extra.btn !== 'Install')
+            console.log('PAGE ERROR: the not-installed component (extra) should show an Install button: ' + JSON.stringify(comp.extra));
+        if (comp.extra && comp.extra.meta.indexOf('Not installed') !== 0)
+            console.log('PAGE ERROR: the not-installed component meta is not "Not installed" (got ' + JSON.stringify(comp.extra.meta) + ')');
+        // drive a component INSTALL — the row must flip to installed (and the
+        // card reload, leaving the other component untouched)
+        await page.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('.ucm-info__comp'));
+            const r = rows.find((r) => r.querySelector('.ucm-info__comp-name').textContent.trim().indexOf('extra') === 0);
+            r.querySelector('.ucm-info__comp-btn').click();
+        });
+        await wait(800); // 400ms mock settle + margin
+        const comp2 = await page.evaluate(() => {
+            const body = document.querySelector('.ucm-modal .ucm-info');
+            const rows = Array.from(body.querySelectorAll('.ucm-info__comp'));
+            const read = (nm) => { const r = rows.find((r) => r.querySelector('.ucm-info__comp-name').textContent.trim().indexOf(nm) === 0);
+                return r ? { installed: r.classList.contains('is-installed'), btn: r.querySelector('.ucm-info__comp-btn').textContent.trim() } : null; };
+            return { extra: read('extra'), plugin: read('plugin') };
+        });
+        if (!comp2.extra || !comp2.extra.installed || comp2.extra.btn !== 'Remove')
+            console.log('PAGE ERROR: after a component install the component is not re-rendered as installed: ' + JSON.stringify(comp2.extra));
+        if (!comp2.plugin || !comp2.plugin.installed || comp2.plugin.btn !== 'Remove')
+            console.log('PAGE ERROR: the OTHER component changed by a component install: ' + JSON.stringify(comp2.plugin));
+        await page.screenshot({ path: path.join(SHOTS, '13m-snap-components.png') });
+        await page.keyboard.down('Escape');
+        await page.keyboard.up('Escape');
+        await wait(200);
+    }
+    const compGone = await page.evaluate(() => !document.querySelector('.ucm-modal'));
+    if (!compGone) console.log('PAGE ERROR: Esc did not close the modal after the component step (round 47m)');
+    // a snap with NO components must not show the section
+    await page.evaluate(() => {
+        const n = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name')).find((n) => n.textContent.trim() === 'core24');
+        if (!n) throw new Error('core24 name cell missing (4m)');
+        n.click();
+    });
+    await wait(600);
+    const compNone = await page.evaluate(() => !document.querySelector('.ucm-info__comps'));
+    if (!compNone) console.log('PAGE ERROR: a snap without components still shows a Components section (round 47m)');
     await page.keyboard.down('Escape');
     await page.keyboard.up('Escape');
     await wait(200);

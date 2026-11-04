@@ -149,7 +149,7 @@ function ok(name, cond, extra = '') {
         && m.modelSystemSnaps({ base: 'core24' }).size === 1,
         JSON.stringify(Array.from(m.modelSystemSnaps(mod))));
     const snaps = await m.listSnaps();
-    ok('listSnaps returns array of 3', Array.isArray(snaps) && snaps.length === 3, JSON.stringify(snaps).slice(0, 60));
+    ok('listSnaps returns array of 4', Array.isArray(snaps) && snaps.length === 4, JSON.stringify(snaps).slice(0, 60));
     const find = await m.searchSnaps('fire');
     ok('store search filters', Array.isArray(find) && find.length === 1 && find[0].name === 'firefox', JSON.stringify(find).slice(0, 80));
     const conns = await m.listInterfaces();
@@ -288,6 +288,31 @@ function ok(name, cond, extra = '') {
     try { rev2 = await m.snapAction('mosquitto', 'revert'); } catch (e) { revErr = e; }
     ok('revert allowed once a previous revision exists (after a refresh)', rev2 && /^[0-9]+$/.test(String(rev2.id)), JSON.stringify(rev2));
     if (rev2) { await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(rev2.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })(); }
+
+    // round 47m: snap COMPONENTS (source client/snap_op.go + LIVE snapd 2.77.1
+    // verified over /run/snapd.socket with llama-cpp): a component install/remove
+    // is POST /v2/snaps/{name} with {"action":"install"|"remove","components":[c]}
+    // — an async change, and it never touches the parent snap. The single-snap
+    // GET carries components[] where revision "unset" = not installed and a
+    // numeric revision = installed.
+    const ci = await m.snapComponent('comp-demo', 'install', 'extra');
+    ok('component install returns a change id', ci && /^[0-9]+$/.test(String(ci.id)), JSON.stringify(ci));
+    await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(ci.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })();
+    const ci2 = await m.getSnapInfo('comp-demo');
+    ok('component install flipped revision unset -> numeric', (ci2.components || []).some((c) => c.name === 'extra' && c.revision !== 'unset'), JSON.stringify((ci2.components || []).find((c) => c.name === 'extra')));
+    const crm = await m.snapComponent('comp-demo', 'remove', 'plugin');
+    ok('component remove returns a change id', crm && /^[0-9]+$/.test(String(crm.id)), JSON.stringify(crm));
+    await (async () => { for (let i = 0; i < 40; i++) { const c = await m.getChange(String(crm.id)); if (c && /^(done|error|undo|undoing)$/i.test(c.status)) return c; await new Promise((r) => setTimeout(r, 30)); } })();
+    const cj = await m.getSnapInfo('comp-demo');
+    ok('component remove flipped revision -> unset', (cj.components || []).some((c) => c.name === 'plugin' && c.revision === 'unset'), JSON.stringify((cj.components || []).find((c) => c.name === 'plugin')));
+    const csnaps = await m.listSnaps();
+    ok('parent snap untouched by component ops (comp-demo present, revision intact)', csnaps.some((x) => x.name === 'comp-demo' && x.revision === 500), JSON.stringify(csnaps.find((x) => x.name === 'comp-demo')));
+    let compBad = null;
+    try { await m.snapComponent('comp-demo', 'enable', 'extra'); } catch (e) { compBad = e; }
+    ok('snapComponent rejects a non install/remove action', !!compBad && /component action not permitted/.test(compBad.message), compBad && compBad.message);
+    let compBadName = null;
+    try { await m.snapComponent('comp-demo', 'install', '../etc'); } catch (e) { compBadName = e; }
+    ok('snapComponent rejects an invalid component token', !!compBadName && /invalid component name/.test(compBadName.message), compBadName && compBadName.message);
     ok('revert restored the previous revision', (await m.listSnaps()).find((x) => x.name === 'mosquitto').revision == mosqRev, JSON.stringify(mosq2 && mosq2.revision));
 
 

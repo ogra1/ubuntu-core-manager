@@ -115,6 +115,7 @@ const api = Object.freeze({
         search: invoke('snaps:search'),         // (query, limit?) — store
         install: invoke('snaps:install'),       // (name, channel='stable') — store
         action: invoke('snaps:action'),         // (name, action, extra?)
+        component: invoke('snaps:component'),   // (name, 'install'|'remove', component) — round 47m
         confGet: invoke('snaps:conf-get'),      // (name, key?)
         confSet: invoke('snaps:conf-set'),      // (name, {key: scalar})
     }),

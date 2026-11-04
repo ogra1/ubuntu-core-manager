@@ -16,6 +16,22 @@ const path = require('path');
 
 const SNAPS = [
     {
+        // round 47m: a snap that OFFERS components (LIVE-VERIFIED shape from
+        // GET /v2/snaps/llama-cpp on snapd 2.77.1). A component's revision is
+        // "unset" when offered-but-not-installed and numeric (+installed-size/
+        // install-date) once installed. Never removed by the other tests.
+        name: 'comp-demo', version: '1.0', revision: 500, channel: 'latest/stable',
+        status: 'active', type: 'app', confinement: 'strict',
+        'tracking-channel': 'latest/stable', private: false, installDate: '2026-03-01T00:00:00Z',
+        components: [
+            { name: 'extra', type: 'standard', version: '1.0', summary: 'Extra theme pack',
+              description: 'A sample component.', revision: 'unset' },
+            { name: 'plugin', type: 'standard', version: '1.0', summary: 'Extra plugin',
+              description: 'A sample component.', revision: 88, installedSize: 1048576,
+              installDate: '2026-03-01T00:00:00Z' },
+        ],
+    },
+    {
         name: 'core24', version: '24.04', revision: 4110, channel: '24.04',
         status: 'active', type: 'base', confinement: 'strict', 'tracking-channel': '24.04/stable',
         private: false, installDate: '2026-01-01T00:00:00Z',
@@ -222,7 +238,9 @@ function makeServer(socketPath, state) {
                     if (!allowed.includes(data.action)) {
                         return json(res, 400, { kind: 'not-found', message: `cannot run action "${data.action}" on snap "${name}"` });
                     }
-                    if (data.action === 'install' && SNAPS.find((s) => s.name === name)) {
+                    // an 'install' WITH components targets only the components of
+                    // an already-installed snap — allow it (round 47m, live snapd).
+                    if (data.action === 'install' && !Array.isArray(data.components) && SNAPS.find((s) => s.name === name)) {
                         return json(res, 400, { kind: 'snap-already-installed', message: `snap "${name}" is already installed` });
                     }
                     // Real snapd semantics: the write returns a change id; the snap
@@ -240,6 +258,18 @@ function makeServer(socketPath, state) {
                             return json(res, 400, { message: `cannot revert "${name}": no revision to revert to` });
                         }
                     }
+                    // round 47m: component ops — {"action":install|remove,
+                    // "components":[c]} — mutate the component's installed state
+                    // (revision "unset" <-> numeric) WITHOUT touching the parent
+                    // snap. Same async 202 + settle pattern as snap writes.
+                    if (Array.isArray(data.components) && data.components.length) {
+                        const s = SNAPS.find((x) => x.name === name);
+                        const comps = (s && Array.isArray(s.components)) ? s.components : [];
+                        comps.forEach((c) => { if (data.components.indexOf(c.name) >= 0) {
+                            if (data.action === 'install') { c.revision = String(Math.floor(Math.random() * 900 + 100)); c.installedSize = 2097152; c.installDate = new Date().toISOString(); }
+                            else { delete c.installedSize; delete c.installDate; c.revision = 'unset'; }
+                        } });
+                    }
                     const id = String(state.changeSeq += 1);
 
                     // LIVE-VERIFIED shape (snapd 2.77): 'summary' is a plain
@@ -256,14 +286,19 @@ function makeServer(socketPath, state) {
                     // applies a snap's list change atomically when the change
                     // completes) — otherwise a poll that sees "Done" could still
                     // read the pre-mutation list.
+                    // a component-only remove ("components":[c]) must NOT splice the
+                    // parent snap out — it only flips the component (round 47m).
+                    const isCompRemove = data.action === 'remove' && Array.isArray(data.components) && data.components.length;
                     if (data.action === 'remove') {
                         // LIVE-VERIFIED (snapd 2.77): the in-flight status oscillates
                         // "Doing" <-> transient "Do" before the terminal state. The
                         // client must keep polling through "Do".
                         setTimeout(() => { if (change.status === 'Doing') change.status = 'Do'; }, 60);
                         setTimeout(() => {
-                            const i = SNAPS.findIndex((x) => x.name === name);
-                            if (i >= 0) SNAPS.splice(i, 1);
+                            if (!isCompRemove) {
+                                const i = SNAPS.findIndex((x) => x.name === name);
+                                if (i >= 0) SNAPS.splice(i, 1);
+                            }
                             change.status = 'Done';
                         }, 320);
                     } else if (data.action === 'disable') {
@@ -293,6 +328,13 @@ function makeServer(socketPath, state) {
                         // install / refresh / switch: a fresh revision lands (the old
                         // one becomes the revert target).
                         setTimeout(() => {
+                            // a component-only install already flipped the component's
+                            // state above and must NOT bump the parent snap's revision
+                            // (live snapd: a component install keeps the parent intact).
+                            if (Array.isArray(data.components) && data.components.length) {
+                                change.status = 'Done';
+                                return;
+                            }
                             if (SNAPS.some((x) => x.name === name)) {
                                 const s = SNAPS.find((x) => x.name === name);
                                 state.prevRev[name] = s.revision;

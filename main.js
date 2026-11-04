@@ -694,6 +694,20 @@ async function snapAction(name, action, extra = {}) {
     return snapdRequest('POST', '/v2/snaps/' + encodeURIComponent(name), { body, auth: A() });
 }
 
+/** POST /v2/snaps/{name} with {"action":"install"|"remove","components":[c]}
+    — installs or removes ONE snap COMPONENT (round 47m). Live-verified
+    against snapd 2.77.1: the parent snap is untouched by a component op.
+    (client/snap_op.go: Install/Remove(name, components) -> doSnapAction.) */
+async function snapComponent(name, action, component) {
+    const ALLOWED = new Set(['install', 'remove']);
+    if (!validSnapName(name)) throw new Error('invalid snap name');
+    if (!ALLOWED.has(action)) throw new Error('component action not permitted: ' + JSON.stringify(action));
+    if (typeof component !== 'string' || !/^[\w.-]+$/.test(component) || component.length > 70)
+        throw new Error('invalid component name: ' + JSON.stringify(component));
+    return snapdRequest('POST', '/v2/snaps/' + encodeURIComponent(name),
+        { body: { action, components: [component] }, auth: A() });
+}
+
 /* ------------------------------------------------------------------ *
  * 7. Write APIs — configuration (snap conf + netplan network setup)
  *
@@ -1071,7 +1085,7 @@ const api = {
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapConfig, getNetplan, listInterfaces,
 
-    installSnap, snapAction,
+    installSnap, snapAction, snapComponent,
     setSnapConfig, applyNetplanConfig,
     connectInterface, disconnectInterface,
 };
@@ -1331,6 +1345,7 @@ function initElectron() {
     ipcMain.handle('snaps:search', guard((q, n) => searchSnaps(q, n)));
     ipcMain.handle('snaps:install', guard((name, channel) => { requireAuth(); return installSnap(name, channel); }));
     ipcMain.handle('snaps:action', guard((name, action, extra) => { requireAuth(); return snapAction(name, action, extra || {}); }));
+    ipcMain.handle('snaps:component', guard((name, action, component) => { requireAuth(); return snapComponent(name, action, component); }));
     ipcMain.handle('snaps:conf-get', guard((name, key) => getSnapConfig(name, key || null)));
     ipcMain.handle('snaps:conf-set', guard((name, conf) => { requireAuth(); return setSnapConfig(name, conf); }));
 
