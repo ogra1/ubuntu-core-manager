@@ -1172,12 +1172,25 @@ async function searchStore() {
     }
 }
 
-/* ------------------------- snap configuration ---------------------------- */
-/* Per-snap config (snapd /v2/snaps/{name}/conf). Keys follow snapd's dotted
-   identifier grammar (validated again in main.js before the socket). Values
-   are scalars: string / number / boolean, or null (removes the key). The
-   modal edits ONE key at a time — snapd's conf API is a key map, and that
-   matches how snap configs actually look (rare, small, scalar). */
+/* ------------------------- snap configuration (round 48) ------------------ */
+/* The gear on a snap row opens the snap's CONFIGURATION popup. It reuses the
+   snap-info modal chrome (round 47c/47g/47d) so it behaves IDENTICALLY to
+   that popup: full-screen backdrop, pinned dark head, whitened close icon
+   (.ucm-info__close), a body capped to the 900px kiosk, Esc closes via a
+   document-scoped listener (focus can fall to <body> after an async
+   re-render), and toasts float top-centre ABOVE the card (round 47n: z 80 >
+   60) so in-popup notifications are always visible.
+   Built in chunks (user request):
+     48a  Services card at the top — one row per daemon the snap ships, a
+          "Running" switch (stopping is confirm-gated) and a "Start on boot"
+          switch (disabling at boot is confirm-gated). snapd couples boot
+          state to running state (live-verified: there is no boot-only
+          enable/disable — stop+disable stops AND clears boot, start+enable
+          starts AND sets boot), and the confirm copy states that.
+     48b  the snap's existing config as one card per top-level key, a
+          YAML-ish indented tree, trash-per-value removal.
+     48c  an add-config form (dotted key + value; a suru document icon
+          expands the value field to multiline). */
 const RE_CONF_KEY_UI = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)*$/;
 
 /* ------------------------- snap info modal (round 47c) ------------------- */
@@ -1520,149 +1533,167 @@ function openSnapInfo(name) {
     }
 }
 function openConfigModal(name) {
+    // Same close behaviour as the snap-info modal: the Esc listener lives on
+    // `document` for the popup's whole life and every close path removes it.
     const box = el('div', { class: 'ucm-modal' });
-    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => box.remove() });
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    const closeModal = () => { document.removeEventListener('keydown', onKey); box.remove(); };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    document.addEventListener('keydown', onKey);
+
     const inner = el('div', { class: 'ucm-modal__card' });
-
-    const head = el('div', { class: 'ucm-modal__head' });
-    head.append(
-        el('p', { class: 'p-heading--5', text: `Configure ${name}`, style: 'margin:0;' }),
-        el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => box.remove() },
-            el('i', { class: 'p-icon--close' })),
-    );
-
+    // Dark head -> whiten the close exactly like the info modal (round 47d):
+    // the bundle p-icon is a fixed #000 data-URI, only a filter can whiten it.
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
+        el('i', { class: 'p-icon--close ucm-info__close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'Configure ' + name, style: 'margin:0;' }),
+        close));
     const bodyBox = el('div', { class: 'ucm-modal__body ucm-config' });
-    bodyBox.append(el('p', { class: 'ucm-muted', text: 'Loading configuration…', id: 'cfgStatus' }));
-    inner.append(head, bodyBox);
+    bodyBox.append(el('p', { class: 'ucm-muted ucm-config__loading', style: 'padding:.5rem 0;', text: 'Loading configuration…' }));
+    inner.append(bodyBox);
     box.append(backdrop, inner);
     document.body.append(box);
+    close.focus();
 
-    let current = null; // { key, label, has, type }
-    const close = () => box.remove();
+    /* ---- services (round 48a) ---------------------------------------------
+       snapd's service control (POST /v2/apps, live-verified) couples boot
+       state to running state — the only valid ops are start / start+enable /
+       stop / stop+disable / restart. So:
+         "Running"     — ON->OFF is confirm-gated (stopping can interrupt the
+                         snap's function); OFF->ON is one click (the safe,
+                         corrective direction — the round-45 idiom).
+         "Start on boot" — ON->OFF is confirm-gated, and its copy states that
+                         the service is STOPPED at the same time; OFF->ON is
+                         one click and starts the service (the only way to
+                         set boot in the API). */
+    const servicesSec = el('div', {});
+    let servicesBusy = false;
 
-    function typeSelect() {
-        const sel = el('select', { id: 'cfgType' });
-        ['string', 'number', 'boolean', 'delete'].forEach((t) => sel.append(el('option', { value: t, text: t })));
-        sel.value = (current && current.type) || 'string';
-        return sel;
+    function svcSwitch(labelText, cls) {
+        // The offline bundle ships Vanilla's p-switch: the hidden input must
+        // sit IMMEDIATELY before the slider (:checked+ rule), visible text
+        // before both. The wrapping <label> forwards clicks to the input.
+        const lab = el('label', { class: 'p-switch ucm-svc__sw ' + cls });
+        lab.append(
+            el('span', { class: 'ucm-svc__swlabel', text: labelText }),
+            el('input', { class: 'p-switch__input', type: 'checkbox' }),
+            el('span', { class: 'p-switch__slider' }),
+        );
+        return lab;
     }
 
-    function render() {
-        bodyBox.innerHTML = '';
-        const st = $('#cfgStatus');
-        if (st) st.remove();
-
-        const form = el('form', { novalidate: '' });
-        form.addEventListener('submit', (e) => e.preventDefault());
-
-        const keyGroup = el('div', { class: 'p-form__group', id: 'cfgKeyGroup' });
-        keyGroup.append(
-            el('label', { class: 'p-form__label', for: 'cfgKey', text: 'Config key' }),
-            el('input', {
-                class: 'p-form-validation__input ucm-mono', id: 'cfgKey', type: 'text',
-                placeholder: 'e.g. port or logging.level', spellcheck: 'false',
-            }),
-            el('p', { class: 'p-form-help-text', text: 'Dotted identifier (a-z, 0-9, “-”, “_”, “.”).' }),
-            el('p', { class: 'p-form-validation__message', id: 'cfgKeyMsg' }),
-        );
-
-        const valGroup = el('div', { class: 'p-form__group', id: 'cfgValueGroup' });
-        const typeSel = typeSelect();
-        const valInput = el('input', {
-            class: 'p-form-validation__input ucm-mono', id: 'cfgValue', type: 'text',
-            spellcheck: 'false',
-        });
-        valGroup.append(
-            el('label', { class: 'p-form__label', for: 'cfgValue', text: 'Value' }),
-            el('div', { style: 'display:flex; gap:.6rem; align-items:center;' }, valInput, typeSel),
-            el('p', { class: 'p-form-help-text', text: 'Type “delete” to remove the key. Numbers and booleans are sent as their native type.' }),
-            el('p', { class: 'p-form-validation__message', id: 'cfgValueMsg' }),
-        );
-
-        const statusP = el('p', { class: 'ucm-muted', id: 'cfgStatus2', style: 'font-size:.85rem; margin:0 0 1rem;' });
-
-        const btns = el('div', { style: 'display:flex; gap:.8rem; align-items:center;' });
-        const saveBtn = el('button', { class: 'p-button--brand p-button', type: 'button', text: 'Save' });
-        const cancelBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel', onclick: close });
-        btns.append(saveBtn, cancelBtn, statusP);
-
-        form.append(keyGroup, valGroup, btns);
-        bodyBox.append(form);
-
-        typeSel.addEventListener('change', () => {
-            valInput.value = '';
-            valInput.placeholder = typeSel.value === 'number' ? 'e.g. 8080'
-                : typeSel.value === 'boolean' ? 'true or false'
-                : typeSel.value === 'delete' ? '(no value needed)' : 'e.g. info';
-            setFieldState('cfgValueGroup', '');
-        });
-        valInput.placeholder = 'e.g. info';
-
-        // prefill the existing key, if any
-        if (current) {
-            $('#cfgKey').value = current.key;
-            typeSel.value = current.type;
-            if (current.has && current.type !== 'delete') valInput.value = String(current.value == null ? '' : current.value);
+    async function svcOp(s, action, flags) {
+        servicesBusy = true;
+        servicesSec.querySelectorAll('input').forEach((i) => { i.disabled = true; });
+        try {
+            const change = await core.snaps.service(name, s.name, action, flags);
+            const verb = action === 'stop'
+                ? (flags.disable ? 'Service disabled at boot (stopped)' : 'Service stopped')
+                : (flags.enable ? 'Service enabled at boot (started)' : 'Service started');
+            toast('positive', verb, name + ': ' + s.name);
+            const done = await waitChangeSettled(change);
+            let fresh;
+            try { fresh = await core.snaps.services(name); } catch { fresh = null; }
+            if (fresh) renderServices(fresh);
+            if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
+                toast('negative', 'Service change finished with an error', name + ': ' + s.name + ' — ' + (done.err || done.status));
+            }
+        } catch (e) {
+            toastErr(e);
+            let fresh;
+            try { fresh = await core.snaps.services(name); } catch { fresh = null; }
+            if (fresh) renderServices(fresh);
+        } finally {
+            servicesBusy = false;
         }
-        $('#cfgKey').focus();
-
-        saveBtn.onclick = async () => {
-            const key = $('#cfgKey').value.trim();
-            const type = typeSel.value;
-            const raw = valInput.value.trim();
-            let ok = true;
-
-            if (!RE_CONF_KEY_UI.test(key)) {
-                setFieldState('cfgKeyGroup', 'error', 'Invalid config key (use a dotted identifier: a-z, 0-9, “-”, “_”, “.”).');
-                ok = false;
-            } else setFieldState('cfgKeyGroup', 'valid');
-
-            let value = null;
-            if (type === 'delete') {
-                value = null;
-                setFieldState('cfgValueGroup', '');
-            } else if (type === 'string') {
-                if (raw === '') { setFieldState('cfgValueGroup', 'error', 'Enter a value.'); ok = false; }
-                else { value = raw; setFieldState('cfgValueGroup', 'valid'); }
-            } else if (type === 'number') {
-                if (raw === '' || !/^-?\d+(\.\d+)?$/.test(raw)) { setFieldState('cfgValueGroup', 'error', 'Enter a number, e.g. 8080.'); ok = false; }
-                else { value = Number(raw); setFieldState('cfgValueGroup', 'valid'); }
-            } else if (type === 'boolean') {
-                const lr = raw.toLowerCase();
-                if (lr !== 'true' && lr !== 'false') { setFieldState('cfgValueGroup', 'error', 'Enter “true” or “false”.'); ok = false; }
-                else { value = lr === 'true'; setFieldState('cfgValueGroup', 'valid'); }
-            }
-            if (!ok) return;
-
-            saveBtn.classList.add('is-disabled');
-            statusP.textContent = 'Saving…';
-            try {
-                await core.snaps.confSet(name, { [key]: value });
-                toast('positive', 'Configuration saved', `${name}: ${key} ${value === null ? 'removed' : 'updated'}.`);
-                close();
-            } catch (e) {
-                statusP.textContent = 'Failed: ' + e.message;
-            } finally {
-                saveBtn.classList.remove('is-disabled');
-            }
-        };
     }
 
-    // Load the snap's current config, then show the form.
+    function renderServices(list) {
+        servicesSec.innerHTML = '';
+        if (!list.length) {
+            servicesSec.append(
+                el('p', { class: 'ucm-info__sec', text: 'Services' }),
+                el('p', { class: 'ucm-muted', style: 'margin:.2rem 0 0; font-size:.85rem;', text: 'This snap ships no services.' }),
+            );
+            return;
+        }
+        const card = el('div', { class: 'p-card ucm-config__card' });
+        card.append(el('div', { class: 'p-card__header' },
+            el('div', { style: 'display:flex; align-items:center; gap:.6rem;' },
+                el('p', { class: 'p-heading--5 ucm-snaps-card__title', style: 'margin:0;', text: 'Services' }),
+                el('span', { class: 'ucm-muted ucm-ifaces-card__counts', text: list.length + (list.length === 1 ? ' service' : ' services') }))));
+        const rows = el('div', { class: 'ucm-config__cardbody' });
+        list.forEach((s) => {
+            const active = !!s.active;
+            const enabled = !!s.enabled;
+            const states = el('div', { class: 'ucm-svc__states' });
+            states.append(el('span', {
+                class: 'p-status-label ' + (active ? 'p-status-label--positive' : 'p-status-label--information'),
+                text: active ? 'running' : 'stopped',
+            }));
+            states.append(el('span', { class: 'ucm-svc__boot', text: enabled ? 'starts on boot' : 'not on boot' }));
+            const swRun = svcSwitch('Running', 'ucm-svc__sw-running');
+            swRun.querySelector('input').checked = active;
+            const swBoot = svcSwitch('Start on boot', 'ucm-svc__sw-boot');
+            swBoot.querySelector('input').checked = enabled;
+            const row = el('div', { class: 'ucm-svc' });
+            row.append(
+                el('div', { class: 'ucm-svc__main' }, el('span', { class: 'ucm-svc__name', text: s.name }), states),
+                el('div', { class: 'ucm-svc__switches' }, swRun, swBoot),
+            );
+            // Confirm-gated direction: an inline .ucm-confirm row (the
+            // round-45 idiom) appended inside the popup; it removes itself on
+            // Cancel or after the change settles. One confirm at a time.
+            const askConfirm = (msg, confirmLabel, doIt) => {
+                if (box.querySelector('.ucm-confirm')) return;
+                const cbox = el('div', { class: 'ucm-confirm ucm-confirm--negative', style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem; flex-wrap:wrap;' });
+                const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: confirmLabel });
+                const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+                b.onclick = async () => { b.classList.add('is-disabled'); try { await doIt(); } finally { cbox.remove(); } };
+                cancel.onclick = () => cbox.remove();
+                cbox.append(el('i', { class: 'p-icon--question ucm-confirm__ic' }), el('p', { class: 'p-notification__message ucm-confirm__msg', text: msg }), b, cancel);
+                bodyBox.append(cbox);
+                b.focus();
+            };
+            swRun.addEventListener('change', () => {
+                if (servicesBusy) { swRun.querySelector('input').checked = active; return; }
+                if (active) {
+                    swRun.querySelector('input').checked = true; // hold on for the confirm window
+                    askConfirm(`Stop service "${s.name}"? It will stop now and keep its start-on-boot setting.`, `Stop ${s.name}?`, () => svcOp(s, 'stop', {}));
+                } else {
+                    svcOp(s, 'start', {});
+                }
+            });
+            swBoot.addEventListener('change', () => {
+                if (servicesBusy) { swBoot.querySelector('input').checked = enabled; return; }
+                if (enabled) {
+                    swBoot.querySelector('input').checked = true; // hold on for the confirm window
+                    askConfirm(`Disable "${s.name}" at boot? This stops the service now AND removes it from the boot sequence.`, `Disable at boot?`, () => svcOp(s, 'stop', { disable: true }));
+                } else {
+                    svcOp(s, 'start', { enable: true });
+                }
+            });
+            rows.append(row);
+        });
+        card.append(rows);
+        servicesSec.append(el('p', { class: 'ucm-info__sec', text: 'Services' }), card);
+    }
+
     (async () => {
-        let conf = {};
-        try { conf = (await core.snaps.confGet(name)) || {}; }
-        catch (e) { $('#cfgStatus').textContent = 'Could not load configuration: ' + e.message; return; }
-        // Pre-fill the FIRST existing key (snapd conf GET returns {key: value}
-        // per key; a snap usually has one or a handful — the operator edits
-        // keys one at a time). No keys -> empty form, operator adds one.
-        const entries = Object.entries(conf || {}).filter(([, v]) => v !== null);
-        if (entries.length) {
-            const [k, v] = entries[0];
-            const type = typeof v === 'number' ? 'number' : typeof v === 'boolean' ? 'boolean' : 'string';
-            current = { key: k, has: true, value: v, type };
+        let list = [];
+        try { list = await core.snaps.services(name); }
+        catch (e) {
+            servicesSec.append(
+                el('p', { class: 'ucm-info__sec', text: 'Services' }),
+                el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load services: ' + e.message }),
+            );
         }
-        render();
+        const loading = bodyBox.querySelector('.ucm-config__loading');
+        if (loading) loading.remove();
+        bodyBox.append(servicesSec);
+        if (!bodyBox.querySelector('.p-status-label--negative')) renderServices(list);
+        // (48b appends the config cards here, 48c the add-config form)
     })();
 }
 

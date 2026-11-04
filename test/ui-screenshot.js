@@ -108,6 +108,17 @@ const COMPONENTS = {
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
     htop: { port: '8080', 'logging.level': 'info' },
+    mosquitto: { listener: '127.0.0.1' },
+};
+
+// Snap services (snapd GET /v2/apps?select=service, chunk 48a): in the live
+// contract `active`/`enabled` are omitempty (present only when true) — the
+// mock stores both and the services() method strips the falses. mosquitto
+// carries one service; htop carries none (the quiet note path).
+const SNAP_SERVICES = {
+    mosquitto: [
+        { snap: 'mosquitto', name: 'broker', daemon: 'simple', 'daemon-scope': 'system', active: true, enabled: true },
+    ],
 };
 
 const IFACES = {
@@ -167,11 +178,12 @@ function mockFactoryJs() {
     window.__mockCore = (function () {
         let SNAPS = ${JSON.stringify(SNAPS)};
         const CONF = ${JSON.stringify(SNAP_CONF)};
+        const SERVICES = ${JSON.stringify(SNAP_SERVICES)};
         const INFO = ${JSON.stringify(SNAP_INFO)};
         const STORE = ${JSON.stringify(STORE)};
         const SIZES = ${JSON.stringify(SIZES)};
         const COMPONENTS = ${JSON.stringify(COMPONENTS)};
-        const CHANGES = {};
+        const CHANGES = { svc: 0 };
         let IFC = ${JSON.stringify(IFACES)};
         const NETPLAN = ${JSON.stringify(NETPLAN)};
         const LOCAL_PW = 'correct-horse';
@@ -422,6 +434,36 @@ function mockFactoryJs() {
                         if (v === null) delete CONF[n][k]; else CONF[n][k] = v;
                     }
                     return {};
+                },
+                // Snap services (chunk 48a) — mirrors the live GET/POST /v2/apps
+                // contract: omitempty state, async change, the start/stop
+                // + enable/disable coupling (no boot-only op exists).
+                async services(n) {
+                    const list = SERVICES[n] || [];
+                    return list.map((sv) => {
+                        const o = { snap: sv.snap, name: sv.name };
+                        if (sv.daemon) o.daemon = sv.daemon;
+                        if (sv['daemon-scope']) o['daemon-scope'] = sv['daemon-scope'];
+                        if (sv.active) o.active = true;
+                        if (sv.enabled) o.enabled = true;
+                        return o;
+                    });
+                },
+                async service(n, app, action, flags) {
+                    flags = flags || {};
+                    if (action !== 'start' && action !== 'stop' && action !== 'restart') throw new Error('invalid service action: ' + action);
+                    const svc = (SERVICES[n] || []).find((sv) => (app ? sv.name === app : true));
+                    if (!svc) throw new Error('snap "' + n + '" has no services');
+                    CHANGES.svc = CHANGES.svc + 1;
+                    const id = 'svc' + CHANGES.svc;
+                    CHANGES[id] = { id, status: 'Doing', kind: 'service-control' };
+                    setTimeout(() => {
+                        if (action === 'start') { svc.active = true; if (flags.enable) svc.enabled = true; }
+                        else if (action === 'stop') { svc.active = false; if (flags.disable) svc.enabled = false; }
+                        else if (svc.active) svc.active = true;
+                        CHANGES[id] = { id, status: 'Done' };
+                    }, 250);
+                    return { id, change: id };
                 },
             },
             network: { async apply() { return {}; } },
@@ -932,37 +974,119 @@ function mockFactoryJs() {
     if (!autoHide.hidden) console.log('PAGE ERROR: the Store results card did not auto-hide after a successful install (round 47i)');
     if (autoHide.rows !== 0) console.log('PAGE ERROR: the Store results card still has rows after the install (' + autoHide.rows + ', round 47i)');
 
-    // ---- 4b. per-snap config modal (htop) ----
+    // ---- 4a-svc. Round 48a: the gear opens the CONFIG popup; snaps without
+    // services show the quiet note + info-modal behaviour (Esc, white close);
+    // mosquitto's one service is toggled through its guarded directions.
     await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
-        const htop = rows.find((r) => r.textContent.includes('htop'));
-        if (!htop) throw new Error('htop row missing');
-        const btn = htop.querySelector('.ucm-iconbtn[aria-label^="Configure"]'); // icon-only: no text to match
-        if (!btn) throw new Error('Config button missing');
-        btn.click();
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        htop.querySelectorAll('.ucm-actions button')[0].click(); // the gear
     });
-    await wait(600);
-    const cfgState = await page.evaluate(() => ({
-        key: document.querySelector('#cfgKey') ? document.querySelector('#cfgKey').value : null,
-        value: document.querySelector('#cfgValue') ? document.querySelector('#cfgValue').value : null,
+    await wait(500);
+    let svc1 = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal');
+        const head = box && box.querySelector('.ucm-modal__head .p-heading--5');
+        const ic = box && box.querySelector('.ucm-modal__head .ucm-info__close');
+        return {
+            title: head ? head.textContent.trim() : null,
+            closeFilter: ic ? getComputedStyle(ic).filter : '',
+            noService: box ? box.textContent.includes('ships no services') : false,
+        };
+    });
+    if (!svc1 || svc1.title !== 'Configure htop')
+        console.log('PAGE ERROR: config popup head is not "Configure htop" (' + (svc1 && svc1.title) + ', round 48a)');
+    if (!svc1 || !/brightness\(0\)/.test(svc1.closeFilter || '') || !/invert\(1\)/.test(svc1.closeFilter || ''))
+        console.log('PAGE ERROR: config popup close icon is not whitened (filter ' + (svc1 && svc1.closeFilter) + ', round 48a)');
+    if (!svc1 || !svc1.noService)
+        console.log('PAGE ERROR: a snap without services does not show the quiet note (round 48a)');
+    await page.screenshot({ path: path.join(SHOTS, '13n-config-no-services.png') });
+    await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
+    await wait(200);
+    if (await page.evaluate(() => !!document.querySelector('.ucm-modal')))
+        console.log('PAGE ERROR: Esc did not close the config popup (round 48a)');
+
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const mc = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        mc.querySelectorAll('.ucm-actions button')[0].click(); // the gear
+    });
+    await wait(500);
+    let svc2 = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal');
+        const row = box.querySelector('.ucm-svc');
+        return {
+            card: !!box.querySelector('.ucm-config__card'),
+            name: row ? row.querySelector('.ucm-svc__name').textContent.trim() : null,
+            run: box.querySelector('.ucm-svc__sw-running input') ? box.querySelector('.ucm-svc__sw-running input').checked : null,
+            boot: box.querySelector('.ucm-svc__sw-boot input') ? box.querySelector('.ucm-svc__sw-boot input').checked : null,
+            count: box.querySelector('.ucm-ifaces-card__counts') ? box.querySelector('.ucm-ifaces-card__counts').textContent.trim() : null,
+        };
+    });
+    if (!svc2 || !svc2.card || svc2.name !== 'broker' || svc2.run !== true || svc2.boot !== true)
+        console.log('PAGE ERROR: mosquitto service row is not rendered running+enabled (' + JSON.stringify(svc2) + ', round 48a)');
+    if (!svc2 || svc2.count !== '1 service')
+        console.log('PAGE ERROR: services header count is wrong (' + (svc2 && svc2.count) + ', round 48a)');
+
+    // Running OFF -> a confirmation must appear and the service must NOT stop
+    // yet; Cancel leaves it running.
+    await page.evaluate(() => { document.querySelector('.ucm-svc__sw-running input').click(); });
+    await wait(150);
+    let c1 = await page.evaluate(() => {
+        const c = document.querySelector('.ucm-modal .ucm-confirm');
+        return { has: !!c, msg: c ? c.textContent : null, held: document.querySelector('.ucm-svc__sw-running input').checked };
+    });
+    if (!c1 || !c1.has || !/Stop service "broker"\?/.test(c1.msg || ''))
+        console.log('PAGE ERROR: stopping a running service did not spawn a confirmation (round 48a)');
+    await page.evaluate(() => {
+        Array.from(document.querySelectorAll('.ucm-modal .ucm-confirm button')).find((b) => b.textContent.trim() === 'Cancel').click();
+    });
+    await wait(150);
+    let c2 = await page.evaluate(() => ({
+        gone: !document.querySelector('.ucm-modal .ucm-confirm'),
+        stillOn: document.querySelector('.ucm-svc__sw-running input').checked,
     }));
-    if (cfgState.key !== 'port' || cfgState.value !== '8080')
-        console.log(`PAGE ERROR: config modal prefill wrong (${JSON.stringify(cfgState)})`);
-    await page.screenshot({ path: path.join(SHOTS, '11-config-modal.png') });
-    // change port to a number and save
-    await page.click('#cfgValue', { clickCount: 3 });
-    await page.type('#cfgValue', '9090');
-    await page.select('#cfgType', 'number');
-    await page.click('#cfgValue', { clickCount: 3 });
-    await page.type('#cfgValue', '9090');
-    await page.evaluate(() => document.querySelector('.ucm-config button.p-button--brand').click());
-    await wait(700);
-    const cfgSaved = await page.evaluate(() => ({
-        modalGone: !document.querySelector('.ucm-config'),
-        port: window.__mockCore && 'ok',
+    if (!c2 || !c2.gone || !c2.stillOn)
+        console.log('PAGE ERROR: cancelling the service stop still stopped it (' + JSON.stringify(c2) + ', round 48a)');
+
+    // Start-on-boot OFF -> confirm whose copy states the service is stopped too
+    // (the API coupling); Confirm -> off + no-boot.
+    await page.evaluate(() => { document.querySelector('.ucm-svc__sw-boot input').click(); });
+    await wait(150);
+    let c3 = await page.evaluate(() => {
+        const c = document.querySelector('.ucm-modal .ucm-confirm');
+        return { has: !!c, msg: c ? c.textContent : null };
+    });
+    if (!c3 || !c3.has || !/stops the service now/.test(c3.msg || ''))
+        console.log('PAGE ERROR: the disable-at-boot confirm must say it also stops the service (round 48a)');
+    await page.screenshot({ path: path.join(SHOTS, '13o-config-services-confirm.png') });
+    await page.evaluate(() => {
+        Array.from(document.querySelector('.ucm-modal .ucm-confirm').querySelectorAll('button')).find((b) => b.textContent.trim() === 'Disable at boot?').click();
+    });
+    await wait(900);
+    let c4 = await page.evaluate(() => ({
+        confirmGone: !document.querySelector('.ucm-modal .ucm-confirm'),
+        run: document.querySelector('.ucm-svc__sw-running input').checked,
+        boot: document.querySelector('.ucm-svc__sw-boot input').checked,
     }));
-    if (cfgSaved.modalGone !== true) console.log('PAGE ERROR: config modal did not close after save');
-    await page.screenshot({ path: path.join(SHOTS, '12-config-saved.png') });
+    if (!c4 || !c4.confirmGone || c4.run !== false || c4.boot !== false)
+        console.log('PAGE ERROR: after a confirmed disable-at-boot the service is not off+no-boot (' + JSON.stringify(c4) + ', round 48a)');
+    await page.screenshot({ path: path.join(SHOTS, '13p-config-services-off.png') });
+
+    // Start-on-boot back ON is one click (start+enable) -> running + no confirm.
+    await page.evaluate(() => { document.querySelector('.ucm-svc__sw-boot input').click(); });
+    await wait(900);
+    let c5 = await page.evaluate(() => ({
+        run: document.querySelector('.ucm-svc__sw-running input').checked,
+        boot: document.querySelector('.ucm-svc__sw-boot input').checked,
+        noConfirm: !document.querySelector('.ucm-modal .ucm-confirm'),
+    }));
+    if (!c5 || c5.run !== true || c5.boot !== true || !c5.noConfirm)
+        console.log('PAGE ERROR: enabling at boot (one click) did not start+enable the service (' + JSON.stringify(c5) + ', round 48a)');
+    await page.screenshot({ path: path.join(SHOTS, '13q-config-services-on.png') });
+    await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
+    await wait(200);
+
+
 
     // ---- 4c. Round 47: two interface-card-style cards replace the
     // scrollable table. Card 1 "OS" = the model-assertion system snaps

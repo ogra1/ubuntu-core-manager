@@ -116,6 +116,8 @@ const api = Object.freeze({
         install: invoke('snaps:install'),       // (name, channel='stable') — store
         action: invoke('snaps:action'),         // (name, action, extra?)
         component: invoke('snaps:component'),   // (name, 'install'|'remove', component) — round 47m
+        services: invoke('snaps:services'),     // (name) -> [{name, active?, enabled?, ...}]
+        service: invoke('snaps:service'),       // (name, app|null, start|stop|restart, {enable?,disable?})
         confGet: invoke('snaps:conf-get'),      // (name, key?)
         confSet: invoke('snaps:conf-set'),      // (name, {key: scalar})
     }),

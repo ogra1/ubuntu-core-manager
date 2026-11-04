@@ -97,6 +97,16 @@ function authFrom(req) {
 }
 
 function makeServer(socketPath, state) {
+    // Snap services (chunk 48a) — live shape of GET /v2/apps?select=service:
+    // `active` (running) and `enabled` (boot) are omitempty, present only
+    // when true; control is POST /v2/apps {action, names[], enable?, disable?}.
+    state.services = state.services || {
+        'llama-cpp': [
+            { snap: 'llama-cpp', name: 'server', daemon: 'simple', 'daemon-scope': 'system', active: true, enabled: true },
+        ],
+    };
+    state.serviceOps = state.serviceOps || [];
+
     // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
     // htop ships defaults so the conf UI has something to edit; core keeps
     // the netplan external-config key. `null` values model removed keys.
@@ -396,6 +406,59 @@ function makeServer(socketPath, state) {
                     }
                     return json(res, 200, {});
                 }
+            }
+
+            // ---- snap services (chunk 48a) --------------------------------------
+            if (p === '/v2/apps' && req.method === 'GET') {
+                const names = (url.searchParams.get('names') || '').split(',').filter(Boolean);
+                if (names.length) {
+                    const list = names.reduce((acc, n) => acc.concat(state.services[decodeURIComponent(n)] || []), []);
+                    return json(res, 200, list.map((s) => {
+                        const o = { snap: s.snap, name: s.name };
+                        if (s.daemon) o.daemon = s.daemon;
+                        if (s['daemon-scope']) o['daemon-scope'] = s['daemon-scope'];
+                        if (s.active) o.active = true;
+                        if (s.enabled) o.enabled = true;
+                        return o;
+                    }));
+                }
+                return json(res, 200, []);
+            }
+            if (p === '/v2/apps' && req.method === 'POST') {
+                if (!auth.ok) return json(res, 401, { kind: 'unauthenticated', message: 'unauthenticated access' });
+                const data = JSON.parse(await body());
+                if (!['start', 'stop', 'restart'].includes(data.action)) {
+                    return json(res, 400, { kind: 'not-found', message: `unknown action ${JSON.stringify(data.action)}` });
+                }
+                if (!Array.isArray(data.names) || !data.names.length) {
+                    return json(res, 400, { kind: 'not-found', message: 'cannot perform operation on services without a list of services to operate on' });
+                }
+                const svc = data.names.map((n) => String(n).split('.')).find((parts) => parts.length === 2) || null;
+                state.serviceOps.push({ action: data.action, enable: !!data.enable, disable: !!data.disable, names: data.names, svc });
+                const id = String(state.serviceChg = (state.serviceChg || 90) + 1);
+                state.changes.push({ id, kind: 'service-control', summary: 'Running service command', status: 'Doing' });
+                setTimeout(() => {
+                    const st = state.changes.find((c) => c.id === id);
+                    if (st) st.status = 'Done';
+                    const apply = (s) => {
+                        if (data.action === 'start') { s.active = true; if (data.enable) s.enabled = true; }
+                        else if (data.action === 'stop') { s.active = false; if (data.disable) s.enabled = false; }
+                        else if (data.action === 'restart') { if (s.active) s.active = true; }
+                    };
+                    for (const n of data.names) {
+                        const [sn, an] = n.split('.');
+                        const list = state.services[sn] || [];
+                        const targets = an ? list.filter((s) => s.name === an) : list;
+                        if (!targets.length) return; // no such service (live: no services found)
+                        targets.forEach(apply);
+                    }
+                }, 250);
+                const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: id });
+                return new Promise((resolve) => {
+                    res.writeHead(202, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
+                    res.end(payload);
+                    resolve();
+                });
             }
 
             // ---- find (store search) -------------------------------------------

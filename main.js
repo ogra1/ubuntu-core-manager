@@ -718,6 +718,58 @@ async function snapComponent(name, action, component) {
  * netplan D-Bus service and applies it atomically.
  * ------------------------------------------------------------------ */
 
+/* ---- snap services (chunk 48a) ------------------------------------------
+ * LIVE-VERIFIED (snapd 2.77, source @8d4d073 daemon/api_apps.go +
+ * overlord/servicestate): the per-snap services and their state come from
+ *   GET /v2/apps?select=service&names=<snap> -> [{name, daemon, daemon-scope,
+ *     active?, enabled?}] — `active` (running NOW) and `enabled` (start on
+ *     boot) are omitempty booleans, present only when true, and only
+ *     decorated while the SNAP itself is active (a disabled snap's services
+ *     read as neither active nor enabled). A snap without services answers
+ *     {kind:'app-not-found', message:'snap "X" has no services'} — treated
+ *     as an empty list, not an error.
+ * Control is one ASYNC route:
+ *   POST /v2/apps {action: start|stop|restart, names:[snap | snap.app],
+ *                  enable?: bool, disable?: bool}
+ * The daemon accepts ONLY those three actions (route Actions list) — there is
+ * NO boot-only enable/disable. Source (servicestate.Control) + live probes:
+ *   start  -> starts, keeps boot state
+ *   start+enable -> starts AND starts on boot
+ *   stop   -> stops, keeps boot state
+ *   stop+disable -> stops AND no longer starts on boot
+ *   restart (optionally reload) -> restarts, keeps both
+ * So "disable for boot" also stops the service and "enable for boot" also
+ * starts it — the UI makes that coupling explicit in its confirmations. */
+/** GET /v2/apps?select=service&names=<snap> — the snap's services + state. */
+async function getSnapServices(name) {
+    if (!validSnapName(name)) throw new Error('invalid snap name');
+    const p = '/v2/apps?select=service&names=' + encodeURIComponent(name);
+    const res = await snapdRequest('GET', p, { auth: A() });
+    if (!res || Array.isArray(res)) return res || [];
+    // {kind:'app-not-found', message:'snap "X" has no services'} — not an error.
+    if (res.kind === 'app-not-found') return [];
+    throw new Error('unexpected services response for ' + name);
+}
+
+/** POST /v2/apps — service control. action: start|stop|restart; the
+    optional enable/disable flags ride on start/stop per the live contract
+    (start+enable sets boot, stop+disable clears it). Returns {id}. */
+async function controlSnapService(name, app, action, opts = {}) {
+    if (!validSnapName(name)) throw new Error('invalid snap name');
+    const re = /^[a-z][a-z0-9-]*$/;
+    if (app !== null && (typeof app !== 'string' || !re.test(app) || app.length > 70)) {
+        throw new Error('invalid service name');
+    }
+    if (!['start', 'stop', 'restart'].includes(action)) throw new Error('invalid service action: ' + action);
+    for (const f of ['enable', 'disable']) {
+        if (opts[f] !== undefined && typeof opts[f] !== 'boolean') throw new Error('invalid service flags');
+    }
+    const body = { action, names: [app === null ? name : name + '.' + app] };
+    if (opts.enable) body.enable = true;
+    if (opts.disable) body.disable = true;
+    return snapdRequest('POST', '/v2/apps', { body, auth: A() });
+}
+
 /** GET /v2/snaps/{name}/conf[?keys=...] */
 async function getSnapConfig(name, key = null) {
     if (!validSnapName(name)) throw new Error('invalid snap name');
@@ -1083,6 +1135,7 @@ const api = {
     getDataPartition, mountsTable, defaultRouteIface,
     listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
+    getSnapServices, controlSnapService,
     getSnapConfig, getNetplan, listInterfaces,
 
     installSnap, snapAction, snapComponent,
@@ -1346,6 +1399,8 @@ function initElectron() {
     ipcMain.handle('snaps:install', guard((name, channel) => { requireAuth(); return installSnap(name, channel); }));
     ipcMain.handle('snaps:action', guard((name, action, extra) => { requireAuth(); return snapAction(name, action, extra || {}); }));
     ipcMain.handle('snaps:component', guard((name, action, component) => { requireAuth(); return snapComponent(name, action, component); }));
+    ipcMain.handle('snaps:services', guard((name) => getSnapServices(name)));
+    ipcMain.handle('snaps:service', guard((name, app, action, opts) => { requireAuth(); return controlSnapService(name, app || null, action, opts || {}); }));
     ipcMain.handle('snaps:conf-get', guard((name, key) => getSnapConfig(name, key || null)));
     ipcMain.handle('snaps:conf-set', guard((name, conf) => { requireAuth(); return setSnapConfig(name, conf); }));
 

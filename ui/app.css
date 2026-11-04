@@ -658,6 +658,28 @@ html, body {
 .ucm-config .p-form__group { margin-bottom: 1rem; max-width: 24rem; }
 .ucm-config input[type="text"] { font-family: "Ubuntu Mono variable", monospace; }
 .ucm-config select { max-width: 9rem; }
+/* ---- snap configuration popup (round 48) ---------------------------------
+   The gear opens a popup with the snap-info chrome (47c/47g/47d): dark head +
+   whitened close, Esc + backdrop close, toasts top-centre above the card
+   (47n). 48a adds the Services card (Vanilla's p-switch, re-tinted from the
+   bundle's link blue to the app's orange accent); 48b the config YAML cards;
+   48c the add-config form. */
+.ucm-config__card { margin: .2rem 0 0; }
+.ucm-config__cardbody { padding: .2rem 1rem 1rem; display: flex; flex-direction: column; }
+.ucm-svc { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid #f0f0f0; }
+.ucm-svc:last-child { border-bottom: 0; }
+.ucm-svc__main { display: flex; align-items: center; gap: .8rem; min-width: 0; }
+.ucm-svc__name { font-weight: 600; color: #3b3b3b; }
+.ucm-svc__states { display: flex; align-items: center; gap: .7rem; }
+.ucm-svc__states .p-status-label { margin: 0; }
+.ucm-svc__boot { color: #757575; font-size: .8rem; }
+.ucm-svc__switches { display: flex; flex-direction: column; gap: .5rem; align-items: flex-end; }
+.ucm-svc__sw { gap: .35rem; }
+/* p-switch ON = the bundle's link blue (--vf-color-link-default #06c); the
+   app's accent is orange, so re-tint the track + thumb border (48a). */
+.ucm-svc .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
+.ucm-svc .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
+.ucm-svc .p-switch__slider { background: #e0e0e0; }
 
 /* disabled buttons: match real kiosk behavior (no pointer pass-through) */
 button.is-disabled { pointer-events: none; opacity: .6; }

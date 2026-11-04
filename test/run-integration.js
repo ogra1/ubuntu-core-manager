@@ -33,6 +33,7 @@ function ok(name, cond, extra = '') {
 
 (async () => {
     const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {},
+        serviceOps: [], serviceChg: 0, services: { 'llama-cpp': [ { snap: 'llama-cpp', name: 'server', daemon: 'simple', 'daemon-scope': 'system', active: true, enabled: true } ] },
         // seed changes in the LIVE shape (string summary, hyphenated spawn-time)
         // and NOT in newest-first order — [4] asserts the field names and the
         // renderer sorts; keep the stub honest.
@@ -564,6 +565,45 @@ function ok(name, cond, extra = '') {
     await m.setSnapConfig('htop', { 'logging.level': null });
     const confDel = await m.getSnapConfig('htop');
     ok('conf-set null removes the key', confDel && !('logging.level' in confDel) && confDel.port === 9090, JSON.stringify(confDel));
+
+    console.log('\n[12] snap services (snapd /v2/apps — chunk 48a)');
+    // The UI services backend: GET /v2/apps?select=service&names=<snap> ->
+    // [{name, daemon, daemon-scope, active?, enabled?}] (active/enabled are
+    // omitempty, present only when true — the client must not invent them).
+    const svcs = await m.getSnapServices('llama-cpp');
+    ok('services-get returns the service list', Array.isArray(svcs) && svcs.length === 1 && svcs[0].name === 'server', JSON.stringify(svcs));
+    ok('service state fields are honest (active+enabled only when true)', svcs[0].active === true && svcs[0].enabled === true, JSON.stringify(svcs[0]));
+    const noSvc = await m.getSnapServices('core24');
+    ok('a snap without services -> [] (not an error)', Array.isArray(noSvc) && noSvc.length === 0, JSON.stringify(noSvc));
+    let svErr = null;
+    try { await m.getSnapServices('bad name!'); } catch (e) { svErr = e; }
+    ok('reject invalid snap name for services before socket', !!svErr && /invalid snap name/.test(svErr.message), svErr && svErr.message);
+    // Control: POST /v2/apps {action, names, enable?, disable?}. The stub
+    // settles the service-control change and flips the service state per the
+    // LIVE-verified coupling (start+enable sets both, stop+disable clears both,
+    // plain start/stop only touch "running").
+    await m.storeLogin('admin@example.com', 'correct-horse');
+    const ch1 = await m.controlSnapService('llama-cpp', 'server', 'stop', {});
+    ok('service stop returns a change id', ch1 && ch1.id, JSON.stringify(ch1));
+    await new Promise((r) => setTimeout(r, 320));
+    const st1 = await m.getSnapServices('llama-cpp');
+    ok('stop keeps boot state (active off, enabled still true)', !st1[0].active && st1[0].enabled === true, JSON.stringify(st1[0]));
+    const op1 = state.serviceOps[state.serviceOps.length - 1];
+    ok('stop sent the live shape (no enable/disable flags)', op1 && op1.action === 'stop' && op1.enable === false && op1.disable === false && JSON.stringify(op1.names) === JSON.stringify(['llama-cpp.server']), JSON.stringify(op1));
+    const ch2 = await m.controlSnapService('llama-cpp', 'server', 'stop', { disable: true });
+    await new Promise((r) => setTimeout(r, 320));
+    const st2 = await m.getSnapServices('llama-cpp');
+    ok('stop+disable clears BOTH (the API coupling — no boot-only op exists)', !st2[0].active && !st2[0].enabled, JSON.stringify(st2[0]));
+    const ch3 = await m.controlSnapService('llama-cpp', null, 'start', { enable: true });
+    await new Promise((r) => setTimeout(r, 320));
+    const st3 = await m.getSnapServices('llama-cpp');
+    ok('start+enable (whole snap, bare name) sets BOTH', st3[0].active === true && st3[0].enabled === true, JSON.stringify(st3[0]));
+    let badAct = null;
+    try { await m.controlSnapService('llama-cpp', 'server', 'enable', {}); } catch (e) { badAct = e; }
+    ok('reject an action the daemon has no op for (enable)', !!badAct && /invalid service action/.test(badAct.message), badAct && badAct.message);
+    let badSvc = null;
+    try { await m.controlSnapService('llama-cpp', '../etc', 'stop', {}); } catch (e) { badSvc = e; }
+    ok('reject an invalid service name before socket', !!badSvc && /invalid service name/.test(badSvc.message), badSvc && badSvc.message);
 
     console.log(`\n================= ${passed} passed, ${failed} failed =================`);
     fs.rmSync(STATE, { recursive: true, force: true });
