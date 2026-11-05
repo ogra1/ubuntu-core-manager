@@ -119,6 +119,10 @@ const SNAP_CONF = {
         persistence_file: 'mosquitto.db',
         security_options: { tls_version: 'tlsv1.2' },
         daemon: { preseed: '{\n  "net": {\n    "allow": ["10.0.0.0/8"]\n  }\n}' },
+        // 48f-rev: a top key holding TWO sibling subtrees — removing the last
+        // leaf of `default` must unset the intermediate `listeners.default`
+        // (not the whole `listeners`, not just the leaf) and keep `tls`.
+        listeners: { default: { port: '1883' }, tls: { cert: '/etc/mosquitto/tls.crt' } },
     },
     htop: { port: '8080', logging: { level: 'info' } },
 };
@@ -1214,8 +1218,8 @@ function mockFactoryJs() {
     });
     if (!cf1 || cf1.secHead !== 'Configuration')
         console.log('PAGE ERROR: no Configuration section in the config popup (' + (cf1 && cf1.secHead) + ', round 48b)');
-    if (!cf1 || cf1.cardCount !== 6)
-        console.log('PAGE ERROR: expected one card per top-level key (6), got ' + (cf1 && cf1.cardCount) + ' (round 48b)');
+    if (!cf1 || cf1.cardCount !== 7)
+        console.log('PAGE ERROR: expected one card per top-level key (7), got ' + (cf1 && cf1.cardCount) + ' (round 48b)');
     if (!cf1 || cf1.confHeaders !== 0 || cf1.confTopTitles !== 0)
         console.log('PAGE ERROR: the config cards still carry a redundant header (' + (cf1 && cf1.confHeaders) + ' headers / ' + (cf1 && cf1.confTopTitles) + ' titles, round 48b2)');
     if (!cf1 || !cf1.daemonFirstNode || cf1.daemonFirstNode.text !== 'daemon:' || cf1.daemonFirstNode.pad !== '17.92px')
@@ -1226,7 +1230,7 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the nested dotted key is not indented one level deeper (security_options.tls_version) (' + (cf1 && JSON.stringify(cf1.tls)) + ', round 48b)');
     if (!cf1 || !cf1.logdest || cf1.logdest.val !== 'stdout' || cf1.logdest.pad !== '17.92px')
         console.log('PAGE ERROR: the top-level scalar leaf is not at 4px (log_dest: stdout) (' + (cf1 && JSON.stringify(cf1.logdest)) + ', round 48b)');
-    if (!cf1 || cf1.trashCount !== 6)
+    if (!cf1 || cf1.trashCount !== 8)
         console.log('PAGE ERROR: trash icon count does not match the value count (' + (cf1 && cf1.trashCount) + ', round 48b)');
     if (!cf1 || cf1.svcDelta === null || cf1.svcDelta > 1)
         console.log('PAGE ERROR: the Services header title/count glyph mids differ by ' + (cf1 && cf1.svcDelta) + 'px (want <=1, round 48b2)');
@@ -1315,7 +1319,7 @@ function mockFactoryJs() {
     });
     if (!cfCancel.confirmGone)
         console.log('PAGE ERROR: the config-removal confirm row survived a Cancel (round 48f)');
-    else if (!cfCancel.daemonStill || cfCancel.cardCount !== 6)
+    else if (!cfCancel.daemonStill || cfCancel.cardCount !== 7)
         console.log('PAGE ERROR: a Cancelled config removal still removed the value (round 48f — it must be reversible before it applies): ' + JSON.stringify(cfCancel));
     // Confirm: the daemon card vanishes (its last value gone -> top-level wipe)
     await clickConfTrash('preseed');
@@ -1333,7 +1337,7 @@ function mockFactoryJs() {
             noError: !document.querySelector('.ucm-modal .p-status-label--negative'),
         };
     });
-    if (!cf2 || cf2.cardCount !== 5 || !cf2.daemonGone)
+    if (!cf2 || cf2.cardCount !== 6 || !cf2.daemonGone)
         console.log('PAGE ERROR: removing the last value of a top-level key did not drop the card (' + JSON.stringify(cf2) + ', round 48f — the emptied branch must be wiped, not left as a ghost tree)');
     if (!cf2 || !cf2.confirmGone)
         console.log('PAGE ERROR: the config-removal confirm row is still up after the change settled (round 48f)');
@@ -1342,6 +1346,48 @@ function mockFactoryJs() {
     if (!cf2 || !cf2.noError)
         console.log('PAGE ERROR: a config removal left an error chip (round 48b)');
     await page.screenshot({ path: path.join(SHOTS, '13s-config-yaml-after-remove.png') });
+    // 48f-rev: INTERMEDIATE-node wipe (the reported ghost). `listeners` holds
+    // two sibling subtrees (default.port, tls.cert); removing the last leaf of
+    // listeners.default must unset the emptied `listeners.default` node and
+    // leave the sibling `tls` intact — NOT the whole `listeners` top key, and
+    // NOT just the leaf (which snapd would leave as a hollow "default:" line).
+    await clickConfTrash('port');
+    await wait(400);
+    const dcMid = await page.evaluate(() => {
+        const c = document.querySelector('.ucm-modal .ucm-confirm');
+        if (!c) return null;
+        return {
+            msg: c.querySelector('.ucm-confirm__msg') ? c.querySelector('.ucm-confirm__msg').textContent.trim() : null,
+            buttons: Array.from(c.querySelectorAll('button')).map((x) => x.textContent.trim()),
+        };
+    });
+    if (!dcMid || dcMid.msg.indexOf('Remove "listeners.default.port" from mosquitto') === -1)
+        console.log('PAGE ERROR: the intermediate-node removal confirm message is wrong (got ' + JSON.stringify(dcMid && dcMid.msg) + ')');
+    else if (JSON.stringify(dcMid.buttons) !== JSON.stringify(['Remove port?', 'Cancel']))
+        console.log('PAGE ERROR: the intermediate-node removal confirm buttons are wrong: ' + JSON.stringify(dcMid.buttons));
+    await clickConfBtn(0);
+    await wait(900);
+    const cfMid = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const card = Array.from(sec.querySelectorAll(':scope > .p-card')).find((c) => c.textContent.includes('listeners'));
+        const txt = card ? card.textContent : '';
+        const cards = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')) : [];
+        return {
+            cardCount: cards.length,
+            listenersCard: !!card,
+            defaultGone: txt.indexOf('default:') === -1,
+            tlsKept: txt.indexOf('tls:') !== -1 && txt.indexOf('cert:') !== -1,
+            confirmGone: !document.querySelector('.ucm-modal .ucm-confirm'),
+        };
+    });
+    if (!cfMid.listenersCard)
+        console.log('PAGE ERROR: removing listeners.default.port wiped the whole listeners key (the sibling tls must survive, round 48f-rev): ' + JSON.stringify(cfMid));
+    else if (!cfMid.defaultGone)
+        console.log('PAGE ERROR: the emptied intermediate node listeners.default was left as a hollow "default:" line (round 48f-rev): ' + JSON.stringify(cfMid));
+    else if (!cfMid.tlsKept)
+        console.log('PAGE ERROR: the sibling listeners.tls subtree was lost when listeners.default was removed (round 48f-rev): ' + JSON.stringify(cfMid));
+    else if (!cfMid.confirmGone)
+        console.log('PAGE ERROR: the intermediate-node confirm row is still up after the change settled (round 48f-rev)');
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 

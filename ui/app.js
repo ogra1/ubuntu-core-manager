@@ -1585,14 +1585,18 @@ function confPath(prefix, seg) {
 }
 /* Round 48f: a config document is NESTED (snapd stores it as nested JSON —
    GET /v2/snaps/{n}/conf returns {top:{sub:{leaf:val}}}, not a flat dotted
-   map). snapd's purgeNulls drops only null LEAF values, so deleting the last
-   leaf of a branch leaves an empty object behind ({foo:{bar:{}}}) — the
-   "ghost tree" that used to survive a removal. confWipeTop removes `full`
-   from a deep copy of the nested doc (pruning emptied parents as it climbs)
-   and returns the TOP-LEVEL key to send to snapd when that branch is about
-   to be left empty (a clean `unset foo` — the whole branch goes), or the
-   leaf's full dotted path when the branch still has other values. */
-function confWipeTop(doc, full) {
+   map). The REST equivalent of `snap set <snap> a.b.c!` is PUT {a.b.c: null}.
+   snapd's purgeNulls removes the key+value but NEVER prunes an emptied parent
+   (live-verified: unsetting the last leaf of foo.bar leaves a hollow
+   {foo:{bar:{}}}), so a plain leaf unset leaves a "ghost tree" node behind.
+   confUnsetKey deletes `full` from a deep copy of the nested doc and returns
+   the HIGHEST ancestor that becomes empty — at ANY depth, not just the top:
+   unsetting THAT node with a single REST unset removes it and everything under
+   it while every other branch is left intact (live-verified: {a:{b:{c},d}}
+   unset a.b -> {a:{d}}). So deleting the last leaf of foo.bar unsets foo.bar
+   (hollow node gone, foo keeps its siblings); deleting foo's last leaf unsets
+   foo; deleting a leaf whose parent keeps other values unsets just the leaf. */
+function confUnsetKey(doc, full) {
     const parts = full.split('.');
     const clone = JSON.parse(JSON.stringify(doc || {}));
     const nodes = [clone];
@@ -1604,14 +1608,15 @@ function confWipeTop(doc, full) {
         nodes.push(node);
     }
     delete node[parts[parts.length - 1]];
-    for (let i = nodes.length - 1; i >= 1; i--) {
-        if (Object.keys(nodes[i]).length === 0) delete nodes[i - 1][parts[i - 1]];
+    let unsetSegs = parts.length; // default: unset the leaf itself (parts.slice(0, parts.length))
+    for (let i = parts.length - 1; i >= 1; i--) {
+        // nodes[i] is the ancestor at path parts.slice(0, i); if it is empty it
+        // can be unset (key parts.slice(0, i)) and we keep climbing toward the top.
+        if (Object.keys(nodes[i]).length > 0) break;
+        delete nodes[i - 1][parts[i - 1]]; // prune the emptied ancestor from its parent
+        unsetSegs = i;
     }
-    const top = parts[0];
-    const topNode = clone[top];
-    const topEmpty = topNode === undefined
-        || (typeof topNode === 'object' && topNode !== null && Object.keys(topNode).length === 0);
-    return topEmpty ? top : full;
+    return parts.slice(0, unsetSegs).join('.');
 }
 const confValText = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -1810,14 +1815,14 @@ function openConfigModal(name) {
                 async () => {
                     confBusy = true;
                     try {
-                        // Decide what to unset BEFORE sending: if removing this
-                        // leaf would leave its top-level branch empty, unset the
-                        // top-level key (a clean branch wipe) instead of just the
-                        // leaf — snapd otherwise leaves the emptied subtree
-                        // behind (the ghost tree).
+                        // Decide WHICH key to unset BEFORE sending: a plain
+                        // leaf unset leaves the emptied parent hollow (the ghost
+                        // tree), so unset the HIGHEST ancestor that becomes empty
+                        // (at any depth) with one REST unset — that whole node
+                        // goes, every other branch stays.
                         let cur = null;
                         try { cur = await core.snaps.confGet(name); } catch { cur = null; }
-                        const wipeKey = (cur && typeof cur === 'object') ? confWipeTop(cur, full) : full;
+                        const wipeKey = (cur && typeof cur === 'object') ? confUnsetKey(cur, full) : full;
                         const change = await core.snaps.confSet(name, { [wipeKey]: null });
                         const done = await waitChangeSettled(change);
                         if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
