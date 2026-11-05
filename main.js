@@ -790,6 +790,24 @@ async function getSnapConfig(name, key = null) {
     return snapdRequest('GET', p, { auth: A() });
 }
 
+/** Round 48f: a config value the UI types in is a plain string, but snapd
+ *   (and the snap's configure hook) expect REAL types — `snap set foo=1234`
+ *   stores the NUMBER 1234, `snap set on=true` stores the BOOLEAN true. That
+ *   inference lives in the `snap` CLI (clientutil.ParseConfigValues: try to
+ *   parse the value as JSON, store it as a string if that fails), NOT in the
+ *   snapd daemon (which stores whatever JSON the PUT carries). confInferType
+ *   mirrors the CLI's DEFAULT mode: JSON numbers and booleans become native;
+ *   everything else — plain text, the literal null, and composites like
+ *   {…}/[…] (one key=value must stay ONE scalar, so no -t-style JSON objects)
+ *   — stays the plain string. */
+function confInferType(v) {
+    if (typeof v !== 'string') return v;
+    let parsed;
+    try { parsed = JSON.parse(v); } catch { return v; }
+    if (typeof parsed === 'number' || typeof parsed === 'boolean') return parsed;
+    return v;
+}
+
 /** PUT /v2/snaps/{name}/conf — body must be a flat {key: scalar} map. */
 async function setSnapConfig(name, conf) {
     if (!validSnapName(name)) throw new Error('invalid snap name');
@@ -800,7 +818,10 @@ async function setSnapConfig(name, conf) {
         if (v !== null && typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
             throw new Error('config value for ' + k + ' must be scalar');
         }
-        body[k] = v;
+        // Infer the type the way `snap set` does (number/bool when the value is
+        // valid JSON of that kind; else the plain string). Deletions (v === null)
+        // pass through — the CLI sends null for `key!` too.
+        body[k] = confInferType(v);
     }
     if (Object.keys(body).length === 0) throw new Error('empty config payload');
     return snapdRequest('PUT', '/v2/snaps/' + encodeURIComponent(name) + '/conf', { body, auth: A() });
@@ -1145,7 +1166,7 @@ const api = {
     listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapServices, controlSnapService,
-    getSnapConfig, getNetplan, listInterfaces,
+    getSnapConfig, getNetplan, listInterfaces, confInferType,
 
     installSnap, snapAction, snapComponent,
     setSnapConfig, applyNetplanConfig,

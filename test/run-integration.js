@@ -611,6 +611,44 @@ function ok(name, cond, extra = '') {
         ok('config trash removal computes the unset key via confUnsetKey',
             /confUnsetKey\(cur, full\)/.test(appSrc), 'renderer does not call confUnsetKey');
     }
+    // Round 48f chunk E: confInferType — a config value the UI types is a plain
+    // string, but `snap set` (the CLI, clientutil.ParseConfigValues) infers a
+    // NUMBER for "1234" and a BOOLEAN for "true" (valid JSON of that kind) and
+    // keeps everything else a string. confInferType mirrors that DEFAULT mode
+    // (the snapd daemon itself does NO typing — it stores the PUT body as-is).
+    {
+        const infer = m.confInferType;
+        ok('confInferType is exported', typeof infer === 'function');
+        ok('confInferType infers an integer', infer('1234') === 1234, JSON.stringify(infer('1234')));
+        ok('confInferType infers a negative number', infer('-5') === -5, JSON.stringify(infer('-5')));
+        ok('confInferType infers a float', infer('0.5') === 0.5, JSON.stringify(infer('0.5')));
+        ok('confInferType infers true', infer('true') === true, JSON.stringify(infer('true')));
+        ok('confInferType infers false', infer('false') === false, JSON.stringify(infer('false')));
+        ok('confInferType keeps a plain string', infer('hello') === 'hello', JSON.stringify(infer('hello')));
+        ok('confInferType keeps a string with spaces', infer('a b') === 'a b', JSON.stringify(infer('a b')));
+        ok('confInferType does NOT parse a JSON object (stays one scalar string)',
+            infer('{\"a\":1}') === '{\"a\":1}', JSON.stringify(infer('{\"a\":1}')));
+        ok('confInferType does NOT parse a JSON array (stays one scalar string)',
+            infer('[1,2]') === '[1,2]', JSON.stringify(infer('[1,2]')));
+        ok('confInferType passes null through (deletion)', infer(null) === null, JSON.stringify(infer(null)));
+        // END-TO-END through the real main.js -> stub socket: a value typed as
+        // a string must reach snapd as its inferred native type (this is the
+        // user-facing behavior — the doc the snap's hook sees is typed).
+        await m.setSnapConfig('htop', { typednum: '1234', typedbool: 'true', typedstr: 'hello' });
+        await new Promise((r) => setTimeout(r, 320));
+        const typedDoc = await m.getSnapConfig('htop');
+        ok('string "1234" reached snapd as the NUMBER 1234', typedDoc.typednum === 1234, JSON.stringify(typedDoc.typednum));
+        ok('string "true" reached snapd as the BOOLEAN true', typedDoc.typedbool === true, JSON.stringify(typedDoc.typedbool));
+        ok('string "hello" reached snapd as the STRING "hello"', typedDoc.typedstr === 'hello', JSON.stringify(typedDoc.typedstr));
+        const typedPut = state.confSets[state.confSets.length - 1];
+        ok('the socket payload carried the inferred types (not verbatim strings)',
+            typedPut && typedPut.name === 'htop' && typedPut.data.typednum === 1234 && typedPut.data.typedbool === true && typedPut.data.typedstr === 'hello',
+            typedPut && JSON.stringify(typedPut.data));
+        // setSnapConfig must actually infer (the socket payload is typed)
+        const ms = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+        ok('setSnapConfig applies confInferType to the outgoing value',
+            /body\[k\] = confInferType\(v\)/.test(ms), 'setSnapConfig does not call confInferType');
+    }
 
     console.log('\n[12] snap services (snapd /v2/apps — chunk 48a)');
     // The UI services backend: GET /v2/apps?select=service&names=<snap> ->
