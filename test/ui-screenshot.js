@@ -1183,13 +1183,13 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: expected one card per top-level key (6), got ' + (cf1 && cf1.cardCount) + ' (round 48b)');
     if (!cf1 || cf1.confHeaders !== 0 || cf1.confTopTitles !== 0)
         console.log('PAGE ERROR: the config cards still carry a redundant header (' + (cf1 && cf1.confHeaders) + ' headers / ' + (cf1 && cf1.confTopTitles) + ' titles, round 48b2)');
-    if (!cf1 || !cf1.daemonFirstNode || cf1.daemonFirstNode.text !== 'daemon:' || cf1.daemonFirstNode.pad !== '4px')
+    if (!cf1 || !cf1.daemonFirstNode || cf1.daemonFirstNode.text !== 'daemon:' || cf1.daemonFirstNode.pad !== '17.92px')
         console.log('PAGE ERROR: the top-level key is not the first (4px) line of its card tree (' + (cf1 && JSON.stringify(cf1.daemonFirstNode)) + ', round 48b2)');
-    if (!cf1 || !cf1.preseed || cf1.preseed.pre === null || cf1.preseed.pad !== '8px')
+    if (!cf1 || !cf1.preseed || cf1.preseed.pre === null || cf1.preseed.pad !== '35.84px')
         console.log('PAGE ERROR: the nested multiline value is not the indented (8px) block leaf (daemon.preseed) (' + (cf1 && JSON.stringify(cf1.preseed)) + ', round 48b)');
-    if (!cf1 || !cf1.tls || cf1.tls.val !== 'tlsv1.2' || cf1.tls.pad !== '8px')
+    if (!cf1 || !cf1.tls || cf1.tls.val !== 'tlsv1.2' || cf1.tls.pad !== '35.84px')
         console.log('PAGE ERROR: the nested dotted key is not indented one level deeper (security_options.tls_version) (' + (cf1 && JSON.stringify(cf1.tls)) + ', round 48b)');
-    if (!cf1 || !cf1.logdest || cf1.logdest.val !== 'stdout' || cf1.logdest.pad !== '4px')
+    if (!cf1 || !cf1.logdest || cf1.logdest.val !== 'stdout' || cf1.logdest.pad !== '17.92px')
         console.log('PAGE ERROR: the top-level scalar leaf is not at 4px (log_dest: stdout) (' + (cf1 && JSON.stringify(cf1.logdest)) + ', round 48b)');
     if (!cf1 || cf1.trashCount !== 6)
         console.log('PAGE ERROR: trash icon count does not match the value count (' + (cf1 && cf1.trashCount) + ', round 48b)');
@@ -1197,8 +1197,36 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the Services header title/count glyph mids differ by ' + (cf1 && cf1.svcDelta) + 'px (want <=1, round 48b2)');
     if (!cf1 || cf1.trashMarginBottom !== '0px')
         console.log('PAGE ERROR: the config trash button still carries the .p-button margin (' + (cf1 && cf1.trashMarginBottom) + ', round 48b2)');
-    if (!cf1 || cf1.trashDelta === null || cf1.trashDelta > 1)
-        console.log('PAGE ERROR: the trash glyph is not vertically centred against its value (' + (cf1 && cf1.trashDelta) + 'px, want <=1, round 48b2)');
+    // 48d: the trash tooltip must NOT be clipped/occluded — hover the
+    // top-row (log_dest) trash and check the topmost element at the tooltip
+    // centre is the tooltip itself (the bundle .p-card overflow:auto used to
+    // clip a single-value card's above-anchored tooltip).
+    const topLeafBtn = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key'); return k && k.textContent.trim().replace(/:$/, '') === 'log_dest';
+        });
+        const btn = leaf.querySelector('.ucm-iconbtn');
+        btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        btn.focus();
+        return true;
+    });
+    void topLeafBtn;
+    await wait(250);
+    const tipOccl = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key'); return k && k.textContent.trim().replace(/:$/, '') === 'log_dest';
+        });
+        const tip = leaf.querySelector('.ucm-iconbtn .p-tooltip__message');
+        const r = tip.getBoundingClientRect();
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        const top = document.elementFromPoint(cx, cy);
+        return { display: getComputedStyle(tip).display, atCenter: top ? (top === tip || tip.contains(top) ? 'TOOLTIP' : top.tagName + '.' + (typeof top.className === 'string' ? top.className.split(' ').slice(0, 2).join('.') : '')) : 'none' };
+    });
+    if (!tipOccl || tipOccl.display === 'none' || tipOccl.atCenter !== 'TOOLTIP')
+        console.log('PAGE ERROR: the config trash tooltip is clipped/occluded on a card top row (' + JSON.stringify(tipOccl) + ', round 48d)');
+    await page.evaluate(() => { document.querySelector('.ucm-modal .ucm-conf-sec .ucm-conf__leaf .ucm-iconbtn').blur(); });
     await page.screenshot({ path: path.join(SHOTS, '13r-config-yaml-cards.png') });
 
     // Remove the daemon.preseed value (no confirm — it is a config value, not
@@ -1246,8 +1274,15 @@ function mockFactoryJs() {
         const keyW = sec ? sec.querySelector('#cfgk').getBoundingClientRect().width : null;
         const valW = sec ? sec.querySelector('#cfgv').getBoundingClientRect().width : null;
         const baseCards = box.querySelectorAll('.ucm-conf-sec > .p-card').length;
+        const keyInp = sec.querySelector('#cfgk');
+        const valInp = sec.querySelector('#cfgv');
+        const saveBtn = sec.querySelector('.ucm-conf-form__save');
+        const sameLine = keyInp && valInp ? Math.abs(keyInp.getBoundingClientRect().top - valInp.getBoundingClientRect().top) < 4 : false;
+        const saveBelow = keyInp && saveBtn ? (saveBtn.getBoundingClientRect().top - keyInp.getBoundingClientRect().bottom) > 0 : false;
         return {
             baseCards,
+            sameLine,
+            saveBelow,
             formCard: !!sec.querySelector('.p-card .ucm-conf-form'),
             keyHelp: !!sec.querySelector('#cfgkGroup .p-form-help-text'),
             valHelp: !!sec.querySelector('#cfgvGroup .p-form-help-text'),
@@ -1265,8 +1300,12 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the add-config form does not start as key + single-line value (' + JSON.stringify(cf3) + ', round 48c)');
     if (!cf3 || !/suru-document\.svg/.test(cf3.iconBg || ''))
         console.log('PAGE ERROR: the value field is not beside the suru document icon (' + (cf3 && cf3.iconBg) + ', round 48c)');
-    if (!cf3 || !(cf3.keyW > 0 && cf3.valW > 0 && (cf3.keyW - cf3.valW) >= 60))
-        console.log('PAGE ERROR: the value field is not meaningfully shorter than the key field (key ' + cf3.keyW + ' value ' + cf3.valW + ' diff ' + (cf3.keyW - cf3.valW) + ', want >=60, round 48c)');
+    if (!cf3 || !(cf3.keyW > 0 && cf3.valW > 0 && (cf3.keyW - cf3.valW) >= 30))
+        console.log('PAGE ERROR: the key field is not the dominant (wider) field on the one-line row (key ' + cf3.keyW + ' value ' + cf3.valW + ' diff ' + (cf3.keyW - cf3.valW) + ', round 48d)');
+    if (!cf3 || cf3.sameLine !== true)
+        console.log('PAGE ERROR: the key and value fields are not on the same line (round 48d)');
+    if (!cf3 || cf3.saveBelow !== true)
+        console.log('PAGE ERROR: the Add value button is not below the key/value line (round 48d)');
     if (!cf3 || cf3.saveText !== 'Add value')
         console.log('PAGE ERROR: the save button is not labeled "Add value" (' + (cf3 && cf3.saveText) + ', round 48c)');
     if (!cf3 || !cf3.formCard)

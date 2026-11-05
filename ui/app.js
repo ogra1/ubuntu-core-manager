@@ -1724,16 +1724,20 @@ function openConfigModal(name) {
     let confBusy = false;
 
     function confRow(node, prefix) {
+        // Indent in MONO-CHAR units (round 48d): one level = 2 monospace
+        // characters (~17.92px at the .ucm-mono 13.6px size). A nested
+        // dotted key therefore sits 2 chars in from its parent — the way a
+        // YAML file indents — instead of the earlier single-char 4px step.
         const frag = document.createDocumentFragment();
         Object.keys(node).sort().forEach((seg) => {
             const full = confPath(prefix, seg);
             const child = node[seg];
             if (child && typeof child === 'object' && !Array.isArray(child)) {
-                frag.append(el('div', { class: 'ucm-conf__node', style: 'padding-left:' + (prefix ? prefix.split('.').length * 4 + 4 : 4) + 'px;' },
+                frag.append(el('div', { class: 'ucm-conf__node', style: 'padding-left:' + (prefix ? prefix.split('.').length * 17.92 + 17.92 : 17.92) + 'px;' },
                     el('span', { class: 'ucm-mono ucm-conf__key', text: seg + ':' })));
                 frag.append(confRow(child, full));
             } else {
-                frag.append(confLeafRow(child, full, prefix ? prefix.split('.').length * 4 + 4 : 4));
+                frag.append(confLeafRow(child, full, prefix ? prefix.split('.').length * 17.92 + 17.92 : 17.92));
             }
         });
         return frag;
@@ -1787,11 +1791,11 @@ function openConfigModal(name) {
             const card = el('div', { class: 'p-card ucm-config__card' });
             const rows = el('div', { class: 'ucm-config__cardbody' });
             if (node && typeof node === 'object') {
-                rows.append(el('div', { class: 'ucm-conf__node', style: 'padding-left:4px;' },
+                rows.append(el('div', { class: 'ucm-conf__node', style: 'padding-left:17.92px;' },
                     el('span', { class: 'ucm-mono ucm-conf__key', text: top + ':' })));
                 rows.append(confRow(node, top));
             } else {
-                rows.append(confLeafRow(node, top, 4));
+                rows.append(confLeafRow(node, top, 17.92));
             }
             card.append(rows);
             configSec.append(card);
@@ -1864,7 +1868,7 @@ function openConfigModal(name) {
         (function addConfigForm() {
             const form = el('form', { class: 'ucm-conf-form', novalidate: '' });
             form.addEventListener('submit', (e) => e.preventDefault());
-            const keyGroup = el('div', { class: 'p-form__group', id: 'cfgkGroup' });
+            const keyGroup = el('div', { class: 'p-form__group ucm-conf-form__keygroup', id: 'cfgkGroup' });
             keyGroup.append(
                 el('label', { class: 'p-form__label', for: 'cfgk', text: 'Key' }),
                 el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgk', type: 'text', spellcheck: 'false', placeholder: 'e.g. foo.bar.baz' }),
@@ -1891,7 +1895,10 @@ function openConfigModal(name) {
                 el('p', { class: 'p-form-help-text', text: 'A single line, or click the document icon to paste a multiline value (JSON, YAML, …).' }),
                 el('p', { class: 'p-form-validation__message' }));
             const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf-form__save', type: 'button', text: 'Add value' });
-            form.append(keyGroup, valGroup, saveBtn);
+            // round 48d: key + value share ONE line (the fields shorten to
+            // fit the card), the "Add value" button stays below the line.
+            const formRow = el('div', { class: 'ucm-conf-form__row' }, keyGroup, valGroup);
+            form.append(formRow, saveBtn);
             // 48c2: the form lives in a card, like the Services and
             // configuration cards (no header — its own "Key" label leads it).
             const formCard = el('div', { class: 'p-card ucm-config__card' },

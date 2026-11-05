@@ -676,6 +676,12 @@ html, body {
    bundle's link blue to the app's orange accent); 48b the config YAML cards;
    48c the add-config form. */
 .ucm-config__card { margin: .2rem 0 0; }
+/* the bundle .p-card carries overflow:auto; the trash tooltip on a card's
+   topmost (single-value) row is anchored ABOVE that row and so extends past
+   the card's top edge — overflow:auto clipped it (it read as "hidden behind
+   the card above"). The popup body already scrolls, so the cards don't need
+   to clip. (48d) */
+.ucm-config__card { overflow: visible; }
 .ucm-config__cardbody { padding: .2rem 1rem 1rem; display: flex; flex-direction: column; }
 .ucm-svc { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid #f0f0f0; }
 .ucm-svc:last-child { border-bottom: 0; }
@@ -725,14 +731,16 @@ html, body {
    stock-document icon (build/images/suru-document.svg, pixel-verified);
    the collapse state reuses the bundle's p-icon--collapse. */
 .ucm-conf-form .p-form__group { margin-bottom: .9rem; }
-/* the value field is deliberately a touch shorter than the key field: the
-   key (the identity) is the full width, the value + its icon sit in a
-   narrower row so the icon reads as "attached to the value". */
-.ucm-conf-form__valgroup .ucm-conf-form__valrow { max-width: 20rem; }
+/* round 48d: key + value sit on ONE line; they shrink to fit the card, the
+   value a touch shorter than the key (the identity leads). The "Add value"
+   button stays below the line. */
+.ucm-conf-form__row { display: flex; gap: .9rem; align-items: flex-start; }
+.ucm-conf-form__row .ucm-conf-form__keygroup { flex: 1.3 1 0; min-width: 0; margin-bottom: 0; }
+.ucm-conf-form__row .ucm-conf-form__valgroup { flex: 1 1 0; min-width: 0; margin-bottom: 0; }
 .ucm-conf-form__iconbtn { display: inline-flex; align-items: center; justify-content: center; height: 1.9rem; width: 1.9rem; flex: 0 0 auto; padding: 0; margin-left: .5rem; }
 .ucm-conf-form__iconbtn .p-tooltip__message { display: none; }
 /* multiline mode: the textarea replaces the input in the same flex row */
-.ucm-conf-form__valrow { display: flex; align-items: center; }
+.ucm-conf-form__valrow { display: flex; align-items: center; width: 100%; }
 .ucm-conf-form__valholder { flex: 1 1 auto; min-width: 0; display: flex; }
 .ucm-conf-form__valholder > * { flex: 1 1 auto; min-width: 0; }
 .ucm-conf-form__ta { resize: vertical; min-height: 6.5rem; line-height: 1.5; }
