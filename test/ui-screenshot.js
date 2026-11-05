@@ -2275,6 +2275,16 @@ function mockFactoryJs() {
         const row = Array.from(card.querySelectorAll('tr.ucm-iface')).find((tr) => tr.querySelector('td').textContent.trim() === iface);
         row.querySelector('.ucm-ifaces-action .ucm-iconbtn').click();
     }, [title, iface]);
+    /* round 48f: the X now spawns a confirm card (sibling after #ifacesCards);
+       ifDiscConfirm clicks its action button ('confirm' = the red one,
+       'cancel' = the grey one) and reports whether the card was there. */
+    const ifDiscConfirm = (action) => page.evaluate((action) => {
+        const c = document.querySelector('#ifacesCards + .ucm-confirm');
+        if (!c) return false;
+        const btns = Array.from(c.querySelectorAll('button'));
+        (action === 'cancel' ? btns[1] : btns[0]).click();
+        return true;
+    }, action);
     let v = await ifRead();
 
     // The page-top Refresh button is gone (round 39) — the dashboard's 20 s
@@ -2426,8 +2436,12 @@ function mockFactoryJs() {
     if (!v.ss || v.ss.rows.length !== 1 || v.ss.rows[0].iface !== 'home' || v.ss.rows[0].slot !== ':home' || !/positive/.test(v.ss.rows[0].tone))
         console.log('PAGE ERROR: bare system connect did not move snap-store:home to connected (":home"): ' + JSON.stringify(v.ss && v.ss.rows));
     else if (v.ss.counts !== '1 connected · 0 unconnected') console.log('PAGE ERROR: snap-store counts after bare connect wrong: ' + v.ss.counts);
-    // restore state for the next drive: disconnect it again
+    // restore state for the next drive: disconnect it again — round 48f: the
+    // X spawns the confirm card, so the restore confirms it
     await ifCardBtn('snap-store', 'home');
+    await wait(400);
+    if (!(await ifDiscConfirm('confirm')))
+        console.log('PAGE ERROR: the disconnect confirm card is missing on the (a) restore (round 48f)');
     await wait(1200);
     v = await ifRead();
     if (!v.ss || v.ss.rows.length !== 1 || v.ss.rows[0].slot !== '—' || !/caution/.test(v.ss.rows[0].tone))
@@ -2443,11 +2457,73 @@ function mockFactoryJs() {
     else if (v.uc.rows[0].hasBtn !== true || v.uc.rows[0].btnIconClass !== 'p-icon--window-close')
         console.log('PAGE ERROR: ucm connected row must now be an icon-only Disconnect (X): ' + JSON.stringify(v.uc.rows[0]));
     // restore: disconnect it again -> back to the same-named plain-text target
+    // (round 48f: X -> confirm card -> confirm)
     await ifCardBtn('ucm', 'icon-themes');
+    await wait(400);
+    if (!(await ifDiscConfirm('confirm')))
+        console.log('PAGE ERROR: the disconnect confirm card is missing on the (b) restore (round 48f)');
     await wait(1200);
     v = await ifRead();
     if (!v.uc || v.uc.rows.length !== 1 || v.uc.rows[0].slot !== 'gtk-common-themes:icon-themes' || !/caution/.test(v.uc.rows[0].tone) || v.uc.rows[0].hasSelect !== false)
         console.log('PAGE ERROR: disconnect did not restore ucm:icon-themes to its same-named plain-text target: ' + JSON.stringify(v.uc && v.uc.rows));
+
+    // (c) DISCONNECT CONFIRM GUARD (round 48f): disconnecting an interface
+    // can brick the system (e.g. the kiosk's own wayland connection), so the
+    // X is confirm-gated — the same idiom as the snap Remove/Disable gates.
+    // Full cycle on snap-store:home: connect, X -> confirm card (nothing is
+    // severed pre-confirm), Cancel -> still connected, X -> Confirm -> done.
+    await ifCardBtn('snap-store', 'home');
+    await wait(1200);
+    v = await ifRead();
+    if (!v.ss || v.ss.rows[0].slot !== ':home' || !/positive/.test(v.ss.rows[0].tone))
+        console.log('PAGE ERROR: (c) could not reconnect snap-store:home for the disconnect-confirm drive: ' + JSON.stringify(v.ss && v.ss.rows));
+    await ifCardBtn('snap-store', 'home'); // the X on the now-connected row
+    await wait(400);
+    const dc = await page.evaluate(() => {
+        const c = document.querySelector('#ifacesCards + .ucm-confirm');
+        if (!c) return null;
+        return {
+            negative: /ucm-confirm--negative/.test(c.className),
+            msg: c.querySelector('.ucm-confirm__msg') ? c.querySelector('.ucm-confirm__msg').textContent.trim() : null,
+            buttons: Array.from(c.querySelectorAll('button')).map((x) => x.textContent.trim()),
+        };
+    });
+    if (!dc)
+        console.log('PAGE ERROR: clicking Disconnect did not spawn a confirm card (round 48f — it must not be one-click)');
+    else {
+        if (!dc.negative)
+            console.log('PAGE ERROR: the disconnect confirm card is not the negative-confirmation idiom: ' + JSON.stringify(dc));
+        if (!dc.msg || dc.msg.indexOf('Disconnect "home" on snap-store') === -1)
+            console.log('PAGE ERROR: the disconnect confirm message is wrong (got "' + (dc && dc.msg) + '")');
+        if (JSON.stringify(dc.buttons) !== JSON.stringify(['Disconnect home?', 'Cancel']))
+            console.log('PAGE ERROR: the disconnect confirm buttons are wrong: ' + JSON.stringify(dc.buttons));
+        const vPre = await ifRead();
+        if (!vPre.ss || vPre.ss.rows[0].slot !== ':home' || !/positive/.test(vPre.ss.rows[0].tone))
+            console.log('PAGE ERROR: the connection was severed BEFORE the confirm (round 48f — it must be reversible before it applies): ' + JSON.stringify(vPre.ss && vPre.ss.rows));
+        await page.screenshot({ path: path.join(SHOTS, '15a-ifaces-disconnect-confirm.png'), fullPage: true });
+    }
+    // Cancel: the card goes away and the connection is untouched
+    if (!(await ifDiscConfirm('cancel')))
+        console.log('PAGE ERROR: the disconnect confirm card vanished before the Cancel (round 48f)');
+    await wait(300);
+    v = await ifRead();
+    if (await page.evaluate(() => !!document.querySelector('#ifacesCards + .ucm-confirm')))
+        console.log('PAGE ERROR: the disconnect confirm card survived a Cancel (round 48f)');
+    if (!v.ss || v.ss.rows[0].slot !== ':home' || !/positive/.test(v.ss.rows[0].tone))
+        console.log('PAGE ERROR: a Cancelled disconnect still severed the connection (round 48f): ' + JSON.stringify(v.ss && v.ss.rows));
+    // X again -> Confirm: the connection drops and the card removes itself
+    await ifCardBtn('snap-store', 'home');
+    await wait(400);
+    if (!(await ifDiscConfirm('confirm')))
+        console.log('PAGE ERROR: the disconnect confirm card is missing on the (c) confirm drive (round 48f)');
+    await wait(1200);
+    v = await ifRead();
+    if (await page.evaluate(() => !!document.querySelector('#ifacesCards + .ucm-confirm')))
+        console.log('PAGE ERROR: the disconnect confirm card is still up after the change settled (round 48f)');
+    if (!v.ss || v.ss.rows.length !== 1 || v.ss.rows[0].slot !== '—' || !/caution/.test(v.ss.rows[0].tone))
+        console.log('PAGE ERROR: the confirmed disconnect did not disconnect snap-store:home (round 48f): ' + JSON.stringify(v.ss && v.ss.rows));
+    if (!(await page.evaluate(() => document.body.textContent.includes('Disconnected'))))
+        console.log('PAGE ERROR: the confirmed disconnect did not toast "Disconnected" (round 48f)');
 
     // Round 41: there is no dropdown connect to drive anymore — a plug with no
     // unique same-named target is simply not connectable from the UI.

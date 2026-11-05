@@ -2032,7 +2032,7 @@ function ifacesRow(r) {
     const actionCell = el('td', { class: 'ucm-ifaces-action' },
         r.connected
             ? rowBtn(`Disconnect ${r.plug} on ${r.snap}`, 'p-icon--window-close',
-                () => disconnectPlug(r.snap, r.plug, r.slotRef))
+                () => confirmDisconnect(r.snap, r.plug, r.slotRef))
             : rowBtn(`Connect ${r.plug} on ${r.snap}` + (r.sysSlot || r.singleTarget ? '' : ' — no target slots available'),
                 'p-icon--add',
                 (btn) => connectPlug(r, btn),
@@ -2157,6 +2157,34 @@ async function connectPlug(r, btn) {
     } finally {
         if (btn) btn.classList.remove('is-disabled');
     }
+}
+
+function confirmDisconnect(snap, plug, slotRef) {
+    // Disconnecting an interface can be FATAL — severing e.g. the kiosk's own
+    // wayland/x11 connection bricks the session — so, like the snap Remove and
+    // Disable actions, it must not be a one-click X (round 48f). Same page
+    // confirm idiom as confirmRemove/confirmDisable: the box is built before
+    // its buttons reference it (no TDZ throw), one centred flex row (question
+    // icon, message, action, Cancel), appended after the interfaces cards and
+    // removing itself once the change settles. The actual disconnect + toasts
+    // + reload stay in disconnectPlug (the card is a sibling of #ifacesCards,
+    // so the reload's innerHTML wipe cannot destroy it).
+    const box = el('div', {
+        class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
+    });
+    const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
+    const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Disconnect "${plug}" on ${snap}? It will stop working until it is connected again.` });
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: `Disconnect ${plug}?` });
+    b.onclick = () => {
+        b.classList.add('is-disabled');
+        disconnectPlug(snap, plug, slotRef).finally(() => box.remove());
+    };
+    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancel.onclick = () => box.remove();
+    box.append(icon, msg, b, cancel);
+    $('#ifacesCards').after(box);
+    b.focus();
 }
 
 async function disconnectPlug(snap, plugRef, slotRef) {
