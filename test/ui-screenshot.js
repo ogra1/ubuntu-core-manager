@@ -1371,12 +1371,16 @@ function mockFactoryJs() {
     if (!cf4c || !cf4c.isInput || !/p-icon--document/.test(cf4c.icon))
         console.log('PAGE ERROR: clicking the collapse icon did not restore the single-line value (' + JSON.stringify(cf4c) + ', round 48c)');
 
-    // Save a dotted key + value -> it joins the tree as a new card.
+    // Save a dotted key + value via ENTER -> it joins the tree as a new card
+    // (48e: the form submits on Enter).
     await page.evaluate(() => {
-        document.querySelector('.ucm-conf-formsec #cfgk').value = 'max_inflight_messages';
-        document.querySelector('.ucm-conf-formsec #cfgv').value = '2048';
-        document.querySelector('.ucm-conf-formsec .ucm-conf-form__save').click();
+        const k = document.querySelector('.ucm-conf-formsec #cfgk');
+        k.value = 'max_inflight_messages';
+        const v = document.querySelector('.ucm-conf-formsec #cfgv');
+        v.value = '2048';
+        v.focus();
     });
+    await page.keyboard.press('Enter');
     await wait(1000);
     const cf5 = await page.evaluate(() => {
         const box = document.querySelector('.ucm-modal');
@@ -1397,6 +1401,38 @@ function mockFactoryJs() {
     await page.evaluate(() => { const b = document.querySelector('.ucm-modal__body'); if (b) b.scrollTop = b.scrollHeight; });
     await wait(150);
     await page.screenshot({ path: path.join(SHOTS, '13v-config-after-add.png') });
+    // 48e: an empty value shows exactly "Enter a value" (no parenthetical),
+    // and the "Add value" button STILL saves (the button path is preserved).
+    await page.evaluate(() => {
+        const k = document.querySelector('.ucm-conf-formsec #cfgk');
+        k.value = 'empty_test';
+        const v = document.querySelector('.ucm-conf-formsec #cfgv');
+        if (v) v.value = '';
+        document.querySelector('.ucm-conf-formsec .ucm-conf-form__save').click();
+    });
+    await wait(300);
+    const cf6 = await page.evaluate(() => {
+        const msg = document.querySelector('.ucm-conf-formsec #cfgvGroup .p-form-validation__message');
+        return { msg: msg ? msg.textContent.trim() : null, hasCard: !!Array.from(document.querySelectorAll('.ucm-conf-sec > .p-card')).find((c) => c.textContent.includes('empty_test')) };
+    });
+    if (!cf6 || cf6.msg !== 'Enter a value')
+        console.log('PAGE ERROR: the empty-value message is not exactly "Enter a value" (' + (cf6 && cf6.msg) + ', round 48e)');
+    if (!cf6 || cf6.hasCard)
+        console.log('PAGE ERROR: an empty value was saved anyway (round 48e)');
+    await page.evaluate(() => {
+        const k = document.querySelector('.ucm-conf-formsec #cfgk');
+        k.value = 'button_added';
+        const v = document.querySelector('.ucm-conf-formsec #cfgv');
+        v.value = '42';
+        document.querySelector('.ucm-conf-formsec .ucm-conf-form__save').click();
+    });
+    await wait(1000);
+    const cf7 = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll('.ucm-conf-sec > .p-card'));
+        return { hasButton: cards.some((c) => c.textContent.includes('button_added')) };
+    });
+    if (!cf7 || !cf7.hasButton)
+        console.log('PAGE ERROR: the "Add value" button no longer saves (round 48e)');
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 

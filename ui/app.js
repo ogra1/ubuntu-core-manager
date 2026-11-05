@@ -1867,7 +1867,6 @@ function openConfigModal(name) {
 
         (function addConfigForm() {
             const form = el('form', { class: 'ucm-conf-form', novalidate: '' });
-            form.addEventListener('submit', (e) => e.preventDefault());
             const keyGroup = el('div', { class: 'p-form__group ucm-conf-form__keygroup', id: 'cfgkGroup' });
             keyGroup.append(
                 el('label', { class: 'p-form__label', for: 'cfgk', text: 'Key' }),
@@ -1894,7 +1893,7 @@ function openConfigModal(name) {
             valGroup.append(vlabel, valrow,
                 el('p', { class: 'p-form-help-text', text: 'A single line, or click the document icon to paste a multiline value (JSON, YAML, …).' }),
                 el('p', { class: 'p-form-validation__message' }));
-            const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf-form__save', type: 'button', text: 'Add value' });
+            const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf-form__save', type: 'submit', text: 'Add value' });
             // round 48d: key + value share ONE line (the fields shorten to
             // fit the card), the "Add value" button stays below the line.
             const formRow = el('div', { class: 'ucm-conf-form__row' }, keyGroup, valGroup);
@@ -1906,7 +1905,13 @@ function openConfigModal(name) {
             formSec.append(el('p', { class: 'ucm-info__sec', text: 'Add configuration' }), formCard);
             formRenderValue();
 
-            saveBtn.onclick = async () => {
+            // 48e: the form SUBMITS — Enter in either field (a single-line
+            // input submits on Enter) and the "Add value" button (a submit
+            // button) both run saveValue(). The multiline textarea does NOT
+            // submit on Enter (native: Enter inserts a newline), which is the
+            // right behavior while pasting a block.
+            const saveValue = async () => {
+                if (saveBtn.classList.contains('is-disabled')) return; // already saving
                 const key = document.getElementById('cfgk').value.trim();
                 const valEl = document.getElementById('cfgv');
                 const raw = (valEl && valEl.value) ? valEl.value : '';
@@ -1918,7 +1923,7 @@ function openConfigModal(name) {
                     setFieldState('cfgkGroup', '');
                 }
                 if (raw === '') {
-                    setFieldState('cfgvGroup', 'error', 'Enter a value (or remove it with the trash icon).');
+                    setFieldState('cfgvGroup', 'error', 'Enter a value');
                     ok = false;
                 } else {
                     setFieldState('cfgvGroup', '');
@@ -1941,6 +1946,7 @@ function openConfigModal(name) {
                 } catch (e) { toastErr(e); }
                 finally { saveBtn.classList.remove('is-disabled'); }
             };
+            form.addEventListener('submit', (e) => { e.preventDefault(); saveValue(); });
         })();
     })();
 }
