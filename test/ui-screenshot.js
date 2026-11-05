@@ -107,18 +107,20 @@ const COMPONENTS = {
 
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
-    // mosquitto (round 48b): a single top-level key with nested dotted
-    // sub-keys + a boolean + a multiline (block-style) string value — the
-    // full card/tree shape the config UI must render.
+    // mosquitto (round 48b/48f): NESTED document — the LIVE shape snapd returns
+    // (it stores config as nested JSON, NOT a flat dotted map). One top-level
+    // key with a nested subtree (daemon.preseed), scalars, a boolean, and a
+    // dotted subtree (security_options.tls_version) — the full card/tree shape
+    // the config UI must render. htop: a scalar + a nested logging.level.
     mosquitto: {
-        'log_dest': 'stdout',
-        'per_listener_settings': true,
-        'persistence': true,
-        'persistence_file': 'mosquitto.db',
-        'security_options.tls_version': 'tlsv1.2',
-        'daemon.preseed': '{\n  "net": {\n    "allow": ["10.0.0.0/8"]\n  }\n}',
+        log_dest: 'stdout',
+        per_listener_settings: true,
+        persistence: true,
+        persistence_file: 'mosquitto.db',
+        security_options: { tls_version: 'tlsv1.2' },
+        daemon: { preseed: '{\n  "net": {\n    "allow": ["10.0.0.0/8"]\n  }\n}' },
     },
-    htop: { port: '8080', 'logging.level': 'info' },
+    htop: { port: '8080', logging: { level: 'info' } },
 };
 
 // Snap services (snapd GET /v2/apps?select=service, chunk 48a): in the live
@@ -446,10 +448,22 @@ function mockFactoryJs() {
                     }, 400);
                     return { id, change: id };
                 },
+                /* round 48f: a config document is NESTED ({top:{sub:{leaf}}}) —
+                   the LIVE shape. confGet walks the dotted key; confSet writes
+                   one dotted key (null = delete the leaf). When the app unsets a
+                   whole top-level key (the confWipeTop ghost-tree fix) the top
+                   entry is deleted outright, so no hollow subtree survives. */
+                _confWalk(n, parts) {
+                    let node = CONF[n];
+                    for (const p of parts) {
+                        if (node === undefined || typeof node !== 'object' || node === null) return undefined;
+                        node = node[p];
+                    }
+                    return node;
+                },
                 async confGet(n, key) {
-                    const doc = CONF[n] || {};
-                    if (key) return { [key]: Object.prototype.hasOwnProperty.call(doc, key) ? doc[key] : null };
-                    return doc;
+                    if (!key) return CONF[n] || {};
+                    return { [key]: this._confWalk(n, key.split('.')) };
                 },
                 async confSet(n, obj) {
                     // LIVE (round 48b): a conf PUT is async — 202 + a change;
@@ -459,8 +473,16 @@ function mockFactoryJs() {
                     const id = 'conf' + CHANGES.svc;
                     CHANGES[id] = { id, status: 'Doing', kind: 'configure-snap' };
                     setTimeout(() => {
-                        for (const [k, v] of Object.entries(obj)) {
-                            if (v === null) delete CONF[n][k]; else CONF[n][k] = v;
+                        for (const [full, val] of Object.entries(obj)) {
+                            const parts = full.split('.');
+                            if (val === null && parts.length === 1) { delete CONF[n][parts[0]]; continue; }
+                            let node = CONF[n];
+                            for (let i = 0; i < parts.length - 1; i++) {
+                                if (typeof node[parts[i]] !== 'object' || node[parts[i]] === null) node[parts[i]] = {};
+                                node = node[parts[i]];
+                            }
+                            if (val === null) delete node[parts[parts.length - 1]];
+                            else node[parts[parts.length - 1]] = val;
                         }
                         CHANGES[id] = { id, status: 'Done' };
                     }, 250);
@@ -1242,27 +1264,79 @@ function mockFactoryJs() {
     await page.evaluate(() => { document.querySelector('.ucm-modal .ucm-conf-sec .ucm-conf__leaf .ucm-iconbtn').blur(); });
     await page.screenshot({ path: path.join(SHOTS, '13r-config-yaml-cards.png') });
 
-    // Remove the daemon.preseed value (no confirm — it is a config value, not
-    // a running-state op) -> the daemon card vanishes (its last line is gone)
-    // and the toast reports the removal.
-    await page.evaluate(() => {
+    // Remove the daemon.preseed value — round 48f: it is CONFIRM-GATED (a
+    // config removal runs the snap's configure hook and is destructive) and it
+    // WIPES THE TOP-LEVEL KEY when its branch is left empty (daemon only holds
+    // preseed, so removing it unsets `daemon` — the card vanishes with no ghost
+    // tree). Drive: trash -> confirm row (assert copy) -> Cancel (reversible)
+    // -> trash -> Confirm (card gone + toast + no error chip).
+    const clickConfTrash = (needle) => page.evaluate((needle) => {
         const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
-        const card = Array.from(sec.querySelectorAll(':scope > .p-card')).find((c) => c.textContent.includes('preseed'));
+        const card = Array.from(sec.querySelectorAll(':scope > .p-card')).find((c) => c.textContent.includes(needle));
         card.querySelector('.ucm-conf__leaf .ucm-iconbtn').click();
+    }, needle);
+    const clickConfBtn = (idx) => page.evaluate((idx) => {
+        const c = document.querySelector('.ucm-modal .ucm-confirm');
+        const btns = Array.from(c.querySelectorAll('button'));
+        btns[idx].click();
+    }, idx);
+    await clickConfTrash('preseed');
+    await wait(400);
+    const dc1 = await page.evaluate(() => {
+        const c = document.querySelector('.ucm-modal .ucm-confirm');
+        if (!c) return null;
+        return {
+            negative: /ucm-confirm--negative/.test(c.className),
+            msg: c.querySelector('.ucm-confirm__msg') ? c.querySelector('.ucm-confirm__msg').textContent.trim() : null,
+            buttons: Array.from(c.querySelectorAll('button')).map((x) => x.textContent.trim()),
+        };
     });
-    await wait(800);
+    if (!dc1)
+        console.log('PAGE ERROR: removing a config value did not spawn a confirm row (round 48f — it must not be one-click)');
+    else {
+        if (!dc1.negative)
+            console.log('PAGE ERROR: the config-removal confirm row is not the negative-confirmation idiom: ' + JSON.stringify(dc1));
+        if (!dc1.msg || dc1.msg.indexOf('Remove "daemon.preseed" from mosquitto') === -1)
+            console.log('PAGE ERROR: the config-removal confirm message is wrong (got "' + (dc1 && dc1.msg) + '")');
+        if (JSON.stringify(dc1.buttons) !== JSON.stringify(['Remove preseed?', 'Cancel']))
+            console.log('PAGE ERROR: the config-removal confirm buttons are wrong: ' + JSON.stringify(dc1.buttons));
+    }
+    // Cancel: the daemon card must still be there (reversible before it applies)
+    await clickConfBtn(1);
+    await wait(300);
+    const cfCancel = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const cards = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')) : [];
+        return {
+            confirmGone: !document.querySelector('.ucm-modal .ucm-confirm'),
+            daemonStill: cards.some((c) => c.textContent.includes('preseed') || c.textContent.includes('daemon:')),
+            cardCount: cards.length,
+        };
+    });
+    if (!cfCancel.confirmGone)
+        console.log('PAGE ERROR: the config-removal confirm row survived a Cancel (round 48f)');
+    else if (!cfCancel.daemonStill || cfCancel.cardCount !== 6)
+        console.log('PAGE ERROR: a Cancelled config removal still removed the value (round 48f — it must be reversible before it applies): ' + JSON.stringify(cfCancel));
+    // Confirm: the daemon card vanishes (its last value gone -> top-level wipe)
+    await clickConfTrash('preseed');
+    await wait(400);
+    await clickConfBtn(0);
+    await wait(900);
     const cf2 = await page.evaluate(() => {
         const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
         const cards = sec ? Array.from(sec.querySelectorAll(':scope > .p-card')) : [];
         return {
             cardCount: cards.length,
+            confirmGone: !document.querySelector('.ucm-modal .ucm-confirm'),
             daemonGone: !cards.some((c) => c.textContent.includes('preseed') || c.textContent.includes('daemon:')),
             toast: document.body.textContent.includes('Value removed'),
             noError: !document.querySelector('.ucm-modal .p-status-label--negative'),
         };
     });
     if (!cf2 || cf2.cardCount !== 5 || !cf2.daemonGone)
-        console.log('PAGE ERROR: removing the last value of a top-level key did not drop the card (' + JSON.stringify(cf2) + ', round 48b)');
+        console.log('PAGE ERROR: removing the last value of a top-level key did not drop the card (' + JSON.stringify(cf2) + ', round 48f — the emptied branch must be wiped, not left as a ghost tree)');
+    if (!cf2 || !cf2.confirmGone)
+        console.log('PAGE ERROR: the config-removal confirm row is still up after the change settled (round 48f)');
     if (!cf2 || !cf2.toast)
         console.log('PAGE ERROR: the value removal did not toast (round 48b)');
     if (!cf2 || !cf2.noError)

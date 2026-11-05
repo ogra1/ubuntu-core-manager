@@ -1583,6 +1583,36 @@ function confTree(root) {
 function confPath(prefix, seg) {
     return prefix ? prefix + '.' + seg : seg;
 }
+/* Round 48f: a config document is NESTED (snapd stores it as nested JSON —
+   GET /v2/snaps/{n}/conf returns {top:{sub:{leaf:val}}}, not a flat dotted
+   map). snapd's purgeNulls drops only null LEAF values, so deleting the last
+   leaf of a branch leaves an empty object behind ({foo:{bar:{}}}) — the
+   "ghost tree" that used to survive a removal. confWipeTop removes `full`
+   from a deep copy of the nested doc (pruning emptied parents as it climbs)
+   and returns the TOP-LEVEL key to send to snapd when that branch is about
+   to be left empty (a clean `unset foo` — the whole branch goes), or the
+   leaf's full dotted path when the branch still has other values. */
+function confWipeTop(doc, full) {
+    const parts = full.split('.');
+    const clone = JSON.parse(JSON.stringify(doc || {}));
+    const nodes = [clone];
+    let node = clone;
+    for (let i = 0; i < parts.length - 1; i++) {
+        if (node[parts[i]] === undefined || typeof node[parts[i]] !== 'object' || node[parts[i]] === null)
+            return full; // the doc doesn't actually nest this path — unset just the leaf
+        node = node[parts[i]];
+        nodes.push(node);
+    }
+    delete node[parts[parts.length - 1]];
+    for (let i = nodes.length - 1; i >= 1; i--) {
+        if (Object.keys(nodes[i]).length === 0) delete nodes[i - 1][parts[i - 1]];
+    }
+    const top = parts[0];
+    const topNode = clone[top];
+    const topEmpty = topNode === undefined
+        || (typeof topNode === 'object' && topNode !== null && Object.keys(topNode).length === 0);
+    return topEmpty ? top : full;
+}
 const confValText = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
 
 function openConfigModal(name) {
@@ -1767,22 +1797,41 @@ function openConfigModal(name) {
         kv.append(isMulti
             ? el('pre', { class: 'ucm-conf__multi', text: value })
             : el('span', { class: 'ucm-mono ucm-conf__val', text: confValText(value) }));
-        const trash = rowBtn('Remove ' + full, 'p-icon--delete', async () => {
+        const trash = rowBtn('Remove ' + full, 'p-icon--delete', () => {
+            // Removing a config value is destructive (it runs the snap's
+            // configure hook and the doc flips when it settles), so — like the
+            // service-stops, snap disable/remove and interface disconnect — it
+            // is confirm-gated (round 48f). Inline .ucm-confirm row (the
+            // round-45 idiom, already shared by the service switches above).
             if (confBusy) return;
-            confBusy = true;
-            try {
-                const change = await core.snaps.confSet(name, { [full]: null });
-                const done = await waitChangeSettled(change);
-                if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
-                    toast('negative', 'Removing the value failed', name + ': ' + full + ' — ' + (done.err || done.status));
-                } else {
-                    toast('positive', 'Value removed', name + ': ' + full);
+            askConfirm(
+                `Remove "${full}" from ${name}? The snap's configuration hook will run and the value will be deleted.`,
+                `Remove ${full.split('.').pop()}?`,
+                async () => {
+                    confBusy = true;
+                    try {
+                        // Decide what to unset BEFORE sending: if removing this
+                        // leaf would leave its top-level branch empty, unset the
+                        // top-level key (a clean branch wipe) instead of just the
+                        // leaf — snapd otherwise leaves the emptied subtree
+                        // behind (the ghost tree).
+                        let cur = null;
+                        try { cur = await core.snaps.confGet(name); } catch { cur = null; }
+                        const wipeKey = (cur && typeof cur === 'object') ? confWipeTop(cur, full) : full;
+                        const change = await core.snaps.confSet(name, { [wipeKey]: null });
+                        const done = await waitChangeSettled(change);
+                        if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done') {
+                            toast('negative', 'Removing the value failed', name + ': ' + full + ' — ' + (done.err || done.status));
+                        } else {
+                            toast('positive', 'Value removed', name + ': ' + full);
+                        }
+                        let freshRoot = null;
+                        try { freshRoot = await core.snaps.confGet(name); } catch { freshRoot = null; }
+                        if (freshRoot) renderConfig(freshRoot); // re-fetch: the async PUT settled, the doc changed
+                    } catch (e) { toastErr(e); }
+                    finally { confBusy = false; }
                 }
-                let freshRoot = null;
-                try { freshRoot = await core.snaps.confGet(name); } catch { freshRoot = null; }
-                if (freshRoot) renderConfig(freshRoot); // re-fetch: the async PUT settled, the doc changed
-            } catch (e) { toastErr(e); }
-            finally { confBusy = false; }
+            );
         });
         row.append(kv, trash);
         return row;

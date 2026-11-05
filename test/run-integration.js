@@ -547,11 +547,18 @@ function ok(name, cond, extra = '') {
     ok('conf PUT returns an async change id (live: 202, not a sync 200)', confPutId && confPutId.id, JSON.stringify(confPutId));
     await new Promise((r) => setTimeout(r, 320)); // the stub settles at 250ms (atomic doc flip)
     const confAll = await m.getSnapConfig('htop');
-    ok('conf-get returns the snap doc', confAll && confAll.port === '8080' && confAll['logging.level'] === 'info', JSON.stringify(confAll));
+    // round 48f: the doc is NESTED (LIVE shape) — the dotted key is a path.
+    ok('conf-get returns the snap doc (nested)', confAll && confAll.port === '8080' && confAll.logging && confAll.logging.level === 'info', JSON.stringify(confAll));
     const confOne = await m.getSnapConfig('htop', 'port');
     ok('conf-get ?keys=port unwraps to {port: value}', confOne && confOne.port === '8080', JSON.stringify(confOne));
-    const confMiss = await m.getSnapConfig('htop', 'no.such.key');
-    ok('conf-get unknown key -> null value (not an error)', confMiss && 'no.such.key' in confMiss && confMiss['no.such.key'] === null, JSON.stringify(confMiss));
+    // LIVE (round 48f probe): a single-key GET for a missing key is a 400
+    // option-not-found, NOT {key: null}. (The old flat stub lied with null; the
+    // app never issues a single-key conf GET, so this is stub honesty only.)
+    let confMissErr = null;
+    try { await m.getSnapConfig('htop', 'no.such.key'); } catch (e) { confMissErr = e; }
+    ok('conf-get unknown single key -> 400 option-not-found (live, not {key:null})',
+        !!confMissErr && confMissErr.kind === 'option-not-found' && confMissErr.status === 400,
+        confMissErr && (confMissErr.kind + ' ' + confMissErr.status));
     await m.setSnapConfig('htop', { port: 9090 });
     await new Promise((r) => setTimeout(r, 320)); // async conf PUT: the doc flips when the change settles
     const confAfter = await m.getSnapConfig('htop');
@@ -566,10 +573,44 @@ function ok(name, cond, extra = '') {
     let confValErr = null;
     try { await m.setSnapConfig('htop', { port: { nested: true } }); } catch (e) { confValErr = e; }
     ok('reject non-scalar config value', !!confValErr && /scalar/.test(confValErr.message), confValErr && confValErr.message);
+    // round 48f GHOST TREE (LIVE snapd behavior, purgeNulls): unsetting the LAST
+    // leaf of a branch leaves the emptied parent object behind — the doc becomes
+    // {port:9090, logging:{}} — which is exactly why the app must unset the whole
+    // TOP-LEVEL key (confWipeTop) instead of just the leaf.
     await m.setSnapConfig('htop', { 'logging.level': null });
     await new Promise((r) => setTimeout(r, 320));
     const confDel = await m.getSnapConfig('htop');
-    ok('conf-set null removes the key', confDel && !('logging.level' in confDel) && confDel.port === 9090, JSON.stringify(confDel));
+    ok('conf-set null removes the leaf but snapd leaves the emptied parent (ghost tree)',
+        confDel && confDel.logging && Object.keys(confDel.logging).length === 0 && confDel.port === 9090, JSON.stringify(confDel));
+    // the fix: unsetting the TOP-LEVEL key wipes the whole branch (the app does
+    // this via confWipeTop when the last value of a branch is removed)
+    await m.setSnapConfig('htop', { logging: null });
+    await new Promise((r) => setTimeout(r, 320));
+    const confWipe = await m.getSnapConfig('htop');
+    ok('unsetting the top-level key wipes the whole branch (no ghost tree)',
+        confWipe && !('logging' in confWipe) && confWipe.port === 9090, JSON.stringify(confWipe));
+    // confWipeTop unit (the renderer helper that picks the key to unset):
+    // extracting it from app.js and running it against nested docs.
+    {
+        const fs = require('fs');
+        const appSrc = fs.readFileSync(path.join(__dirname, '..', 'ui', 'app.js'), 'utf8');
+        const mfn = appSrc.match(/function confWipeTop\(doc, full\) \{[\s\S]*?\n\}/);
+        ok('confWipeTop helper is present in app.js', !!mfn);
+        if (mfn) {
+            const body = mfn[0].slice(mfn[0].indexOf('{') + 1, mfn[0].lastIndexOf('}'));
+            const fn = new Function('doc', 'full', body);
+            ok('confWipeTop wipes the top-level key when its branch empties',
+                fn({ a: { b: { c: 1 } } }, 'a.b.c') === 'a', JSON.stringify(fn({ a: { b: { c: 1 } } }, 'a.b.c')));
+            ok('confWipeTop unsets only the leaf when the branch keeps other values',
+                fn({ a: { b: { c: 1, d: 2 } } }, 'a.b.c') === 'a.b.c', JSON.stringify(fn({ a: { b: { c: 1, d: 2 } } }, 'a.b.c')));
+            ok('confWipeTop wipes a top-level scalar leaf',
+                fn({ a: 1, b: { c: 2 } }, 'a') === 'a', JSON.stringify(fn({ a: 1, b: { c: 2 } }, 'a')));
+            ok('confWipeTop keeps a mid-level parent that has other values',
+                fn({ a: { x: { y: 1, z: 2 } } }, 'a.x.y') === 'a.x.y', JSON.stringify(fn({ a: { x: { y: 1, z: 2 } } }, 'a.x.y')));
+        }
+        ok('config trash removal computes the wipe key via confWipeTop',
+            /confWipeTop\(cur, full\)/.test(appSrc), 'renderer does not call confWipeTop');
+    }
 
     console.log('\n[12] snap services (snapd /v2/apps — chunk 48a)');
     // The UI services backend: GET /v2/apps?select=service&names=<snap> ->

@@ -111,7 +111,10 @@ function makeServer(socketPath, state) {
     // htop ships defaults so the conf UI has something to edit; core keeps
     // the netplan external-config key. `null` values model removed keys.
     state.conf = state.conf || {
-        htop: { port: '8080', 'logging.level': 'info' },
+        // round 48f: NESTED — the LIVE shape. snapd stores config as nested
+        // JSON (a dotted key is a path, not a flat key), so GET /v2/snaps/{n}/conf
+        // returns {port:'8080', logging:{level:'info'}} for htop.
+        htop: { port: '8080', logging: { level: 'info' } },
     };
 
     fs.existsSync(socketPath) && fs.unlinkSync(socketPath);
@@ -381,6 +384,26 @@ function makeServer(socketPath, state) {
             const confRe = p.match(/^\/v2\/snaps\/([^/]+)\/conf$/);
             if (confRe) {
                 const name = decodeURIComponent(confRe[1]);
+                // round 48f: nested-doc helpers (LIVE shape — snapd stores config
+                // as nested JSON; a dotted key walks the tree).
+                const confWalk = (doc, parts) => {
+                    let node = doc;
+                    for (const s of parts) {
+                        if (node === undefined || typeof node !== 'object' || node === null) return undefined;
+                        node = node[s];
+                    }
+                    return node;
+                };
+                const confSetPath = (doc, parts, val) => {
+                    let node = doc;
+                    for (let i = 0; i < parts.length - 1; i++) {
+                        if (typeof node[parts[i]] !== 'object' || node[parts[i]] === null) node[parts[i]] = {};
+                        node = node[parts[i]];
+                    }
+                    const leaf = parts[parts.length - 1];
+                    if (val === null) delete node[leaf];
+                    else node[leaf] = val;
+                };
                 if (req.method === 'GET') {
                     const keys = url.searchParams.get('keys');
                     if (name === 'core' && (keys === null || keys.startsWith('system.network.netplan'))) {
@@ -389,7 +412,14 @@ function makeServer(socketPath, state) {
                     const doc = state.conf[name] || {};
                     if (keys === null) return json(res, 200, doc);
                     const k = decodeURIComponent(keys);
-                    return json(res, 200, { [k]: Object.prototype.hasOwnProperty.call(doc, k) ? doc[k] : null });
+                    const val = confWalk(doc, k.split('.'));
+                    // LIVE (round 48f probe): a single-key GET for a MISSING key
+                    // is a 400 option-not-found error, NOT {key: null}. (The old
+                    // flat stub returned {key:null}; the app never does a
+                    // single-key GET so this only matters for stub honesty.)
+                    if (val === undefined)
+                        return json(res, 400, { kind: 'option-not-found', message: `snap "${name}" has no "${k.split('.')[0]}" configuration option`, value: { SnapName: name, Key: k.split('.')[0] } });
+                    return json(res, 200, { [k]: val });
                 }
                 if (req.method === 'PUT') {
                     if (!auth.ok) return json(res, 401, { kind: 'unauthenticated', message: 'unauthenticated access' });
@@ -407,11 +437,13 @@ function makeServer(socketPath, state) {
                         if (name === 'core' && data['system.network.netplan']) {
                             state.netplanYaml = data['system.network.netplan'];
                         } else {
+                            // round 48f: nested write (null deletes the leaf —
+                            // snapd's purgeNulls does NOT prune emptied parents,
+                            // so a hollow {a:{}} ghost survives a leaf-only unset;
+                            // the app's confWipeTop sends the TOP key to avoid it).
                             if (!state.conf[name]) state.conf[name] = {};
-                            for (const [k, v] of Object.entries(data)) {
-                                if (v === null) delete state.conf[name][k];
-                                else state.conf[name][k] = v;
-                            }
+                            for (const [k, v] of Object.entries(data))
+                                confSetPath(state.conf[name], k.split('.'), v);
                         }
                     }, 250);
                     const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: confId });
