@@ -479,6 +479,7 @@ html, body {
     display: flex; flex-direction: column; gap: .6rem;
     width: 26rem; max-width: calc(100vw - 2.4rem);
     z-index: 80;
+    pointer-events: none; /* banners only — must never block the UI under them (48f) */
 }
 .ucm-toasts .p-notification { box-shadow: 0 8px 24px rgba(0,0,0,.18); }
 

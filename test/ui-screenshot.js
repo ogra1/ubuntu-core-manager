@@ -201,6 +201,7 @@ function mockFactoryJs() {
         let localAuthed = false;
         let cpuCalls = 0;
         let netCalls = 0;
+        const __SUBS = [];
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
@@ -233,7 +234,19 @@ function mockFactoryJs() {
                     return status();
                 },
                 async status() { return status(); },
-                onStatusChanged() { return () => {}; },
+                /* round 48f: capture status-push subscribers so the harness can
+                   drive the SAME payload path main pushes on inactivity. */
+                __subs: [],
+                /* round 48f harness hook: flip the payload + notify subscribers
+                   exactly like main's inactivity lock would (mock-only — in the
+                   real runtime the flip arrives as an IPC push). */
+                __lock() {
+                    localAuthed = false;
+                    const p = status();
+                    __SUBS.forEach((f) => { try { f(p); } catch (e) {} });
+                    return p;
+                },
+                onStatusChanged(cb) { __SUBS.push(cb); return () => { const i = __SUBS.indexOf(cb); if (i >= 0) __SUBS.splice(i, 1); }; },
             },
             store: {
                 // Backend-only (not used by the UI anymore); kept so the
@@ -2439,6 +2452,50 @@ function mockFactoryJs() {
     // Round 41: there is no dropdown connect to drive anymore — a plug with no
     // unique same-named target is simply not connectable from the UI.
     await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });
+
+    // ---- 6b. Round 48f: locking with popups OPEN must close them. The
+    // modals are body-appended (z60) and would otherwise sit in front of the
+    // login card, still interactive while the console is locked. Re-open the
+    // snap-info AND config popups from the console, flip the auth payload the
+    // way a lock does, and assert both are gone and the login view is up.
+    await page.click('.ucm-side a[data-view="snaps"]');
+    await wait(700);
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const r = rows.find((x) => x.cells && x.cells[0] && x.cells[0].textContent.trim() === 'htop');
+        r.cells[0].click(); // the snap name opens the snap-info modal
+    });
+    await wait(600);
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const r = rows.find((x) => x.cells && x.cells[0] && x.cells[0].textContent.trim() === 'htop');
+        r.querySelectorAll('.ucm-actions button')[0].click(); // the gear opens the config modal
+    });
+    await wait(600);
+    const preLock = await page.evaluate(() => document.querySelectorAll('.ucm-modal').length);
+    if (preLock !== 2)
+        console.log('PAGE ERROR: could not re-open both popups before the 48f lock test (modals: ' + preLock + ')');
+    const lockRes = await page.evaluate(async () => {
+        const p = await window.__mockCore.auth.__lock();
+        await new Promise((r) => setTimeout(r, 400));
+        return {
+            authenticated: p.authenticated,
+            modals: document.querySelectorAll('.ucm-modal').length,
+            loginVisible: !document.querySelector('#loginView').classList.contains('ucm-hidden'),
+        };
+    });
+    if (!lockRes || lockRes.authenticated !== false)
+        console.log('PAGE ERROR: the 48f mock lock did not flip the auth payload: ' + JSON.stringify(lockRes));
+    else if (lockRes.modals !== 0)
+        console.log('PAGE ERROR: locking with popups open left ' + lockRes.modals + ' modal(s) in front of the login card (round 48f — they must close)');
+    else if (!lockRes.loginVisible)
+        console.log('PAGE ERROR: the login view is not visible after the 48f lock');
+    // unlock again so the regular step-6 lock flow starts from the console
+    // (the click lands under any still-alive toast stack only if the toasts
+    // were interactive — they are not: pointer-events:none, the 48f fix)
+    await page.type('#loginPassword', 'correct-horse');
+    await page.click('#loginBtn');
+    await wait(900);
 
     // ---- 6. lock -> local sign-in view ----
     await page.click('#lockBtn');

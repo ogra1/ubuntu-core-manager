@@ -144,6 +144,20 @@ const VIEW_TITLES = { dashboard: 'Dashboard', network: 'Network configuration', 
  *   !authenticated-> #loginView  (local password; offline)
  *   authenticated -> #appShell   (console)                                  */
 
+/* Body-appended popups (the .ucm-modal boxes: snap info + per-snap config)
+ * outlive the view state — a lock or credential wipe must NOT leave them
+ * sitting in front of the login card, still interactive (round 48f).
+ * closeOpenModals() closes every open modal through its OWN close button,
+ * which also detaches each modal's document-scoped Esc listener. */
+function closeOpenModals() {
+    document.querySelectorAll('.ucm-modal').forEach((m) => {
+        const i = m.querySelector('.ucm-modal__head .p-icon--close');
+        const b = i ? (i.closest('button') || i) : null;
+        if (b) b.click();       // its closeModal() also detaches the Esc listener
+        else m.remove();
+    });
+}
+
 function showGate() {
     const toSetup = !state.initialized;
     const toLogin = state.initialized && !state.authenticated;
@@ -173,6 +187,7 @@ function switchView(name) {
 }
 
 function enterApp() {
+    closeOpenModals();
     showGate();
     startSessionTick();
     startDashPoll();
@@ -189,6 +204,7 @@ function enterApp() {
 }
 
 function exitApp() {
+    closeOpenModals();
     stopSessionTick();
     stopDashPoll();
     stopCpuPoll();
