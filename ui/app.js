@@ -1916,9 +1916,24 @@ function openConfigModal(name) {
             const holder = formSec.querySelector('.ucm-conf-form__valholder');
             const icon = formSec.querySelector('.ucm-conf-form__iconbtn');
             const label = formSec.querySelector('.ucm-conf-form__vlabel');
+            // round 48d: the value field is re-created on every single<->multi
+            // toggle, so its dismiss listeners are attached here each time. (The
+            // group is reached by id — formRenderValue runs in the outer config
+            // scope, not the addConfigForm IIFE where valGroup is declared.)
+            const attachValueDismiss = (v) => {
+                const vg = document.getElementById('cfgvGroup');
+                v.addEventListener('input', () => {
+                    if (vg && vg.classList.contains('is-error') && v.value !== '')
+                        setFieldState('cfgvGroup', '');
+                });
+                v.addEventListener('blur', () => {
+                    if (vg && vg.classList.contains('is-error')) setFieldState('cfgvGroup', '');
+                });
+            };
             if (!multi) {
                 const input = el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgv', type: 'text', spellcheck: 'false', placeholder: 'e.g. 8080 or true' });
                 holder.replaceChildren(input);
+                attachValueDismiss(input);
                 icon.querySelector('i').className = 'p-icon--document';
                 icon.setAttribute('aria-label', 'Use a multiline value (expand)');
                 icon.setAttribute('data-tooltip', 'Use a multiline value');
@@ -1926,6 +1941,7 @@ function openConfigModal(name) {
             } else {
                 const ta = el('textarea', { class: 'p-form-validation__input ucm-mono ucm-conf-form__ta', id: 'cfgv', spellcheck: 'false', rows: '6', placeholder: 'Paste a multiline value here (JSON, YAML, …)' });
                 holder.replaceChildren(ta);
+                attachValueDismiss(ta);
                 icon.querySelector('i').className = 'p-icon--collapse';
                 icon.setAttribute('aria-label', 'Use a single-line value (collapse)');
                 icon.setAttribute('data-tooltip', 'Use a single-line value');
@@ -1938,9 +1954,22 @@ function openConfigModal(name) {
         (function addConfigForm() {
             const form = el('form', { class: 'ucm-conf-form', novalidate: '' });
             const keyGroup = el('div', { class: 'p-form__group ucm-conf-form__keygroup', id: 'cfgkGroup' });
+            const keyInput = el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgk', type: 'text', spellcheck: 'false', placeholder: 'e.g. foo.bar.baz' });
+            // round 48d: an error is not a dead end — the user may have typed
+            // into the field by accident and never intended to save. The key's
+            // error clears as soon as the value is typed valid, and always when
+            // focus leaves the field (so a stray error can be dismissed without
+            // a successful save — the established live-clear + blur idiom).
+            keyInput.addEventListener('input', () => {
+                if (keyGroup.classList.contains('is-error') && RE_CONF_KEY_UI.test(keyInput.value.trim()))
+                    setFieldState('cfgkGroup', '');
+            });
+            keyInput.addEventListener('blur', () => {
+                if (keyGroup.classList.contains('is-error')) setFieldState('cfgkGroup', '');
+            });
             keyGroup.append(
                 el('label', { class: 'p-form__label', for: 'cfgk', text: 'Key' }),
-                el('input', { class: 'p-form-validation__input ucm-mono', id: 'cfgk', type: 'text', spellcheck: 'false', placeholder: 'e.g. foo.bar.baz' }),
+                keyInput,
                 el('p', { class: 'p-form-validation__message' }),
             );
             const valGroup = el('div', { class: 'p-form__group ucm-conf-form__valgroup', id: 'cfgvGroup' });

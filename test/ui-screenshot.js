@@ -1552,6 +1552,49 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the empty-value message is not exactly "Enter a value" (' + (cf6 && cf6.msg) + ', round 48e)');
     if (!cf6 || cf6.hasCard)
         console.log('PAGE ERROR: an empty value was saved anyway (round 48e)');
+    // 48d: a validation error is NOT a dead end — the user may have typed into
+    // the field by accident and never meant to save. The error must clear (a)
+    // when the field is edited into a valid state, and (b) when focus leaves
+    // the field, WITHOUT any successful save.
+    const d1 = await page.evaluate(async () => {
+        const q = (s) => document.querySelector(s);
+        const k = q('.ucm-conf-formsec #cfgk'), v = q('.ucm-conf-formsec #cfgv');
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const state = () => ({
+            kErr: !!k.closest('.p-form__group').classList.contains('is-error'),
+            kMsg: (k.closest('.p-form__group').querySelector('.p-form-validation__message') || {}).textContent || '',
+            vErr: !!v.closest('.p-form__group').classList.contains('is-error'),
+            vMsg: (v.closest('.p-form__group').querySelector('.p-form-validation__message') || {}).textContent || '',
+        });
+        const out = {};
+        // Seed BOTH errors by attempting an INVALID save (bad key + empty
+        // value) — nothing is saved; both fields now show their error.
+        k.value = 'BAD KEY!'; v.value = '';
+        q('.ucm-conf-formsec .ucm-conf-form__save').click();
+        await sleep(150);
+        out.seed = state();
+        // (a) the VALUE error clears when the field is edited into a valid
+        // state (no save).
+        v.value = 'x'; v.dispatchEvent(new Event('input', { bubbles: true })); await sleep(50);
+        out.a = state();
+        // (b) the KEY error clears when focus leaves the field (blur) — the
+        // field is left invalid, but the error is gone.
+        k.dispatchEvent(new Event('blur')); await sleep(50);
+        out.b = state();
+        // leave the form clean for the next (button_added) drive
+        k.value = ''; v.value = '';
+        return out;
+    });
+    if (!d1)
+        console.log('PAGE ERROR: the 48d form-error dismiss drive did not run');
+    else {
+        if (!d1.seed || !d1.seed.kErr || !d1.seed.vErr)
+            console.log('PAGE ERROR: the invalid save did not seed both form errors (round 48d): ' + JSON.stringify(d1.seed));
+        if (!d1.a || d1.a.vErr || d1.a.vMsg !== '')
+            console.log('PAGE ERROR: the value error did not clear when the field was made valid (input) (round 48d): ' + JSON.stringify(d1.a));
+        if (!d1.b || d1.b.kErr || d1.b.kMsg !== '')
+            console.log('PAGE ERROR: the key error did not clear when focus left the field (blur) (round 48d): ' + JSON.stringify(d1.b));
+    }
     await page.evaluate(() => {
         const k = document.querySelector('.ucm-conf-formsec #cfgk');
         k.value = 'button_added';
