@@ -1128,7 +1128,8 @@ function mockFactoryJs() {
                 btnLeft = Math.abs(first.getBoundingClientRect().left - c.getBoundingClientRect().left) <= 2;
             }
         }
-        return { has: !!c, msg: c ? c.textContent : null, held: document.querySelector('.ucm-svc__sw-running input').checked, twoRow, btnLeft };
+        const btns = c ? Array.from(c.querySelectorAll('button')).map((x) => x.textContent.trim()) : null;
+        return { has: !!c, msg: c ? c.textContent : null, held: document.querySelector('.ucm-svc__sw-running input').checked, twoRow, btnLeft, btns };
     });
     if (!c1 || !c1.has || !/Stop service "broker"\?/.test(c1.msg || ''))
         console.log('PAGE ERROR: stopping a running service did not spawn a confirmation (round 48a)');
@@ -1136,6 +1137,8 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the service-stop confirm is not the two-row layout (message must sit above the button row, round 48h — the confirm button was glued to the text with Cancel alone on line 2): ' + JSON.stringify(c1));
     if (!c1 || !c1.btnLeft)
         console.log('PAGE ERROR: the service-stop confirm buttons are not left-aligned on their own row (round 48h): ' + JSON.stringify(c1));
+    if (c1 && JSON.stringify(c1.btns) !== JSON.stringify(['Stop?', 'Cancel']))
+        console.log('PAGE ERROR: the stop-service confirm button is not static "Stop?" (the message names the service; 48j): ' + JSON.stringify(c1.btns));
     await page.evaluate(() => {
         Array.from(document.querySelectorAll('.ucm-modal .ucm-confirm button')).find((b) => b.textContent.trim() === 'Cancel').click();
     });
@@ -1375,7 +1378,7 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the config-removal confirm row is not the negative-confirmation idiom: ' + JSON.stringify(dc1));
         if (!dc1.msg || dc1.msg.indexOf('Remove "daemon.preseed" from mosquitto') === -1)
             console.log('PAGE ERROR: the config-removal confirm message is wrong (got "' + (dc1 && dc1.msg) + '")');
-        if (JSON.stringify(dc1.buttons) !== JSON.stringify(['Remove preseed?', 'Cancel']))
+        if (JSON.stringify(dc1.buttons) !== JSON.stringify(['Remove?', 'Cancel']))
             console.log('PAGE ERROR: the config-removal confirm buttons are wrong: ' + JSON.stringify(dc1.buttons));
     }
     // Cancel: the daemon card must still be there (reversible before it applies)
@@ -1436,7 +1439,7 @@ function mockFactoryJs() {
     });
     if (!dcMid || dcMid.msg.indexOf('Remove "listeners.default.port" from mosquitto') === -1)
         console.log('PAGE ERROR: the intermediate-node removal confirm message is wrong (got ' + JSON.stringify(dcMid && dcMid.msg) + ')');
-    else if (JSON.stringify(dcMid.buttons) !== JSON.stringify(['Remove port?', 'Cancel']))
+    else if (JSON.stringify(dcMid.buttons) !== JSON.stringify(['Remove?', 'Cancel']))
         console.log('PAGE ERROR: the intermediate-node removal confirm buttons are wrong: ' + JSON.stringify(dcMid.buttons));
     await clickConfBtn(0);
     await wait(900);
@@ -3078,7 +3081,7 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the disconnect confirm card is not the negative-confirmation idiom: ' + JSON.stringify(dc));
         if (!dc.msg || dc.msg.indexOf('Disconnect "home" on snap-store') === -1)
             console.log('PAGE ERROR: the disconnect confirm message is wrong (got "' + (dc && dc.msg) + '")');
-        if (JSON.stringify(dc.buttons) !== JSON.stringify(['Disconnect home?', 'Cancel']))
+        if (JSON.stringify(dc.buttons) !== JSON.stringify(['Disconnect?', 'Cancel']))
             console.log('PAGE ERROR: the disconnect confirm buttons are wrong: ' + JSON.stringify(dc.buttons));
         const vPre = await ifRead();
         if (!vPre.ss || vPre.ss.rows[0].slot !== ':home' || !/positive/.test(vPre.ss.rows[0].tone))

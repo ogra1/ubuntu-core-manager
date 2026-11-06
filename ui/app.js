@@ -1769,7 +1769,9 @@ function openConfigModal(name) {
                 if (servicesBusy) { swRun.querySelector('input').checked = active; return; }
                 if (active) {
                     swRun.querySelector('input').checked = true; // hold on for the confirm window
-                    askConfirm(`Stop service "${s.name}"? It will stop now and keep its start-on-boot setting.`, `Stop ${s.name}?`, () => svcOp(s, 'stop', {}));
+                    // 48j: static "Stop?" — the message names the service,
+                    // and a static label can't wrap.
+                    askConfirm(`Stop service "${s.name}"? It will stop now and keep its start-on-boot setting.`, 'Stop?', () => svcOp(s, 'stop', {}));
                 } else {
                     svcOp(s, 'start', {});
                 }
@@ -1934,8 +1936,9 @@ function openConfigModal(name) {
             // round-45 idiom, already shared by the service switches above).
             if (confBusy) return;
             askConfirm(
+                // 48j: static "Remove?" — the message names the value + snap.
                 `Remove "${full}" from ${name}? The snap's configuration hook will run and the value will be deleted.`,
-                `Remove ${full.split('.').pop()}?`,
+                'Remove?',
                 async () => {
                     confBusy = true;
                     try {
@@ -2385,7 +2388,8 @@ function confirmDisconnect(snap, plug, slotRef) {
     });
     const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
     const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Disconnect "${plug}" on ${snap}? It will stop working until it is connected again.` });
-    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: `Disconnect ${plug}?` });
+    // 48j: static "Disconnect?" — the message names the plug + snap.
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Disconnect?' });
     b.onclick = () => {
         b.classList.add('is-disabled');
         disconnectPlug(snap, plug, slotRef).finally(() => box.remove());
