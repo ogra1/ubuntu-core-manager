@@ -1512,6 +1512,8 @@ function mockFactoryJs() {
             hint: grp ? (grp.querySelector('.ucm-conf__edithint') || {}).textContent || null : null,
             trashHidden: leaf ? !!leaf.querySelector('.ucm-iconbtn[hidden]') : null,
             taW: ta ? Math.round(ta.getBoundingClientRect().width) : null,
+            taH: ta ? Math.round(ta.getBoundingClientRect().height) : null,
+            taLH: ta ? parseFloat(getComputedStyle(ta).lineHeight) : null,
         };
     });
     if (!ed1 || !ed1.hasGrp || !ed1.isTextarea || ed1.inputHidden !== true)
@@ -1524,6 +1526,8 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the multiline editor hint is wrong (Enter is a newline in a textarea — no Enter-save) (' + JSON.stringify(ed1 && ed1.hint) + ', round 48g2)');
     if (!ed1 || !ed1.taW || ed1.taW < 550)
         console.log('PAGE ERROR: the multiline editor is not filling its row (textarea ' + (ed1 && ed1.taW) + 'px, round 48g2 — the width:auto ~20ch sliver)');
+    if (!ed1 || !ed1.taLH || !ed1.taH || ed1.taH < ed1.taLH * 6 || ed1.taH > ed1.taLH * 8)
+        console.log('PAGE ERROR: the multiline editor is not twice the content height (height ' + (ed1 && ed1.taH) + ' for a 3-line value at ' + (ed1 && ed1.taLH) + 'px/line, round 48g3)');
     if (!ed1 || ed1.trashHidden !== true)
         console.log('PAGE ERROR: the trash is still visible while the value is being edited (round 48g)');
     await page.screenshot({ path: path.join(SHOTS, '13w-config-edit-multiline.png') });
@@ -1738,6 +1742,44 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: an unchanged value still sent a config PUT (round 48g — a no-op save must not run the configure hook)');
     if (!ed9 || !ed9.editorGone || ed9.val !== 'mosquitto.db2')
         console.log('PAGE ERROR: the no-op save did not close the editor cleanly (' + JSON.stringify(ed9) + ', round 48g)');
+    // 48g3: the height cap — a 20-line value must open at the 16-row cap
+    // (~300px), well above the old 8-row (~170px) box, and not viewport
+    // absurd (the 900px kiosk + the modal body scroll keep it sane).
+    // The form may already be in textarea mode (drive 1's icon click) — an
+    // unconditional toggle would flip it BACK to the single-line input, whose
+    // value setter strips newlines (the 48g gotcha). Make the mode idempotent.
+    await page.evaluate(() => {
+        const v = document.querySelector('.ucm-conf-formsec #cfgv');
+        if (v.tagName === 'INPUT') document.querySelector('.ucm-conf-formsec .ucm-conf-form__iconbtn').click();
+    });
+    await wait(100);
+    await page.evaluate(() => {
+        const k = document.querySelector('.ucm-conf-formsec #cfgk');
+        k.value = 'tall_block';
+        const v = document.querySelector('.ucm-conf-formsec #cfgv');
+        v.value = Array.from({ length: 20 }, (_, i) => 'line' + i).join('\n');
+        document.querySelector('.ucm-conf-formsec .ucm-conf-form__save').click();
+    });
+    await wait(1000);
+    await clickConfLeaf('tall_block');
+    await wait(150);
+    const edTall = await page.evaluate(() => {
+        const grp = document.querySelector('.ucm-modal #ucmConfEditGroup');
+        const ta = grp ? grp.querySelector('textarea.ucm-conf__editinp') : null;
+        return {
+            isTa: !!(ta && !ta.hidden),
+            lines: ta ? ta.value.split('\n').length : null,
+            h: ta ? Math.round(ta.getBoundingClientRect().height) : null,
+            lh: ta ? parseFloat(getComputedStyle(ta).lineHeight) : null,
+        };
+    });
+    if (!edTall || !edTall.isTa || edTall.lines !== 20)
+        console.log('PAGE ERROR: the 20-line value did not open the prefilled textarea (' + JSON.stringify(edTall) + ', round 48g3)');
+    if (!edTall || !edTall.lh || edTall.h < edTall.lh * 14 || edTall.h > edTall.lh * 18)
+        console.log('PAGE ERROR: the tall multiline editor is not at the 16-row cap (height ' + (edTall && edTall.h) + ' at ' + (edTall && edTall.lh) + 'px/line, round 48g3)');
+    await page.screenshot({ path: path.join(SHOTS, '13y-config-edit-tall.png') });
+    await page.keyboard.press('Escape'); // close the editor (the modal stays for the final Esc)
+    await wait(150);
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 

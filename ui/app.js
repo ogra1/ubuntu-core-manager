@@ -1831,7 +1831,13 @@ function openConfigModal(name) {
             // button), multiline on the Save button (Enter there is a newline).
             hint.hidden = false;
             hint.textContent = useTa ? 'Save saves — Esc cancels' : 'Enter saves — Esc cancels';
-            ta.rows = Math.min(8, Math.max(3, String(value).split('\n').length));
+            // Round 48g3: the multiline editor opens at TWICE the content
+            // height (the 48g2 content-sized box was confirmed too small for
+            // editing headroom). 2x the line count, capped at 16 rows
+            // (~300px — inside the 900px kiosk; the modal body scrolls if
+            // ever needed) so a 60-line value (ubuntu-frame's display) gets
+            // 16 rows, not an 8-row scrolling sliver or a viewport-killer.
+            ta.rows = Math.min(16, 2 * String(value).split('\n').length);
             ta.value = useTa ? value : '';
             inp.value = useTa ? '' : confValText(value);
             const doSave = async () => {
