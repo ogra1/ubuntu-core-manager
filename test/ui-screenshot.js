@@ -1824,8 +1824,13 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the add-config form does not start as key + single-line value (' + JSON.stringify(cf3) + ', round 48c)');
     if (!cf3 || !/suru-document\.svg/.test(cf3.iconBg || ''))
         console.log('PAGE ERROR: the value field is not beside the suru document icon (' + (cf3 && cf3.iconBg) + ', round 48c)');
-    if (!cf3 || !(cf3.keyW > 0 && cf3.valW > 0 && (cf3.keyW - cf3.valW) >= 30))
-        console.log('PAGE ERROR: the key field is not the dominant (wider) field on the one-line row (key ' + cf3.keyW + ' value ' + cf3.valW + ' diff ' + (cf3.keyW - cf3.valW) + ', round 48d)');
+    // 48g4: the VALUE is the wider field (it carries the big multiline
+    // content) — 48d's "key is the dominant field" is reversed. The GROUPS
+    // are 1.3:1, but the value group also holds the ~40px document icon, so
+    // the visible input diff is ~27px (not the 107px the old key-side diff
+    // was) — pin the direction with a 15px floor.
+    if (!cf3 || !(cf3.keyW > 0 && cf3.valW > 0 && (cf3.valW - cf3.keyW) >= 15))
+        console.log('PAGE ERROR: the value field is not the dominant (wider) field on the one-line row (key ' + cf3.keyW + ' value ' + cf3.valW + ' diff ' + (cf3.keyW - cf3.valW) + ', round 48g4)');
     if (!cf3 || cf3.sameLine !== true)
         console.log('PAGE ERROR: the key and value fields are not on the same line (round 48d)');
     if (!cf3 || cf3.saveBelow !== true)

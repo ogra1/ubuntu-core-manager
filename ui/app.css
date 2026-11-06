@@ -750,12 +750,17 @@ html, body {
    stock-document icon (build/images/suru-document.svg, pixel-verified);
    the collapse state reuses the bundle's p-icon--collapse. */
 .ucm-conf-form .p-form__group { margin-bottom: .9rem; }
-/* round 48d: key + value sit on ONE line; they shrink to fit the card, the
-   value a touch shorter than the key (the identity leads). The "Add value"
-   button stays below the line. */
+/* round 48d: key + value sit on ONE line; they shrink to fit the card; the
+   "Add value" button stays below the line.
+   round 48g4: the VALUE is the dominant (wider) field — it is where the big
+   multiline content lives (the document-icon expand exists exactly for
+   pasting blocks: lxd's daemon.preseed, netplan YAML, ubuntu-frame's
+   display). 48d had the key wider (the identity leads), which left the
+   big-paste box narrower than the short-dotted-key box — backwards for the
+   workflow. The key keeps ~40% of the row, plenty for dotted paths. */
 .ucm-conf-form__row { display: flex; gap: .9rem; align-items: flex-start; }
-.ucm-conf-form__row .ucm-conf-form__keygroup { flex: 1.3 1 0; min-width: 0; margin-bottom: 0; }
-.ucm-conf-form__row .ucm-conf-form__valgroup { flex: 1 1 0; min-width: 0; margin-bottom: 0; }
+.ucm-conf-form__row .ucm-conf-form__keygroup { flex: 1 1 0; min-width: 0; margin-bottom: 0; }
+.ucm-conf-form__row .ucm-conf-form__valgroup { flex: 1.3 1 0; min-width: 0; margin-bottom: 0; }
 .ucm-conf-form__iconbtn { display: inline-flex; align-items: center; justify-content: center; height: 1.9rem; width: 1.9rem; flex: 0 0 auto; padding: 0; margin-left: .5rem; }
 .ucm-conf-form__iconbtn .p-tooltip__message { display: none; }
 /* multiline mode: the textarea replaces the input in the same flex row */
