@@ -2136,6 +2136,14 @@ function mockFactoryJs() {
     });
     if (align.error) console.log('PAGE ERROR: ' + align.error);
     else if (align.delta > 3) console.log('PAGE ERROR: the main-page (remove) confirm is not the single integrated row — message and button must share a vertical centre (delta=' + align.delta.toFixed(1) + 'px, round 48h2)');
+    // 48i: the remove confirm button is "Remove?" (no snap name) — the message
+    // already names the snap, and a static label can't line-wrap.
+    const rmBtns = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        return box ? Array.from(box.querySelectorAll('button')).map((b) => b.textContent.trim()) : null;
+    });
+    if (JSON.stringify(rmBtns) !== JSON.stringify(['Remove?', 'Cancel']))
+        console.log('PAGE ERROR: the remove confirm button is not "Remove?" (it must not carry the redundant snap name, round 48i): ' + JSON.stringify(rmBtns));
     // dismiss the confirm card so it does not affect later shots
     await page.evaluate(() => {
         const box = document.querySelector('.ucm-confirm');
@@ -2647,7 +2655,7 @@ function mockFactoryJs() {
     else {
         if (!dis1.negative) console.log('PAGE ERROR: disable confirm card is not the negative style');
         if (!dis1.msg || !/Disable snap “htop”\?/.test(dis1.msg)) console.log('PAGE ERROR: disable confirm message wrong (' + dis1.msg + ')');
-        if (JSON.stringify(dis1.btns) !== JSON.stringify(['Disable htop?', 'Cancel'])) console.log('PAGE ERROR: disable confirm buttons wrong (' + JSON.stringify(dis1.btns) + ')');
+        if (JSON.stringify(dis1.btns) !== JSON.stringify(['Disable?', 'Cancel'])) console.log('PAGE ERROR: disable confirm buttons wrong (' + JSON.stringify(dis1.btns) + ')');
         if (!dis1.disableStillThere) console.log('PAGE ERROR: row already flipped before confirmation');
     }
     // Cancel -> the snap must stay enabled and the card must vanish
@@ -2679,7 +2687,7 @@ function mockFactoryJs() {
     await wait(400);
     await page.evaluate(() => {
         const box = document.querySelector('.ucm-confirm');
-        const ok = box && Array.from(box.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Disable htop?');
+        const ok = box && Array.from(box.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Disable?');
         if (!ok) throw new Error('Disable confirm button missing');
         ok.click();
     });

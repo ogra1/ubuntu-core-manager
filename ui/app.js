@@ -1039,7 +1039,10 @@ function confirmRemove(name) {
     });
     const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
     const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Permanently remove snap “${name}”?` });
-    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: `Remove ${name}?` });
+    // Round 48i: "Remove?" (no snap name) — the message already names the
+    // snap, and a static label can't wrap (long names like ubuntu-core-manager
+    // used to line-wrap inside the button).
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Remove?' });
     b.onclick = async () => {
         b.classList.add('is-disabled');
         try {
@@ -1077,7 +1080,9 @@ function confirmDisable(name) {
     });
     const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
     const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Disable snap “${name}”? It will stop and stay stopped until enabled again.` });
-    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: `Disable ${name}?` });
+    // Round 48i: "Disable?" (no snap name) — the message already names the
+    // snap, and a static label can't wrap.
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Disable?' });
     b.onclick = async () => {
         b.classList.add('is-disabled');
         try {
