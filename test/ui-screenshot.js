@@ -2120,22 +2120,22 @@ function mockFactoryJs() {
     await page.evaluate(() => document.querySelector('.ucm-main').scrollTo({ top: 99999 }));
     await wait(200);
     await page.screenshot({ path: path.join(SHOTS, '13-remove-confirm.png'), fullPage: true });
-    // 48h regression guard: the remove confirm is the UNIVERSAL two-row layout
-    // — the message row sits ABOVE the button row (a real gap, not inline), and
-    // the confirm button is left-aligned with the box. (The old single-row
-    // "shared vertical centre" guard is superseded by this.)
+    // 48h2 regression guard: the remove confirm is a MAIN-PAGE confirm, so it
+    // is the SINGLE integrated flex row — the message and the confirm button
+    // share a vertical centre (bundle's .p-button margin-bottom used to shift
+    // the buttons above centre, making the text look bottom-aligned). This also
+    // pins the 48h2 revert: if the page confirm regressed to the two-row layout
+    // (message above the button row), msg/btn would no longer share a centre.
     const align = await page.evaluate(() => {
         const box = document.querySelector('.ucm-confirm');
         const msg = document.querySelector('.ucm-confirm__msg');
-        const btn = document.querySelector('.ucm-confirm__actions button');
-        if (!box || !msg || !btn) return { error: 'confirm rows not found' };
-        const twoRow = (btn.getBoundingClientRect().top - msg.getBoundingClientRect().bottom) >= 4;
-        const btnLeft = Math.abs(btn.getBoundingClientRect().left - box.getBoundingClientRect().left) <= 2;
-        return { twoRow, btnLeft };
+        const btn = document.querySelector('.ucm-confirm button');
+        if (!box || !msg || !btn) return { error: 'confirm row not found' };
+        const c = (n) => { const r = n.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+        return { msg: c(msg), btn: c(btn), delta: Math.abs(c(msg) - c(btn)) };
     });
     if (align.error) console.log('PAGE ERROR: ' + align.error);
-    else if (!align.twoRow) console.log('PAGE ERROR: the remove confirm is not the two-row layout (message must sit above the button row, round 48h)');
-    else if (!align.btnLeft) console.log('PAGE ERROR: the remove confirm buttons are not left-aligned on their own row (round 48h)');
+    else if (align.delta > 3) console.log('PAGE ERROR: the main-page (remove) confirm is not the single integrated row — message and button must share a vertical centre (delta=' + align.delta.toFixed(1) + 'px, round 48h2)');
     // dismiss the confirm card so it does not affect later shots
     await page.evaluate(() => {
         const box = document.querySelector('.ucm-confirm');

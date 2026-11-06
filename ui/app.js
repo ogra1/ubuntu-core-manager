@@ -1030,10 +1030,12 @@ function confirmRemove(name) {
     // Box is built before its buttons reference it (avoids the TDZ throw the
     // old cancel handler had). One baseline-centred flex row: question icon,
     // message, action buttons — align-items:center, no stray margins.
-    // Round 48h: the universal two-row .ucm-confirm layout (CSS-owned) —
-    // message on top, buttons left-aligned below, for every confirm.
+    // Main-page confirm: a single integrated flex row (question icon + message
+    // + confirm + Cancel) — the well-integrated wide-page layout (round 48h2:
+    // the two-row layout is popup-only, scoped to .ucm-modal in the CSS).
     const box = el('div', {
         class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
     });
     const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
     const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Permanently remove snap “${name}”?` });
@@ -1053,9 +1055,7 @@ function confirmRemove(name) {
     };
     const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancel.onclick = () => box.remove();
-    box.append(
-        el('div', { class: 'ucm-confirm__row' }, icon, msg),
-        el('div', { class: 'ucm-confirm__actions' }, b, cancel));
+    box.append(icon, msg, b, cancel);
     $('#snapsCards').after(box);
     b.focus();
 }
@@ -1068,10 +1068,12 @@ function confirmDisable(name) {
     // the TDZ throw the old cancel handler had), one baseline-centred flex row
     // (question icon, message, action, Cancel), and it removes itself when the
     // change settles (or on Cancel).
-    // Round 48h: the universal two-row .ucm-confirm layout (CSS-owned) —
-    // message on top, buttons left-aligned below, for every confirm.
+    // Main-page confirm: a single integrated flex row (question icon + message
+    // + confirm + Cancel) — the well-integrated wide-page layout (round 48h2:
+    // the two-row layout is popup-only, scoped to .ucm-modal in the CSS).
     const box = el('div', {
         class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
     });
     const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
     const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Disable snap “${name}”? It will stop and stay stopped until enabled again.` });
@@ -1091,9 +1093,7 @@ function confirmDisable(name) {
     };
     const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancel.onclick = () => box.remove();
-    box.append(
-        el('div', { class: 'ucm-confirm__row' }, icon, msg),
-        el('div', { class: 'ucm-confirm__actions' }, b, cancel));
+    box.append(icon, msg, b, cancel);
     $('#snapsCards').after(box);
     b.focus();
 }
@@ -1656,9 +1656,10 @@ function openConfigModal(name) {
     // service switches, 48a, and the config trash removal, 48b.)
     const askConfirm = (msg, confirmLabel, doIt) => {
         if (box.querySelector('.ucm-confirm')) return;
-        // Round 48h: universal two-row confirm layout (icon+message on top,
-        // buttons left-aligned below) — the .ucm-confirm CSS owns it, so every
-        // confirm (popup + page) renders identically regardless of length.
+        // Popup confirm: two-row layout (icon+message on top, buttons
+        // left-aligned below) — the .ucm-modal .ucm-confirm CSS owns it, so the
+        // in-popup confirms render identically regardless of message length.
+        // (Main-page confirms keep the single integrated row — round 48h2.)
         const cbox = el('div', { class: 'ucm-confirm ucm-confirm--negative' });
         const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: confirmLabel });
         const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
@@ -2370,10 +2371,12 @@ function confirmDisconnect(snap, plug, slotRef) {
     // removing itself once the change settles. The actual disconnect + toasts
     // + reload stay in disconnectPlug (the card is a sibling of #ifacesCards,
     // so the reload's innerHTML wipe cannot destroy it).
-    // Round 48h: the universal two-row .ucm-confirm layout (CSS-owned) —
-    // message on top, buttons left-aligned below, for every confirm.
+    // Main-page confirm: a single integrated flex row (question icon + message
+    // + confirm + Cancel) — the well-integrated wide-page layout (round 48h2:
+    // the two-row layout is popup-only, scoped to .ucm-modal in the CSS).
     const box = el('div', {
         class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
     });
     const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
     const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: `Disconnect "${plug}" on ${snap}? It will stop working until it is connected again.` });
@@ -2384,9 +2387,7 @@ function confirmDisconnect(snap, plug, slotRef) {
     };
     const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancel.onclick = () => box.remove();
-    box.append(
-        el('div', { class: 'ucm-confirm__row' }, icon, msg),
-        el('div', { class: 'ucm-confirm__actions' }, b, cancel));
+    box.append(icon, msg, b, cancel);
     $('#ifacesCards').after(box);
     b.focus();
 }

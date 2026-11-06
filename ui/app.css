@@ -413,22 +413,28 @@ html, body {
     filter: brightness(0) invert(1);
 }
 
-/* round 48h: EVERY confirm dialog is the SAME two-row layout, independent of
-   message length — the icon + message on the top row, the action buttons
-   (confirm + Cancel) left-aligned on the row below. Before this the layout was
-   a single flex(-wrap) row, so a SHORT message (the service-stop one) left the
-   confirm button inline at the text's end with Cancel alone on line 2, while a
-   LONG message wrapped both buttons down — the confirms looked different. The
-   universal two-row layout (.ucm-confirm__row + .ucm-confirm__actions) fixes
-   all six confirms. The bundle's .p-button margin-bottom (18.88px — the
-   round-7 trap) is still zeroed; the message's padding-top (6.56px) is still
-   countered so it centres against the icon. */
-.ucm-confirm { display: flex; flex-direction: column; gap: .55rem; margin-top: 1rem; }
-.ucm-confirm__row { display: flex; align-items: center; gap: .7rem; }
-.ucm-confirm__actions { display: flex; align-items: center; gap: .7rem; }
+/* confirm dialogs come in two shapes:
+   (a) MAIN-PAGE confirms (snap remove/disable, interface disconnect) — a single
+       integrated flex row (question icon + message + confirm + Cancel), owned
+       by the box's inline style; this looked well integrated on the wide pages.
+   (b) POPUP confirms (config trash, service stop, disable-at-boot — the only
+       .ucm-confirm inside .ucm-modal) — a two-row layout (icon+message on top,
+       confirm+Cancel left-aligned on the row below), because the in-popup
+       single flex(-wrap) row was length-dependent: a SHORT message (the
+       service-stop one) left the confirm button inline at the text's end with
+       Cancel alone on line 2, while a LONG message wrapped both buttons down.
+   The two-row rules are therefore SCOPED to .ucm-modal (round 48h made this
+   universal and squeezed the main-page confirms into a bottom-left block —
+   48h2 reverts that). The bundle's .p-button margin-bottom (18.88px — the
+   round-7 trap) is still zeroed for both; the message's padding-top (6.56px)
+   is still countered so it centres against the icon. */
 .ucm-confirm__ic { flex: 0 0 auto; }
 .ucm-confirm__msg { display: flex; align-items: center; margin: 0; padding: 0; }
 .ucm-confirm button { margin: 0; }
+/* popup (modal) confirms only — the two-row layout */
+.ucm-modal .ucm-confirm { display: flex; flex-direction: column; gap: .55rem; }
+.ucm-modal .ucm-confirm__row { display: flex; align-items: center; gap: .7rem; }
+.ucm-modal .ucm-confirm__actions { display: flex; align-items: center; gap: .7rem; }
 
 /* search field icon (light content area — keep the bundle's black fill); explicit
    1rem box so it matches the input height */
