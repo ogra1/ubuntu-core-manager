@@ -2450,6 +2450,22 @@ async function doResetPassword() {
 /* ------------------------------- wiring ---------------------------------- */
 
 function wire() {
+    // Round 48k: Escape cancels the topmost confirmation dialog — the same as
+    // its Cancel button (every confirm's Cancel handler is just box.remove()).
+    // Registered here, before any modal can open, so this listener runs before
+    // a modal's own document-level Esc handler in the bubble phase;
+    // stopImmediatePropagation() then cancels the confirm WITHOUT closing a
+    // popup (with no confirm left, a later Esc closes the modal — layered).
+    // The config editor's Esc is element-level + stopPropagation, so it never
+    // reaches here (and the editor is not a .ucm-confirm).
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const confirm = document.querySelector('.ucm-confirm');
+        if (confirm) {
+            e.stopImmediatePropagation();
+            confirm.remove();
+        }
+    });
     // local gate: first boot + login + lock
     $('#setupForm').addEventListener('submit', (e) => {
         e.preventDefault();

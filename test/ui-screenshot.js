@@ -1149,6 +1149,38 @@ function mockFactoryJs() {
     }));
     if (!c2 || !c2.gone || !c2.stillOn)
         console.log('PAGE ERROR: cancelling the service stop still stopped it (' + JSON.stringify(c2) + ', round 48a)');
+    // 48k: ESC cancels the POPUP confirm (behaves like Cancel) and the MODAL
+    // stays open (stopImmediatePropagation — only the confirm cancels; a later
+    // Esc, with no confirm left, closes the modal, which the final 4a step
+    // already verifies). Re-spawn the stop confirm (run is still ON) and press
+    // Escape.
+    await page.evaluate(() => { document.querySelector('.ucm-svc__sw-running input').click(); });
+    await wait(150);
+    const c1b = await page.evaluate(() => ({ reSpawned: !!document.querySelector('.ucm-modal .ucm-confirm') }));
+    if (!c1b.reSpawned)
+        console.log('PAGE ERROR: the stop confirm did not re-spawn for the Esc test (round 48k)');
+    await page.keyboard.press('Escape');
+    await wait(150);
+    // NOTE: read MODAL-SAFELY — if Escape wrongly closed the whole modal (the
+    // regression), .ucm-modal is null and a raw read would FATAL the run and
+    // mask the guard; degrade to readable fields instead.
+    const c1c = await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal');
+        const sw = modal ? modal.querySelector('.ucm-svc__sw-running input') : null;
+        return {
+            confirmGone: !document.querySelector('.ucm-modal .ucm-confirm'),
+            modalStill: !!modal,
+            stillOn: sw ? sw.checked : null,
+        };
+    });
+    if (!c1c.modalStill)
+        console.log('PAGE ERROR: Escape on a popup confirm closed the whole modal (round 48k — only the confirm should cancel, the modal Esc must not fire): ' + JSON.stringify(c1c));
+    else {
+        if (!c1c.confirmGone)
+            console.log('PAGE ERROR: Escape did not cancel the popup confirm (round 48k — it should behave like Cancel): ' + JSON.stringify(c1c));
+        if (c1c.stillOn !== true)
+            console.log('PAGE ERROR: Escape "cancel" still stopped the service (round 48k): ' + JSON.stringify(c1c));
+    }
 
     // Start-on-boot OFF -> confirm whose copy states the service is stopped too
     // (the API coupling); Confirm -> off + no-boot.
@@ -2679,6 +2711,32 @@ function mockFactoryJs() {
     });
     if (!dis2.cardGone) console.log('PAGE ERROR: confirm card still shown after Cancel');
     if (!dis2.stillDisable) console.log('PAGE ERROR: Cancel did not leave the snap enabled (' + JSON.stringify(dis2) + ')');
+    // 48k: ESC cancels the PAGE confirm (behaves like Cancel). Re-spawn the
+    // disable confirm (htop is still active), press Escape, assert it is gone
+    // and htop is still enabled.
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]').click();
+    });
+    await wait(400);
+    const dis1b = await page.evaluate(() => ({ reSpawned: !!document.querySelector('.ucm-confirm') }));
+    if (!dis1b.reSpawned)
+        console.log('PAGE ERROR: the disable confirm did not re-spawn for the Esc test (round 48k)');
+    await page.keyboard.press('Escape');
+    await wait(300);
+    const dis1c = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const htop = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'htop');
+        return {
+            cardGone: !document.querySelector('.ucm-confirm'),
+            stillDisable: !!htop.querySelector('.ucm-iconbtn[aria-label="Disable htop"]'),
+        };
+    });
+    if (!dis1c.cardGone)
+        console.log('PAGE ERROR: Escape did not cancel the page (disable) confirm (round 48k — it should behave like Cancel): ' + JSON.stringify(dis1c));
+    if (!dis1c.stillDisable)
+        console.log('PAGE ERROR: Escape "cancel" still disabled the snap (round 48k): ' + JSON.stringify(dis1c));
     // Confirm -> htop becomes disabled (red badge + red power + Enable), card removed
     await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
