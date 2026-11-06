@@ -1820,13 +1820,17 @@ function openConfigModal(name) {
             const inp = el('input', { class: 'p-form-validation__input ucm-mono ucm-conf__editinp', type: 'text', spellcheck: 'false' });
             const ta = el('textarea', { class: 'p-form-validation__input ucm-mono ucm-conf__editinp', spellcheck: 'false' });
             const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf__editsave', type: 'button', text: 'Save' });
-            const hint = el('p', { class: 'ucm-conf__edithint', text: 'Enter saves — Esc cancels' });
+            const hint = el('p', { class: 'ucm-conf__edithint', text: 'Save saves — Esc cancels' });
             grp.append(inp, ta, saveBtn, hint, el('p', { class: 'p-form-validation__message' }));
             const useTa = isMulti;
             inp.hidden = useTa;
             ta.hidden = !useTa;
             saveBtn.hidden = !useTa;
-            hint.hidden = !useTa;
+            // Round 48g2: the hint is shown for BOTH editors, worded to each
+            // one's real save mechanism — single-line saves on Enter (no
+            // button), multiline on the Save button (Enter there is a newline).
+            hint.hidden = false;
+            hint.textContent = useTa ? 'Save saves — Esc cancels' : 'Enter saves — Esc cancels';
             ta.rows = Math.min(8, Math.max(3, String(value).split('\n').length));
             ta.value = useTa ? value : '';
             inp.value = useTa ? '' : confValText(value);
@@ -1867,7 +1871,16 @@ function openConfigModal(name) {
             kv.replaceChildren();
             kv.append(el('span', { class: 'ucm-mono ucm-conf__key', text: full.split('.').pop() + ':' }), editGrp);
             editGrp.querySelectorAll('input,textarea').forEach((f) => {
-                f.addEventListener('blur', () => { if (f.closest('.ucm-modal')) closeConfEdit(); });
+                f.addEventListener('blur', (e) => {
+                    // Round 48g2: clicking the Save button blurs the field
+                    // first (mousedown focuses the button) — that blur is NOT
+                    // "focus left the editor" (the abandon case), so let blurs
+                    // whose relatedTarget is a control inside the group
+                    // through; only a blur to the OUTSIDE (a click elsewhere,
+                    // the close X, Esc-removal) abandons the edit.
+                    if (e.relatedTarget && editGrp.contains(e.relatedTarget)) return;
+                    if (f.closest('.ucm-modal')) closeConfEdit();
+                });
             });
             const act = editGrp.querySelector('input:not([hidden]),textarea:not([hidden])');
             act.focus();

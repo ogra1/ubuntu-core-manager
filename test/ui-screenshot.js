@@ -1511,6 +1511,7 @@ function mockFactoryJs() {
             saveBtn: grp ? !!grp.querySelector('.ucm-conf__editsave:not([hidden])') : false,
             hint: grp ? (grp.querySelector('.ucm-conf__edithint') || {}).textContent || null : null,
             trashHidden: leaf ? !!leaf.querySelector('.ucm-iconbtn[hidden]') : null,
+            taW: ta ? Math.round(ta.getBoundingClientRect().width) : null,
         };
     });
     if (!ed1 || !ed1.hasGrp || !ed1.isTextarea || ed1.inputHidden !== true)
@@ -1519,8 +1520,10 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the multiline editor is not prefilled with the current value (' + JSON.stringify(ed1 && ed1.prefill) + ', round 48g)');
     if (!ed1 || !ed1.saveBtn)
         console.log('PAGE ERROR: the multiline editor is missing its Save button (Enter is a newline there, round 48g)');
-    if (!ed1 || !ed1.hint || ed1.hint.indexOf('Esc') === -1)
-        console.log('PAGE ERROR: the multiline editor is missing the keyboard hint (' + JSON.stringify(ed1 && ed1.hint) + ', round 48g)');
+    if (!ed1 || !ed1.hint || ed1.hint.indexOf('Esc') === -1 || ed1.hint.indexOf('Enter saves') !== -1)
+        console.log('PAGE ERROR: the multiline editor hint is wrong (Enter is a newline in a textarea — no Enter-save) (' + JSON.stringify(ed1 && ed1.hint) + ', round 48g2)');
+    if (!ed1 || !ed1.taW || ed1.taW < 550)
+        console.log('PAGE ERROR: the multiline editor is not filling its row (textarea ' + (ed1 && ed1.taW) + 'px, round 48g2 — the width:auto ~20ch sliver)');
     if (!ed1 || ed1.trashHidden !== true)
         console.log('PAGE ERROR: the trash is still visible while the value is being edited (round 48g)');
     await page.screenshot({ path: path.join(SHOTS, '13w-config-edit-multiline.png') });
@@ -1550,6 +1553,40 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: a cancelled edit changed the value (round 48g): ' + JSON.stringify(ed2 && ed2.pre));
     if (!ed2 || ed2.trashBack !== true || ed2.stillEditable !== true)
         console.log('PAGE ERROR: after cancelling the edit the value row did not restore (' + JSON.stringify(ed2) + ', round 48g)');
+    // 48g2: the SAVE BUTTON must save (regression: 48g's blur-abandon treated
+    // the button click's blur as "focus left the editor" and discarded the
+    // edit before the click's doSave() ran — "save does not actually save").
+    await clickConfLeaf('preseed');
+    await wait(150);
+    await page.evaluate(() => {
+        const ta = document.querySelector('.ucm-modal #ucmConfEditGroup textarea.ucm-conf__editinp');
+        ta.value = '{\n  "restore": true,\n  "x": 1\n}';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('.ucm-modal #ucmConfEditGroup .ucm-conf__editsave'); // REAL mouse click: mousedown focuses the button -> textarea blur (relatedTarget) -> the 48g2 guard must let it through
+    await wait(1000);
+    const ed2c = await page.evaluate(async () => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'preseed';
+        });
+        const store = await window.__mockCore.snaps.confStore('mosquitto');
+        return {
+            pre: leaf ? (leaf.querySelector('.ucm-conf__multi') || {}).textContent || null : null,
+            editorGone: !sec.querySelector('#ucmConfEditGroup'),
+            toast: document.body.textContent.includes('Value updated'),
+            storePreseed: (store && store.daemon && store.daemon.preseed) || null,
+        };
+    });
+    if (!ed2c || ed2c.pre !== '{\n  "restore": true,\n  "x": 1\n}')
+        console.log('PAGE ERROR: the multiline SAVE button did not save the change (round 48g2 — the blur on the button click must not abandon the edit): ' + JSON.stringify(ed2c && ed2c.pre));
+    if (!ed2c || ed2c.storePreseed !== '{\n  "restore": true,\n  "x": 1\n}')
+        console.log('PAGE ERROR: the save-button edit PUT did not reach the socket with the new value (round 48g2): ' + JSON.stringify(ed2c && ed2c.storePreseed));
+    if (!ed2c || !ed2c.editorGone)
+        console.log('PAGE ERROR: the editor survived a successful save-button save (round 48g2)');
+    if (!ed2c || !ed2c.toast)
+        console.log('PAGE ERROR: the save-button edit did not toast "Value updated" (round 48g2)');
     // Drive 2: ENTER saves a single-line value. The tree shows the new value,
     // the "Value updated" toast fires, and the mock's private store (the
     // VERBATIM socket payload) carries the STRING the user typed.
@@ -1571,6 +1608,12 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the single-line editor shows a Save button (Enter saves there, round 48g)');
     if (!ed3 || ed3.focused !== true)
         console.log('PAGE ERROR: the single-line editor did not take focus (' + JSON.stringify(ed3) + ', round 48g)');
+    const ed3b = await page.evaluate(() => {
+        const grp = document.querySelector('.ucm-modal #ucmConfEditGroup');
+        return { hint: grp ? (grp.querySelector('.ucm-conf__edithint') || {}).textContent || null : null };
+    });
+    if (!ed3b || ed3b.hint !== 'Enter saves — Esc cancels')
+        console.log('PAGE ERROR: the single-line editor hint is wrong (' + JSON.stringify(ed3b && ed3b.hint) + ', round 48g2)');
     await page.evaluate(() => {
         const inp = document.querySelector('.ucm-modal #ucmConfEditGroup input.ucm-conf__editinp');
         inp.value = 'mosquitto.db2';
@@ -1647,6 +1690,32 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: a rejected empty edit changed the stored value (round 48g): ' + JSON.stringify(ed6b));
     if (!ed6b || !ed6b.editorGone)
         console.log('PAGE ERROR: Esc did not close the editor after a rejected empty save (round 48g)');
+    // 48g2: click Save on an UNCHANGED multiline value — the relatedTarget
+    // guard lets the click through, the no-op guard sends nothing, the editor
+    // closes cleanly and the value is untouched.
+    await clickConfLeaf('preseed');
+    await wait(150);
+    const ed10 = await page.evaluate(() => window.__mockCore.snaps.confPuts());
+    await page.click('.ucm-modal #ucmConfEditGroup .ucm-conf__editsave'); // REAL mouse click: mousedown focuses the button -> textarea blur (relatedTarget) -> the 48g2 guard must let it through
+    await wait(400);
+    const ed11 = await page.evaluate(async () => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'preseed';
+        });
+        const store = await window.__mockCore.snaps.confStore('mosquitto');
+        return {
+            puts: await window.__mockCore.snaps.confPuts(),
+            editorGone: !sec.querySelector('#ucmConfEditGroup'),
+            pre: leaf ? (leaf.querySelector('.ucm-conf__multi') || {}).textContent || null : null,
+            storePreseed: (store && store.daemon && store.daemon.preseed) || null,
+        };
+    });
+    if (!ed11 || ed11.puts !== ed10)
+        console.log('PAGE ERROR: clicking Save on an unchanged multiline value still sent a PUT (round 48g2)');
+    if (!ed11 || !ed11.editorGone || ed11.pre !== '{\n  "restore": true,\n  "x": 1\n}' || ed11.storePreseed !== '{\n  "restore": true,\n  "x": 1\n}')
+        console.log('PAGE ERROR: the unchanged save-button click did not close the editor cleanly (' + JSON.stringify(ed11) + ', round 48g2)');
     // Drive 4: an UNCHANGED value sends nothing — no PUT, no hook run.
     await clickConfLeaf('persistence_file');
     await wait(150);

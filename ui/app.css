@@ -667,7 +667,7 @@ html, body {
 .ucm-reset .p-button--negative { margin-top: .4rem; }
 
 /* ---- per-snap config modal --------------------------------------------- */
-.ucm-config .p-form__group { margin-bottom: 1rem; max-width: 24rem; }
+.ucm-config .p-form__group:not(.ucm-conf__edit) { margin-bottom: 1rem; max-width: 24rem; }
 .ucm-config input[type="text"] { font-family: "Ubuntu Mono variable", monospace; }
 .ucm-config select { max-width: 9rem; }
 /* ---- snap configuration popup (round 48) ---------------------------------
@@ -712,7 +712,7 @@ html, body {
    bottom, the round-7 phantom) would push its box high inside the leaf row;
    the row centers it instead. */
 .ucm-conf__leaf .ucm-iconbtn { margin: 0; }
-.ucm-conf__kv { display: flex; align-items: baseline; gap: .55rem; min-width: 0; }
+.ucm-conf__kv { display: flex; align-items: baseline; gap: .55rem; min-width: 0; flex: 1 1 auto; }
 .ucm-conf__key { color: #3b3b3b; font-weight: 600; white-space: nowrap; }
 .ucm-conf__val { color: #555; word-break: break-word; }
 .ucm-conf__leaf { padding-top: .45rem; padding-bottom: .45rem; }
@@ -727,10 +727,13 @@ html, body {
    values, textarea for multiline blocks) prefilled with the current value;
    the multiline editor carries the brand Save button because Enter there is
    a newline (the 48c textarea idiom). Error styling comes from the bundle
-   p-form-validation rules, as in the add-config form below. */
+   p-form-validation rules, as in the add-config form below. .ucm-conf__edit
+   overrides the bundle p-form__group max-width:24rem (384px) — WITHOUT it the
+   editor hugs a 384px sliver in the ~600px-wide row (round 48g2), and the
+   textarea (width:auto ~20ch by default) then wraps long YAML into a mess. */
 .ucm-conf__editable { cursor: pointer; }
 .ucm-conf__editable:hover { text-decoration: underline dotted; }
-.ucm-conf__edit { display: flex; flex-direction: column; gap: .35rem; flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+.ucm-conf__edit { display: flex; flex-direction: column; gap: .35rem; flex: 1 1 0; min-width: 0; margin-bottom: 0; }
 .ucm-conf__edit [hidden] { display: none; }
 .ucm-conf__edit textarea.ucm-conf__editinp { resize: vertical; line-height: 1.45; font-size: .8rem; }
 .ucm-conf__editsave { align-self: flex-start; height: 1.9rem; margin: 0; }
