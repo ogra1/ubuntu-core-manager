@@ -1799,9 +1799,95 @@ function openConfigModal(name) {
         const row = el('div', { class: 'ucm-conf__leaf ' + (isMulti ? 'ucm-conf__leaf--multi' : ''), style: 'padding-left:' + indent + 'px; display:flex; align-items:' + (isMulti ? 'flex-start' : 'center') + '; gap:.6rem;' });
         const kv = el('div', { class: 'ucm-conf__kv', style: 'min-width:0;' });
         kv.append(el('span', { class: 'ucm-mono ucm-conf__key', text: full.split('.').pop() + ':' }));
-        kv.append(isMulti
-            ? el('pre', { class: 'ucm-conf__multi', text: value })
-            : el('span', { class: 'ucm-mono ucm-conf__val', text: confValText(value) }));
+        kv.append(buildValueEl());
+        // Round 48g: IN-PLACE editing of the value — the value text itself is
+        // the affordance (like the snap-name cells, 47c): click it and the row
+        // swaps the value for a prefilled editor (input for single-line
+        // values, textarea for multiline blocks). ENTER saves, ESC cancels —
+        // the editor STOPS the Escape propagation, because the config modal
+        // keeps a document-level Esc listener that would otherwise close the
+        // whole popup. The multiline editor carries an explicit Save button
+        // because Enter there is a newline (the 48c textarea idiom). Saving
+        // goes through the SAME core.snaps.confSet the add form uses — chunk-E
+        // type inference, the configure hook, the settle + re-fetch +
+        // re-render idiom — and an UNCHANGED value sends nothing (no pointless
+        // hook run). If focus leaves the editor (a click elsewhere), the edit
+        // is abandoned and the value row rebuilds. No key renaming here: a
+        // rename is two destructive ops — the safe path is the confirm-gated
+        // trash + the add form.
+        function ucmConfEditGroup() {
+            const grp = el('div', { class: 'p-form__group ucm-conf__edit', id: 'ucmConfEditGroup' });
+            const inp = el('input', { class: 'p-form-validation__input ucm-mono ucm-conf__editinp', type: 'text', spellcheck: 'false' });
+            const ta = el('textarea', { class: 'p-form-validation__input ucm-mono ucm-conf__editinp', spellcheck: 'false' });
+            const saveBtn = el('button', { class: 'p-button--brand p-button ucm-conf__editsave', type: 'button', text: 'Save' });
+            const hint = el('p', { class: 'ucm-conf__edithint', text: 'Enter saves — Esc cancels' });
+            grp.append(inp, ta, saveBtn, hint, el('p', { class: 'p-form-validation__message' }));
+            const useTa = isMulti;
+            inp.hidden = useTa;
+            ta.hidden = !useTa;
+            saveBtn.hidden = !useTa;
+            hint.hidden = !useTa;
+            ta.rows = Math.min(8, Math.max(3, String(value).split('\n').length));
+            ta.value = useTa ? value : '';
+            inp.value = useTa ? '' : confValText(value);
+            const doSave = async () => {
+                if (grp.classList.contains('is-disabled')) return;
+                const raw = useTa ? ta.value : inp.value;
+                if (raw === '') { setFieldState('ucmConfEditGroup', 'error', 'Enter a value'); return; }
+                const oldText = useTa ? value : confValText(value);
+                if (raw === oldText) { closeConfEdit(); return; } // unchanged -> no PUT, no hook run
+                grp.classList.add('is-disabled');
+                try {
+                    const change = await core.snaps.confSet(name, { [full]: raw });
+                    const done = await waitChangeSettled(change);
+                    if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
+                        toast('negative', 'Saving the value failed', name + ': ' + full + ' — ' + (done.err || done.status));
+                    else
+                        toast('positive', 'Value updated', name + ': ' + full);
+                    let freshRoot = null;
+                    try { freshRoot = await core.snaps.confGet(name); } catch { freshRoot = null; }
+                    if (freshRoot) renderConfig(freshRoot); // the doc changed — the tree re-renders
+                    else closeConfEdit(); // no doc to re-render; drop the editor anyway
+                } catch (e) { toastErr(e); closeConfEdit(); }
+                finally { grp.classList.remove('is-disabled'); }
+            };
+            inp.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+                else if (e.key === 'Escape') { e.stopPropagation(); closeConfEdit(); }
+            });
+            ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeConfEdit(); } });
+            saveBtn.addEventListener('click', () => doSave());
+            return grp;
+        }
+        let editGrp = null;
+        function showEdit() {
+            if (confBusy || editGrp) return;
+            editGrp = ucmConfEditGroup();
+            trash.hidden = true;
+            kv.replaceChildren();
+            kv.append(el('span', { class: 'ucm-mono ucm-conf__key', text: full.split('.').pop() + ':' }), editGrp);
+            editGrp.querySelectorAll('input,textarea').forEach((f) => {
+                f.addEventListener('blur', () => { if (f.closest('.ucm-modal')) closeConfEdit(); });
+            });
+            const act = editGrp.querySelector('input:not([hidden]),textarea:not([hidden])');
+            act.focus();
+            if (act.select) act.select();
+        }
+        function closeConfEdit() {
+            if (!editGrp) return;
+            editGrp = null;
+            trash.hidden = false;
+            kv.replaceChildren();
+            kv.append(el('span', { class: 'ucm-mono ucm-conf__key', text: full.split('.').pop() + ':' }), buildValueEl());
+        }
+        function buildValueEl() {
+            const vEl = isMulti
+                ? el('pre', { class: 'ucm-conf__multi ucm-conf__editable', text: value })
+                : el('span', { class: 'ucm-mono ucm-conf__val ucm-conf__editable', text: confValText(value) });
+            vEl.title = 'Edit ' + full;
+            vEl.addEventListener('click', showEdit);
+            return vEl;
+        }
         const trash = rowBtn('Remove ' + full, 'p-icon--delete', () => {
             // Removing a config value is destructive (it runs the snap's
             // configure hook and the doc flips when it settles), so — like the

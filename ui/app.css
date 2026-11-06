@@ -720,6 +720,21 @@ html, body {
 .ucm-conf__node { padding-top: .45rem; padding-bottom: .1rem; }
 /* multiline string values: a pre block (like a YAML block scalar) */
 .ucm-conf__multi { margin: .1rem 0 0; padding: .45rem .6rem; background: #fafafa; border: 1px solid #eee; border-radius: .25rem; overflow-x: auto; white-space: pre; font-size: .8rem; line-height: 1.45; color: #555; }
+
+/* round 48g: in-place editing of a config value — the value text is the
+   affordance (dotted underline on hover, like the snap-name cells of 47c).
+   The transient editor is a Vanilla p-form__group (input for single-line
+   values, textarea for multiline blocks) prefilled with the current value;
+   the multiline editor carries the brand Save button because Enter there is
+   a newline (the 48c textarea idiom). Error styling comes from the bundle
+   p-form-validation rules, as in the add-config form below. */
+.ucm-conf__editable { cursor: pointer; }
+.ucm-conf__editable:hover { text-decoration: underline dotted; }
+.ucm-conf__edit { display: flex; flex-direction: column; gap: .35rem; flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+.ucm-conf__edit [hidden] { display: none; }
+.ucm-conf__edit textarea.ucm-conf__editinp { resize: vertical; line-height: 1.45; font-size: .8rem; }
+.ucm-conf__editsave { align-self: flex-start; height: 1.9rem; margin: 0; }
+.ucm-conf__edithint { margin: 0; font-size: .7rem; color: #888; }
 /* the trash removal button: same icon + tight box as the snaps row icons,
    but its message span must stay display:none until hover/focus (the
    .ucm-iconbtn override only hides it; the base is .p-iconbtn). */

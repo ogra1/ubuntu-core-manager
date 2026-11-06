@@ -192,6 +192,8 @@ const NETPLAN = {
 function mockFactoryJs() {
     return `
     window.__mockCore = (function () {
+        const __store = {};
+        let __puts = 0;
         let SNAPS = ${JSON.stringify(SNAPS)};
         const CONF = ${JSON.stringify(SNAP_CONF)};
         const SERVICES = ${JSON.stringify(SNAP_SERVICES)};
@@ -457,30 +459,37 @@ function mockFactoryJs() {
                    one dotted key (null = delete the leaf). When the app unsets a
                    whole top-level key (the confWipeTop ghost-tree fix) the top
                    entry is deleted outright, so no hollow subtree survives. */
-                _confWalk(n, parts) {
-                    let node = CONF[n];
-                    for (const p of parts) {
-                        if (node === undefined || typeof node !== 'object' || node === null) return undefined;
-                        node = node[p];
-                    }
-                    return node;
-                },
+                // Round 48g: confGet (the bridge surface) reads __store — the
+                // app's LIVE doc, seeded from CONF and mutated by confSet — so
+                // the rendered tree always matches what the app sent.
                 async confGet(n, key) {
-                    if (!key) return CONF[n] || {};
-                    return { [key]: this._confWalk(n, key.split('.')) };
+                    if (!__store[n]) __store[n] = JSON.parse(JSON.stringify(CONF[n] || {}));
+                    let node = __store[n];
+                    if (key) {
+                        for (const p of key.split('.')) {
+                            if (node === undefined || typeof node !== 'object' || node === null) return { [key]: null };
+                            node = node[p];
+                        }
+                        return { [key]: node };
+                    }
+                    return __store[n];
                 },
                 async confSet(n, obj) {
                     // LIVE (round 48b): a conf PUT is async — 202 + a change;
                     // the doc flips atomically when the change settles.
-                    if (!CONF[n]) CONF[n] = {};
+                    // Round 48g: the write targets __store (the app's live
+                    // doc), not the seed CONF — and the payload is VERBATIM
+                    // (the app sends strings; type inference is main.js).
+                    if (!__store[n]) __store[n] = JSON.parse(JSON.stringify(CONF[n] || {}));
+                    __puts++;
                     CHANGES.svc = CHANGES.svc + 1;
                     const id = 'conf' + CHANGES.svc;
                     CHANGES[id] = { id, status: 'Doing', kind: 'configure-snap' };
                     setTimeout(() => {
                         for (const [full, val] of Object.entries(obj)) {
                             const parts = full.split('.');
-                            if (val === null && parts.length === 1) { delete CONF[n][parts[0]]; continue; }
-                            let node = CONF[n];
+                            if (val === null && parts.length === 1) { delete __store[n][parts[0]]; continue; }
+                            let node = __store[n];
                             for (let i = 0; i < parts.length - 1; i++) {
                                 if (typeof node[parts[i]] !== 'object' || node[parts[i]] === null) node[parts[i]] = {};
                                 node = node[parts[i]];
@@ -492,10 +501,21 @@ function mockFactoryJs() {
                     }, 250);
                     return { id, change: id };
                 },
+                // Round 48g: a read-only window into __store — the VERBATIM
+                // payload the app sent over the socket (no inference: that
+                // lives in main.js, asserted by the integration suite).
+                confStore: (n, k) => {
+                    const s = __store[n] || {};
+                    return k ? (k in s ? { [k]: s[k] } : null) : Object.assign({}, s);
+                },
+                confPuts: () => __puts,
                 // Snap services (chunk 48a) — mirrors the live GET/POST /v2/apps
                 // contract: omitempty state, async change, the start/stop
                 // + enable/disable coupling (no boot-only op exists).
                 async services(n) {
+                    // Round 48g: seed the app's LIVE doc (the bridge confGet
+                    // surface reads __store; CONF stays the immutable seed).
+                    if (!__store[n]) __store[n] = JSON.parse(JSON.stringify(CONF[n] || {}));
                     // Models the BRIDGE surface: main.js already maps the
                     // live 404 app-not-found to [] (socket-level honesty lives
                     // in stub-snapd.js + the integration suite).
@@ -1201,8 +1221,20 @@ function mockFactoryJs() {
         const logVal = logLeaf ? logLeaf.querySelector('.ucm-conf__val') : null;
         const logTrashIc = logLeaf ? logLeaf.querySelector('.ucm-iconbtn i') : null;
         const trashDelta = (logVal && logTrashIc) ? Math.abs(glyphMid(logVal) - (logTrashIc.getBoundingClientRect().top + logTrashIc.getBoundingClientRect().height / 2)) : null;
+        // 48g: the value text is the click-to-edit affordance (cursor + title).
+        const edRead = (keyName) => {
+            const l = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((x) => {
+                const k = x.querySelector('.ucm-conf__key');
+                return k && k.textContent.trim().replace(/:$/, '') === keyName;
+            });
+            if (!l) return null;
+            const v = l.querySelector('.ucm-conf__editable');
+            return v ? { cursor: getComputedStyle(v).cursor, title: v.title || null } : null;
+        };
         return {
             secHead: sec && sec.querySelector('.ucm-info__sec') ? sec.querySelector('.ucm-info__sec').textContent.trim() : null,
+            editStdout: edRead('log_dest'),
+            editPreseed: edRead('preseed'),
             cardCount: cards.length,
             confHeaders: sec.querySelectorAll('.p-card__header').length,
             confTopTitles: sec.querySelectorAll('.ucm-conf__toptitle').length,
@@ -1232,6 +1264,10 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the top-level scalar leaf is not at 4px (log_dest: stdout) (' + (cf1 && JSON.stringify(cf1.logdest)) + ', round 48b)');
     if (!cf1 || cf1.trashCount !== 8)
         console.log('PAGE ERROR: trash icon count does not match the value count (' + (cf1 && cf1.trashCount) + ', round 48b)');
+    if (!cf1 || !cf1.editStdout || cf1.editStdout.cursor !== 'pointer' || cf1.editStdout.title !== 'Edit log_dest')
+        console.log('PAGE ERROR: the single-line value is not the click-to-edit affordance (cursor/title) (' + JSON.stringify(cf1 && cf1.editStdout) + ', round 48g)');
+    if (!cf1 || !cf1.editPreseed || cf1.editPreseed.cursor !== 'pointer' || cf1.editPreseed.title !== 'Edit daemon.preseed')
+        console.log('PAGE ERROR: the multiline value is not marked editable (' + JSON.stringify(cf1 && cf1.editPreseed) + ', round 48g)');
     if (!cf1 || cf1.svcDelta === null || cf1.svcDelta > 1)
         console.log('PAGE ERROR: the Services header title/count glyph mids differ by ' + (cf1 && cf1.svcDelta) + 'px (want <=1, round 48b2)');
     if (!cf1 || cf1.trashMarginBottom !== '0px')
@@ -1266,6 +1302,27 @@ function mockFactoryJs() {
     if (!tipOccl || tipOccl.display === 'none' || tipOccl.atCenter !== 'TOOLTIP')
         console.log('PAGE ERROR: the config trash tooltip is clipped/occluded on a card top row (' + JSON.stringify(tipOccl) + ', round 48d)');
     await page.evaluate(() => { document.querySelector('.ucm-modal .ucm-conf-sec .ucm-conf__leaf .ucm-iconbtn').blur(); });
+    // 48g: the dotted edit affordance — a REAL hover (page.hover; synthetic
+    // mouse events do not arm :hover) must show it on the log_dest value.
+    await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key'); return k && k.textContent.trim().replace(/:$/, '') === 'log_dest';
+        });
+        leaf.querySelector('.ucm-conf__editable').setAttribute('data-edhover', '1');
+    });
+    await page.hover('.ucm-modal .ucm-conf__editable[data-edhover="1"]');
+    await wait(150);
+    const edHover = await page.evaluate(() => {
+        const v = document.querySelector('.ucm-modal .ucm-conf__editable[data-edhover="1"]');
+        const cs = getComputedStyle(v);
+        v.removeAttribute('data-edhover');
+        return { line: cs.textDecorationLine, style: cs.textDecorationStyle };
+    });
+    if (!edHover || edHover.line !== 'underline' || edHover.style !== 'dotted')
+        console.log('PAGE ERROR: the config value does not show the dotted edit affordance on hover (' + JSON.stringify(edHover) + ', round 48g)');
+    await page.mouse.move(0, 0);
+    await wait(100);
     await page.screenshot({ path: path.join(SHOTS, '13r-config-yaml-cards.png') });
 
     // Remove the daemon.preseed value — round 48f: it is CONFIRM-GATED (a
@@ -1391,7 +1448,230 @@ function mockFactoryJs() {
     await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
     await wait(200);
 
-    // ---- 4c-cfg. Round 48c: the add-config form — a dotted KEY + a shorter
+    // ---- 48g. In-place EDITING of config values (renderer-only; the same
+    // core.snaps.confSet the add form uses — chunk-E type inference, the
+    // configure hook, the settle + re-fetch + re-render idiom all apply).
+    // The value text is the affordance (47c): click -> a prefilled input
+    // (single-line) or textarea (multiline) + a Save button (multiline only,
+    // Enter is a newline there); ENTER saves, ESC cancels (the editor stops
+    // the Esc so the modal stays open); an empty value is rejected with
+    // "Enter a value" (48e wording); an UNCHANGED value sends NOTHING (no
+    // pointless hook run). The mock's private __store carries the VERBATIM
+    // socket payload (strings — inference is main.js, integration-locked);
+    // confStore()/confPuts() let these drives assert it.
+    await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapsCards tbody tr'));
+        const mc = rows.find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        mc.querySelectorAll('.ucm-actions button')[0].click(); // the gear
+    });
+    await wait(600);
+    const clickConfLeaf = (keyName) => page.evaluate((keyName) => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === keyName;
+        });
+        leaf.querySelector('.ucm-conf__editable').click();
+    }, keyName);
+    // Drive 1: ESC cancels. Re-add daemon.preseed (the 48f drive above
+    // removed it), click its value -> a prefilled TEXTAREA editor (multiline)
+    // with a Save button + keyboard hint, the trash hidden; Esc closes ONLY
+    // the editor (the modal stays) and the value is untouched.
+    // The add form's single-line <input> strips newlines from .value (HTML
+    // IDL) — so a multiline seed must first expand the field to the textarea
+    // (the 48c document icon), exactly as a user pasting a block would.
+    await page.evaluate(() => {
+        document.querySelector('.ucm-conf-formsec .ucm-conf-form__iconbtn').click();
+    });
+    await wait(100);
+    await page.evaluate(() => {
+        const k = document.querySelector('.ucm-conf-formsec #cfgk');
+        k.value = 'daemon.preseed';
+        const v = document.querySelector('.ucm-conf-formsec #cfgv');
+        v.value = '{\n  "restore": true\n}';
+        document.querySelector('.ucm-conf-formsec .ucm-conf-form__save').click();
+    });
+    await wait(1000);
+    await clickConfLeaf('preseed');
+    await wait(150);
+    const ed1 = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const grp = sec.querySelector('#ucmConfEditGroup');
+        const ta = grp ? grp.querySelector('textarea.ucm-conf__editinp') : null;
+        const inp = grp ? grp.querySelector('input.ucm-conf__editinp') : null;
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'preseed';
+        });
+        return {
+            hasGrp: !!grp,
+            isTextarea: !!(ta && !ta.hidden),
+            inputHidden: !!(inp && inp.hidden),
+            prefill: ta ? ta.value : null,
+            saveBtn: grp ? !!grp.querySelector('.ucm-conf__editsave:not([hidden])') : false,
+            hint: grp ? (grp.querySelector('.ucm-conf__edithint') || {}).textContent || null : null,
+            trashHidden: leaf ? !!leaf.querySelector('.ucm-iconbtn[hidden]') : null,
+        };
+    });
+    if (!ed1 || !ed1.hasGrp || !ed1.isTextarea || ed1.inputHidden !== true)
+        console.log('PAGE ERROR: clicking the multiline value did not open the prefilled textarea editor (' + JSON.stringify(ed1) + ', round 48g)');
+    if (!ed1 || ed1.prefill !== '{\n  "restore": true\n}')
+        console.log('PAGE ERROR: the multiline editor is not prefilled with the current value (' + JSON.stringify(ed1 && ed1.prefill) + ', round 48g)');
+    if (!ed1 || !ed1.saveBtn)
+        console.log('PAGE ERROR: the multiline editor is missing its Save button (Enter is a newline there, round 48g)');
+    if (!ed1 || !ed1.hint || ed1.hint.indexOf('Esc') === -1)
+        console.log('PAGE ERROR: the multiline editor is missing the keyboard hint (' + JSON.stringify(ed1 && ed1.hint) + ', round 48g)');
+    if (!ed1 || ed1.trashHidden !== true)
+        console.log('PAGE ERROR: the trash is still visible while the value is being edited (round 48g)');
+    await page.screenshot({ path: path.join(SHOTS, '13w-config-edit-multiline.png') });
+    await page.keyboard.press('Escape');
+    await wait(150);
+    const ed2 = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        if (!sec) return { editorGone: true, modalStill: false, pre: null, trashBack: null, stillEditable: null };
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'preseed';
+        });
+        const pre = leaf ? leaf.querySelector('.ucm-conf__multi') : null;
+        return {
+            editorGone: !sec.querySelector('#ucmConfEditGroup'),
+            modalStill: !!document.querySelector('.ucm-modal'),
+            pre: pre ? pre.textContent : null,
+            trashBack: leaf ? !leaf.querySelector('.ucm-iconbtn[hidden]') : null,
+            stillEditable: !!(leaf && leaf.querySelector('.ucm-conf__editable')),
+        };
+    });
+    if (!ed2 || !ed2.editorGone)
+        console.log('PAGE ERROR: Esc did not close the config editor (round 48g)');
+    if (!ed2 || !ed2.modalStill)
+        console.log('PAGE ERROR: Esc closed the whole config modal instead of the editor (round 48g — the editor must stopPropagation)');
+    if (!ed2 || ed2.pre !== '{\n  "restore": true\n}')
+        console.log('PAGE ERROR: a cancelled edit changed the value (round 48g): ' + JSON.stringify(ed2 && ed2.pre));
+    if (!ed2 || ed2.trashBack !== true || ed2.stillEditable !== true)
+        console.log('PAGE ERROR: after cancelling the edit the value row did not restore (' + JSON.stringify(ed2) + ', round 48g)');
+    // Drive 2: ENTER saves a single-line value. The tree shows the new value,
+    // the "Value updated" toast fires, and the mock's private store (the
+    // VERBATIM socket payload) carries the STRING the user typed.
+    await clickConfLeaf('persistence_file');
+    await wait(150);
+    const ed3 = await page.evaluate(() => {
+        const grp = document.querySelector('.ucm-modal #ucmConfEditGroup');
+        const inp = grp ? grp.querySelector('input.ucm-conf__editinp') : null;
+        return {
+            isInput: !!(inp && !inp.hidden),
+            prefill: inp ? inp.value : null,
+            saveHidden: grp ? !!grp.querySelector('.ucm-conf__editsave[hidden]') : false,
+            focused: !!(inp && document.activeElement === inp),
+        };
+    });
+    if (!ed3 || !ed3.isInput || ed3.prefill !== 'mosquitto.db')
+        console.log('PAGE ERROR: clicking the single-line value did not open a prefilled input editor (' + JSON.stringify(ed3) + ', round 48g)');
+    if (!ed3 || ed3.saveHidden !== true)
+        console.log('PAGE ERROR: the single-line editor shows a Save button (Enter saves there, round 48g)');
+    if (!ed3 || ed3.focused !== true)
+        console.log('PAGE ERROR: the single-line editor did not take focus (' + JSON.stringify(ed3) + ', round 48g)');
+    await page.evaluate(() => {
+        const inp = document.querySelector('.ucm-modal #ucmConfEditGroup input.ucm-conf__editinp');
+        inp.value = 'mosquitto.db2';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.keyboard.press('Enter');
+    await wait(1000);
+    const ed4 = await page.evaluate(() => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'persistence_file';
+        });
+        return {
+            val: leaf ? (leaf.querySelector('.ucm-conf__val') || {}).textContent || null : null,
+            editorGone: !sec.querySelector('#ucmConfEditGroup'),
+            toast: document.body.textContent.includes('Value updated'),
+            noError: !document.querySelector('.ucm-modal .p-status-label--negative'),
+        };
+    });
+    if (!ed4 || ed4.val !== 'mosquitto.db2')
+        console.log('PAGE ERROR: the Enter save did not update the value in the tree (' + JSON.stringify(ed4) + ', round 48g)');
+    if (!ed4 || !ed4.editorGone)
+        console.log('PAGE ERROR: the editor survived a successful save (round 48g)');
+    if (!ed4 || !ed4.toast)
+        console.log('PAGE ERROR: the in-place edit did not toast "Value updated" (round 48g)');
+    if (!ed4 || !ed4.noError)
+        console.log('PAGE ERROR: the in-place edit left an error chip (round 48g)');
+    const ed5 = await page.evaluate(async () => window.__mockCore.snaps.confStore('mosquitto'));
+    if (!ed5 || ed5.persistence_file !== 'mosquitto.db2')
+        console.log('PAGE ERROR: the edit PUT did not carry the string value over the socket (' + JSON.stringify(ed5 && ed5.persistence_file) + ', round 48g)');
+    await page.screenshot({ path: path.join(SHOTS, '13x-config-after-edit.png') });
+    // Drive 3: an EMPTY edit is rejected with exactly "Enter a value" (the
+    // 48e wording) — the editor stays, the value is untouched.
+    await clickConfLeaf('persistence_file');
+    await wait(150);
+    await page.evaluate(() => {
+        const inp = document.querySelector('.ucm-modal #ucmConfEditGroup input.ucm-conf__editinp');
+        inp.value = '';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const ed6a = await page.evaluate(() => window.__mockCore.snaps.confPuts());
+    await page.keyboard.press('Enter');
+    await wait(300);
+    const ed6 = await page.evaluate(() => {
+        const grp = document.querySelector('.ucm-modal #ucmConfEditGroup');
+        return {
+            stillEditor: !!grp,
+            isErr: grp ? grp.classList.contains('is-error') : false,
+            msg: grp ? (grp.querySelector('.p-form-validation__message') || {}).textContent || '' : '',
+            puts: window.__mockCore.snaps.confPuts(),
+        };
+    });
+    if (!ed6 || !ed6.stillEditor || !ed6.isErr || ed6.msg !== 'Enter a value')
+        console.log('PAGE ERROR: an empty in-place edit was not rejected with "Enter a value" (' + JSON.stringify(ed6) + ', round 48g)');
+    if (!ed6 || ed6.puts !== ed6a)
+        console.log('PAGE ERROR: a rejected empty edit still sent a config PUT (round 48g)');
+    await page.keyboard.press('Escape');
+    await wait(150);
+    const ed6b = await page.evaluate(async () => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'persistence_file';
+        });
+        const store = await window.__mockCore.snaps.confStore('mosquitto');
+        return {
+            editorGone: !sec.querySelector('#ucmConfEditGroup'),
+            val: leaf ? (leaf.querySelector('.ucm-conf__val') || {}).textContent || null : null,
+            stored: store.persistence_file,
+        };
+    });
+    if (!ed6b || ed6b.val !== 'mosquitto.db2' || ed6b.stored !== 'mosquitto.db2')
+        console.log('PAGE ERROR: a rejected empty edit changed the stored value (round 48g): ' + JSON.stringify(ed6b));
+    if (!ed6b || !ed6b.editorGone)
+        console.log('PAGE ERROR: Esc did not close the editor after a rejected empty save (round 48g)');
+    // Drive 4: an UNCHANGED value sends nothing — no PUT, no hook run.
+    await clickConfLeaf('persistence_file');
+    await wait(150);
+    const ed8 = await page.evaluate(() => window.__mockCore.snaps.confPuts());
+    await page.keyboard.press('Enter');
+    await wait(400);
+    const ed9 = await page.evaluate(async () => {
+        const sec = document.querySelector('.ucm-modal .ucm-conf-sec');
+        const leaf = Array.from(sec.querySelectorAll('.ucm-conf__leaf')).find((l) => {
+            const k = l.querySelector('.ucm-conf__key');
+            return k && k.textContent.trim().replace(/:$/, '') === 'persistence_file';
+        });
+        return {
+            puts: await window.__mockCore.snaps.confPuts(),
+            editorGone: !sec.querySelector('#ucmConfEditGroup'),
+            val: leaf ? (leaf.querySelector('.ucm-conf__val') || {}).textContent || null : null,
+        };
+    });
+    if (!ed9 || ed9.puts !== ed8)
+        console.log('PAGE ERROR: an unchanged value still sent a config PUT (round 48g — a no-op save must not run the configure hook)');
+    if (!ed9 || !ed9.editorGone || ed9.val !== 'mosquitto.db2')
+        console.log('PAGE ERROR: the no-op save did not close the editor cleanly (' + JSON.stringify(ed9) + ', round 48g)');
+    await page.keyboard.down('Escape'); await page.keyboard.up('Escape');
+    await wait(200);
+
     // single-line VALUE; the suru document icon expands the value into a
     // multiline textarea (and back); Save appends the key to the tree.
     await page.evaluate(() => {
