@@ -115,6 +115,14 @@ function makeServer(socketPath, state) {
         // JSON (a dotted key is a path, not a flat key), so GET /v2/snaps/{n}/conf
         // returns {port:'8080', logging:{level:'info'}} for htop.
         htop: { port: '8080', logging: { level: 'info' } },
+        // round 49b: the CORE system config (the Network General card). The
+        // netplan key is DYNAMIC (state.netplanYaml) and is NOT seeded here —
+        // it is merged into the core doc on GET.
+        core: {
+            system: { hostname: 'core-kvm-01' },
+            service: { ssh: { 'listen-address': '22' } },
+            proxy: {},
+        },
     };
 
     fs.existsSync(socketPath) && fs.unlinkSync(socketPath);
@@ -406,8 +414,19 @@ function makeServer(socketPath, state) {
                 };
                 if (req.method === 'GET') {
                     const keys = url.searchParams.get('keys');
-                    if (name === 'core' && (keys === null || keys.startsWith('system.network.netplan'))) {
-                        return json(res, 200, { 'system.network.netplan': state.netplanYaml });
+                    if (name === 'core') {
+                        if (keys === null) {
+                            // full core doc = the seeded system config + the
+                            // LIVE netplan (state.netplanYaml) merged in.
+                            const cdoc = JSON.parse(JSON.stringify(state.conf['core'] || {}));
+                            cdoc.system = cdoc.system || {};
+                            cdoc.system.network = cdoc.system.network || {};
+                            cdoc.system.network.netplan = state.netplanYaml;
+                            return json(res, 200, cdoc);
+                        }
+                        if (keys.startsWith('system.network.netplan')) {
+                            return json(res, 200, { [keys]: state.netplanYaml });
+                        }
                     }
                     const doc = state.conf[name] || {};
                     if (keys === null) return json(res, 200, doc);

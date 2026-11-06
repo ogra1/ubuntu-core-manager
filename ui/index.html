@@ -290,80 +290,12 @@
 
         <!-- ================= NETWORK VIEW ================= -->
         <section class="ucm-view ucm-hidden" id="view-network" data-view="network">
-            <div class="row">
-                <div class="col-8">
-                    <div class="ucm-net">
-                        <div class="p-form__group">
-                            <label class="p-form__label" for="netIface">Interface</label>
-                            <select id="netIface" style="max-width:24rem;">
-                                <option value="">— select —</option>
-                            </select>
-                            <p class="p-form-help-text">Configured through snapd's netplan service (core snap external config); applied atomically, no file writes.</p>
-                        </div>
-
-                        <div class="p-form__group">
-                            <label class="p-form__label">Addressing mode</label>
-                            <label class="p-radio">
-                                <input class="p-radio__input" type="radio" name="netMode" value="dhcp4" id="netModeDhcp" checked>
-                                <span class="p-radio__label">DHCP (v4)</span>
-                            </label>
-                            <label class="p-radio">
-                                <input class="p-radio__input" type="radio" name="netMode" value="static" id="netModeStatic">
-                                <span class="p-radio__label">Static IP</span>
-                            </label>
-                        </div>
-
-                        <div id="netStaticFields" class="ucm-net__grid ucm-hidden">
-                            <div class="p-form__group" id="netIpv4Group">
-                                <label class="p-form__label" for="netIpv4">IPv4 address / prefix</label>
-                                <input class="p-form-validation__input ucm-mono" type="text" id="netIpv4"
-                                       placeholder="192.168.1.50/24" spellcheck="false">
-                                <p class="p-form-validation__message" id="netIpv4Msg"></p>
-                            </div>
-                            <div class="p-form__group" id="netGw4Group">
-                                <label class="p-form__label" for="netGw4">IPv4 gateway</label>
-                                <input class="p-form-validation__input ucm-mono" type="text" id="netGw4"
-                                       placeholder="192.168.1.1" spellcheck="false">
-                                <p class="p-form-validation__message" id="netGw4Msg"></p>
-                            </div>
-                            <div class="p-form__group" id="netIpv6Group">
-                                <label class="p-form__label" for="netIpv6">IPv6 address / prefix <span class="ucm-muted">(optional)</span></label>
-                                <input class="p-form-validation__input ucm-mono" type="text" id="netIpv6"
-                                       placeholder="fd00::1/64" spellcheck="false">
-                                <p class="p-form-validation__message" id="netIpv6Msg"></p>
-                            </div>
-                            <div class="p-form__group" id="netGw6Group">
-                                <label class="p-form__label" for="netGw6">IPv6 gateway <span class="ucm-muted">(optional)</span></label>
-                                <input class="p-form-validation__input ucm-mono" type="text" id="netGw6"
-                                       placeholder="fd00::1" spellcheck="false">
-                                <p class="p-form-validation__message" id="netGw6Msg"></p>
-                            </div>
-                            <div class="p-form__group ucm-net__grid--full p-form__group--full" id="netDnsGroup">
-                                <label class="p-form__label" for="netDns">DNS servers <span class="ucm-muted">(comma-separated, optional)</span></label>
-                                <input class="p-form-validation__input ucm-mono" type="text" id="netDns"
-                                       placeholder="1.1.1.1, 8.8.8.8" spellcheck="false">
-                                <p class="p-form-validation__message" id="netDnsMsg"></p>
-                            </div>
-                        </div>
-
-                        <div class="p-form__group" style="margin-top:1.4rem; display:flex; gap:.8rem; align-items:center;">
-                            <button class="p-button--brand" id="netApply" type="button"><i class="p-icon--success"></i> Apply configuration</button>
-                            <button class="p-button--base p-button" id="netReset" type="button">Reset form</button>
-                            <span class="ucm-muted" id="netStatus" style="font-size:.85rem;"></span>
-                        </div>
+            <div class="ucm-net-full">
+                <div class="p-card" id="genCard">
+                    <div class="p-card__header">
+                        <p class="p-heading--5" style="margin:0;">General</p>
                     </div>
-                </div>
-                <div class="col-4">
-                    <div class="p-card">
-                        <div class="p-card__header">
-                            <div style="display:flex; align-items:center;">
-                                <p class="p-heading--5" style="margin:0;">Active netplan</p>
-                                <button class="p-button--base p-button ucm-rowbtn" id="netplanRefresh" type="button">Refresh</button>
-                            </div>
-                        </div>
-                        <pre id="netplanPre" class="ucm-code" style="margin:0; font-size:.78rem; overflow:auto; max-height:52vh; white-space:pre;"></pre>
-                        <p class="p-form-help-text" style="margin-top:.6rem;">Read from snapd (system.network.netplan). Editing is done through the form — the document is rebuilt and applied by snapd.</p>
-                    </div>
+                    <div class="ucm-net-card__body" id="genBody"><!-- rows rendered by app.js (renderGeneral) --></div>
                 </div>
             </div>
         </section>

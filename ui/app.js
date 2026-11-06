@@ -655,94 +655,282 @@ function renderCpuChart() {
 /* ------------------------------- network --------------------------------- */
 
 async function loadNetwork() {
-    // interface choices from active netplan + /proc/net/dev
+    // round 49b: the network view is the General card; load its values from
+    // the live core conf. (The old skeleton netplan interface form is gone —
+    // netplan editing moves back in as a proper card later if needed.)
+    await loadGeneral();
+}
+
+
+/* Round 49b: the Network page is rebuilt as ONE full-width General card,
+   grouped by USE CASE (hostname / ssh / proxies / time / forwarding) instead
+   of a random field grid. The card is driven by the live snapd CORE system
+   config — the SAME per-snap conf document netplan already uses
+   (PUT /v2/snaps/core/conf, key core.<key>). The bridge (core.snaps.confGet /
+   confSet) is round-1, so NO main.js / preload change is needed to wire it.
+
+   snapd system-option contract (source @8d4d073 configcore, LIVE-verified):
+     core.system.hostname            string  (external config: GET reads the live
+                                            /etc/hostname, PUT sets it)
+     core.service.ssh.disable        bool    (true = ssh OFF; the daemon stops
+                                            + masks the ssh unit on apply)
+     core.service.ssh.listen-address string  (bare "PORT" -> snapd expands to
+                                            0.0.0.0:PORT + [::]:PORT; empty =
+                                            the distro default)
+     core.proxy.http / core.proxy.https  string (URL; snapd applies it to the
+                                            store + snap operations)
+   There is NO core.* option for timesync, the timeserver, or IP forwarding —
+   those rows are UI scaffold only (the user deferred their backend; the
+   daemon does not expose them through the conf channel), clearly noted.
+
+   Editing uses the SNAP-CONFIG POPUP's in-place idiom (round 48g): the value
+   text is the affordance (dotted underline on hover); clicking it swaps in a
+   prefilled input, ENTER saves (an UNCHANGED value sends nothing), ESC
+   cancels (stopPropagation), and a blur to the outside abandons. */
+
+
+/* --- the General card's live values (populated by loadGeneral) ------------- */
+function genHasState() { return state && state.gen && state.gen.hostname !== undefined; }
+
+const RE_GEN_HOSTNAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const RE_GEN_PROXY = /^(http|https|socks5)?:\/\/[A-Za-z0-9.-]+(:\d+)?$/i;
+const RE_GEN_NTP = /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/;
+
+function genPortNum(p) { return /^\d+$/.test(p) ? parseInt(p, 10) : NaN; }
+
+/* core.service.ssh.listen-address -> the port the user set (a bare port is
+   stored by snapd as "0.0.0.0:PORT,[::]:PORT"); null when unset. */
+function genParseListen(addr) {
+    if (!addr || typeof addr !== 'string') return null;
+    const n = String(addr).split(',')[0].trim().split(':').pop();
+    return /^\d+$/.test(n) ? n : null;
+}
+
+async function loadGeneral() {
+    let doc = null;
+    try { doc = await core.snaps.confGet('core'); }
+    catch (e) { if (!(e && /no such snap|not found/i.test(String(e.message)))) toastErr(e); return; }
+    let p = { hostname: null, ssh: true, listen: null, http: null, https: null };
     try {
-        const [np, info] = await Promise.all([
-            core.system.netplan().catch(() => null),
-            core.system.info().catch(() => null),
-        ]);
-        state.netplan = np;
-        const names = new Set();
-        const eth = np && np.network && np.network.ethernets ? Object.keys(np.network.ethernets) : [];
-        eth.forEach((n) => names.add(n));
-        (info && info.netdev || []).forEach((d) => names.add(d.name));
-        const sel = $('#netIface');
-        const cur = sel.value;
-        sel.innerHTML = '';
-        sel.append(el('option', { value: '', text: '— select —' }));
-        Array.from(names).sort().forEach((n) => sel.append(el('option', { value: n, text: n })));
-        if (Array.from(names).includes(cur)) sel.value = cur;
-    } catch (e) { toastErr(e); }
-    try { renderNetplan(); } catch { /* noop */ }
+        const raw = (doc && typeof doc === 'object') ? doc : {};
+        const sys = (raw.system && typeof raw.system === 'object') ? raw.system : {};
+        const svc = (raw.service && typeof raw.service === 'object') ? raw.service : {};
+        const sshc = (svc.ssh && typeof svc.ssh === 'object') ? svc.ssh : {};
+        const proxy = (raw.proxy && typeof raw.proxy === 'object') ? raw.proxy : {};
+        if (sys.hostname != null) p.hostname = String(sys.hostname);
+        p.ssh = sshc.disable === true ? false : true; // absent/false = enabled
+        if (sshc['listen-address'] != null) p.listen = String(sshc['listen-address']);
+        if (proxy.http != null) p.http = String(proxy.http);
+        if (proxy.https != null) p.https = String(proxy.https);
+    } catch { /* fall back to the parsed defaults on a malformed doc */ }
+    state.gen = { hostname: p.hostname, ssh: p.ssh, listen: p.listen, http: p.http, https: p.https };
+    const card = $('#genCard');
+    if (card) renderGeneral();
 }
 
-function renderNetplan() {
-    const pre = $('#netplanPre');
-    const doc = state.netplan;
-    pre.textContent = doc ? JSON.stringify(doc, null, 2) : 'No netplan document available.';
+/* The in-place value editor (round-48g idiom, adapted to the General card):
+   a single-line input prefilled with the current value; Enter saves, Esc
+   cancels (stopPropagation), a blur to the OUTSIDE abandons. Saving goes
+   through the same core.snaps.confSet the config popup uses — an UNCHANGED
+   value sends nothing. */
+function genInlineEditGroup(field, current, onValid, onSave, placeholder) {
+    const grp = el('div', { class: 'p-form__group ucm-gen__edit', id: 'ucmGenEditGroup' });
+    const inp = el('input', { class: 'p-form-validation__input ucm-mono ucm-gen__editinp', type: 'text', spellcheck: 'false' });
+    const saveBtn = el('button', { class: 'p-button--brand p-button ucm-gen__editsave', type: 'button', text: 'Save' });
+    const hint = el('p', { class: 'p-form-validation__message ucm-gen__edithint', text: 'Enter saves — Esc cancels' });
+    const msg = el('p', { class: 'p-form-validation__message ucm-gen__editmsg' });
+    grp.append(inp, saveBtn, hint, msg);
+    inp.placeholder = placeholder || '';
+    inp.value = current == null ? '' : String(current);
+    const doSave = async () => {
+        if (grp.classList.contains('is-disabled')) return;
+        const raw = String(inp.value).trim();
+        if (raw === '') { setFieldState('ucmGenEditGroup', 'error', 'Enter a value'); return; }
+        if (onValid && !onValid(raw)) return; // the field shows its own error
+        const curText = (current == null ? '' : String(current)).trim();
+        if (raw === curText) { closeGenEdit(); return; } // unchanged -> no PUT
+        grp.classList.add('is-disabled');
+        try {
+            const change = await onSave(raw);
+            if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
+            if (field === 'hostname') state.gen.hostname = raw;
+            else if (field === 'http') state.gen.http = raw;
+            else if (field === 'https') state.gen.https = raw;
+            toast('positive', 'Saved', field === 'hostname' ? 'Hostname updated' : 'Proxy updated');
+            renderGeneral();
+        } catch (e) { toastErr(e); closeGenEdit(); }
+        finally { grp.classList.remove('is-disabled'); }
+    };
+    inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+        else if (e.key === 'Escape') { e.stopPropagation(); closeGenEdit(); }
+    });
+    inp.addEventListener('blur', (e) => {
+        if (e.relatedTarget && grp.contains(e.relatedTarget)) return; // Save-click
+        closeGenEdit();
+    });
+    saveBtn.addEventListener('click', () => doSave());
+    return grp;
 }
 
-function netMode() {
-    return $('#netModeStatic').checked ? 'static' : 'dhcp4';
-}
+let genEditGrp = null;
+function closeGenEdit() { if (genEditGrp) { genEditGrp = null; renderGeneral(); } }
 
-function applyNetModeVisibility() {
-    $('#netStaticFields').classList.toggle('ucm-hidden', netMode() !== 'static');
-}
+function genValText(v) { return (v == null || v === '') ? '\u2014' : String(v); }
 
-async function applyNetwork() {
-    const iface = $('#netIface').value;
-    const status = $('#netStatus');
-    if (!iface) { status.textContent = 'Select an interface.'; return; }
-
-    const payload = { interface: iface, mode: netMode() };
-    if (payload.mode === 'static') {
-        let ok = true;
-        const v4 = $('#netIpv4').value.trim();
-        if (!RE_CIDR4.test(v4)) { setFieldState('netIpv4Group', 'error', 'Expected IPv4 with /prefix, e.g. 192.168.1.50/24.'); ok = false; }
-        else setFieldState('netIpv4Group', 'valid');
-        payload.ipv4 = v4;
-
-        const g4 = $('#netGw4').value.trim();
-        if (g4 && !RE_IP4.test(g4)) { setFieldState('netGw4Group', 'error', 'Expected a bare IPv4 address.'); ok = false; }
-        else setFieldState('netGw4Group', g4 ? 'valid' : '');
-        if (g4) payload.gateway4 = g4;
-
-        const v6 = $('#netIpv6').value.trim();
-        if (v6 && !RE_CIDR6.test(v6)) { setFieldState('netIpv6Group', 'error', 'Expected IPv6 with /prefix, e.g. fd00::1/64.'); ok = false; }
-        else setFieldState('netIpv6Group', v6 ? 'valid' : '');
-        if (v6) payload.ipv6 = v6;
-
-        const g6 = $('#netGw6').value.trim();
-        if (g6 && !RE_IP6.test(g6)) { setFieldState('netGw6Group', 'error', 'Expected a bare IPv6 address.'); ok = false; }
-        else setFieldState('netGw6Group', g6 ? 'valid' : '');
-        if (g6) payload.gateway6 = g6;
-
-        const dns = $('#netDns').value.split(',').map((x) => x.trim()).filter(Boolean);
-        if (dns.some((x) => !RE_IP4.test(x) && !RE_IP6.test(x))) {
-            setFieldState('netDnsGroup', 'error', 'DNS entries must be IPv4/IPv6 addresses.'); ok = false;
-        } else if (dns.length) setFieldState('netDnsGroup', 'valid');
-        if (dns.length) payload.dns = dns;
-
-        if (!ok) { status.textContent = 'Fix the highlighted fields.'; return; }
+/* an editable value row: [caption]  <value  (dotted-underline, click to edit)> */
+function genRowEditable(caption, field, current, onValid, onSave, placeholder, disabled) {
+    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--edit' });
+    row.append(el('span', { class: 'ucm-gen__label', text: caption }));
+    const content = el('div', { class: 'ucm-gen__content' });
+    const val = el('span', { class: 'ucm-mono ucm-gen__val' + (disabled ? ' ucm-gen__val--muted' : ' ucm-conf__val ucm-conf__editable'), text: disabled ? 'Not available yet' : genValText(current) });
+    if (disabled) {
+        val.title = 'No snapd system option yet';
+    } else {
+        val.title = 'Edit ' + caption;
+        let grp = null;
+        val.addEventListener('click', () => {
+            if (grp) return;
+            grp = genInlineEditGroup(field, current, onValid, onSave, placeholder);
+            genEditGrp = grp;
+            content.replaceChildren(grp);
+            const f = grp.querySelector('input');
+            f.focus();
+            if (f.select) f.select();
+        });
     }
-
-    const btn = $('#netApply');
-    btn.classList.add('is-disabled');
-    status.textContent = 'Applying…';
-    try {
-        await core.network.apply(payload);
-        toast('positive', 'Network applied', `snapd has applied the new netplan configuration for ${iface}.`);
-        status.textContent = 'Applied ✓';
-        await loadNetwork();
-    } catch (e) {
-        toastErr(e);
-        status.textContent = 'Failed: ' + e.message;
-    } finally {
-        btn.classList.remove('is-disabled');
-    }
+    content.append(val);
+    row.append(content);
+    return row;
 }
 
+function genRowSwitch(caption, on, onToggle, help, portGroup, disabled) {
+    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--toggle' });
+    row.append(el('span', { class: 'ucm-gen__label', text: caption }));
+    const content = el('div', { class: 'ucm-gen__content ucm-gen__switchline' });
+    const lab = el('label', { class: 'p-switch ucm-gen__sw' });
+    lab.append(
+        el('input', { class: 'p-switch__input', type: 'checkbox' }),
+        el('span', { class: 'p-switch__slider' }),
+    );
+    const input = lab.querySelector('input');
+    input.checked = !!on;
+    if (disabled) {
+        lab.classList.add('is-disabled');
+        input.disabled = true;
+        content.append(lab);
+        content.append(el('span', { class: 'ucm-gen__rowhelp', text: 'Not available yet' }));
+        row.append(content);
+        return row;
+    }
+    input.addEventListener('change', onToggle);
+    content.append(lab);
+    if (portGroup) content.append(portGroup);
+    if (help) content.append(el('span', { class: 'ucm-gen__rowhelp', text: help }));
+    row.append(content);
+    return row;
+}
+
+/* the SSH row: the enable switch + (when enabled) the port box, which the
+   user edits with the same in-place editor. core.service.ssh.listen-address
+   is a bare port; snapd expands it to 0.0.0.0:PORT + [::]:PORT on apply. */
+function renderGeneralSsh(content, portGroup) {
+    const port = genParseListen(state.gen.listen);
+    const portEdit = el('span', { class: 'ucm-gen__port', title: 'Edit SSH port' });
+    const portVal = el('span', { class: 'ucm-mono ucm-conf__val ucm-gen__val ucm-conf__editable', text: port || 'default' });
+    let portGrp = null;
+    portVal.addEventListener('click', () => {
+        if (portGrp) return;
+        const cur = port || '';
+        const onValid = (raw) => {
+            const n = genPortNum(raw);
+            if (isNaN(n) || n < 1 || n > 65535) { setFieldState('ucmGenEditGroup', 'error', 'A port from 1 to 65535.'); return false; }
+            setFieldState('ucmGenEditGroup', ''); return true;
+        };
+        const onSave = async (raw) => {
+            const change = await core.snaps.confSet('core', { 'service.ssh.listen-address': raw });
+            state.gen.listen = raw;
+            return change;
+        };
+        portGrp = genInlineEditGroup('ssh-port', cur, onValid, onSave, 'e.g. 2222');
+        genEditGrp = portGrp;
+        portEdit.replaceChildren(portGrp);
+        const f = portGrp.querySelector('input');
+        f.focus(); if (f.select) f.select();
+    });
+    portEdit.append(portVal);
+    portGroup.append(portEdit);
+}
+
+function renderGeneral() {
+    const card = $('#genCard');
+    if (!card || !genHasState()) return;
+    const body = card.querySelector('.ucm-net-card__body');
+    if (!body) return;
+    body.replaceChildren(
+        el('p', { class: 'p-form-help-text ucm-gen__help', text: 'Hostname, remote access (SSH), proxies and time synchronisation. Changes go to snapd (core system config).' })
+    );
+    const rows = el('div', { class: 'ucm-gen__rows' });
+    rows.append(
+        genRowEditable('Hostname', 'hostname', state.gen.hostname,
+            (v) => { if (!RE_GEN_HOSTNAME.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'Lowercase letters, digits and hyphens; must start and end with a letter or digit.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
+            async (v) => { const c = await core.snaps.confSet('core', { 'system.hostname': v }); return c; },
+            'e.g. core-24'),
+    );
+    // row 2 — ssh (switch + port)
+    const sshRow = el('div', { class: 'ucm-gen__row ucm-gen__row--toggle' });
+    sshRow.append(el('span', { class: 'ucm-gen__label', text: 'SSH (remote access)' }));
+    const sshContent = el('div', { class: 'ucm-gen__content ucm-gen__switchline' });
+    const lab = el('label', { class: 'p-switch ucm-gen__sw' });
+    lab.append(el('input', { class: 'p-switch__input', type: 'checkbox' }), el('span', { class: 'p-switch__slider' }));
+    const sw = lab.querySelector('input');
+    sw.checked = state.gen.ssh;
+    sw.addEventListener('change', async () => {
+        const on = sw.checked;
+        sw.disabled = true;
+        try {
+            const change = await core.snaps.confSet('core', { 'service.ssh.disable': on ? false : true });
+            if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
+            state.gen.ssh = on;
+            toast('positive', on ? 'SSH enabled' : 'SSH disabled', on ? 'Remote access is now allowed.' : 'Remote access is now blocked.');
+        } catch (e) { toastErr(e); sw.checked = !on; }
+        finally { sw.disabled = false; renderGeneral(); }
+    });
+    const portGroup = el('div', { class: 'p-form__group ucm-gen__portgrp ucm-hidden' });
+    portGroup.append(el('label', { class: 'p-form__label', text: 'Port' }));
+    renderGeneralSsh(sshContent, portGroup);
+    if (state.gen.ssh) portGroup.classList.remove('ucm-hidden');
+    sshContent.append(lab, portGroup);
+    sshRow.append(sshContent);
+    rows.append(sshRow);
+    // row 3 — proxies (two editable fields)
+    rows.append(
+        genRowEditable('HTTP proxy', 'http', state.gen.http,
+            (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
+            async (v) => { const c = await core.snaps.confSet('core', { 'proxy.http': v }); return c; },
+            'e.g. http://proxy.example:3128'),
+        genRowEditable('HTTPS proxy', 'https', state.gen.https,
+            (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
+            async (v) => { const c = await core.snaps.confSet('core', { 'proxy.https': v }); return c; },
+            'e.g. http://proxy.example:3128'),
+    );
+    // row 4 — time (timeserver editable scaffold + timesync switch scaffold)
+    rows.append(
+        genRowEditable('Timeserver address', 'timeserver', null, null, null, null, true),
+    );
+    // row 5 — timesync + ip forwarding (switches, scaffold: no core.* snapd
+    // option exists — the daemon does not expose these over the conf channel,
+    // so they render as disabled placeholders until a backend is chosen).
+    rows.append(genRowSwitch('Timesync', true, null, null, null, true));
+    rows.append(genRowSwitch('IP forwarding', false, null, null, null, true));
+    body.append(rows);
+}
+
+async function genSetCore(key, value) {
+    const change = await core.snaps.confSet('core', { [key]: value });
+    if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
+    return change;
+}
 /* -------------------------------- snaps ---------------------------------- */
 
 /* Poll a snapd change (returned id from an install/remove/etc. write) until it
@@ -2493,19 +2681,6 @@ function wire() {
 
     // dashboard
 
-    // network
-    $('#netModeDhcp').addEventListener('change', applyNetModeVisibility);
-    $('#netModeStatic').addEventListener('change', applyNetModeVisibility);
-    $('#netApply').addEventListener('click', applyNetwork);
-    $('#netplanRefresh').addEventListener('click', () => loadNetwork());
-    $('#netReset').addEventListener('click', () => {
-        ['netIpv4', 'netGw4', 'netIpv6', 'netGw6', 'netDns'].forEach((id) => { $('#' + id).value = ''; });
-        ['netIpv4Group', 'netGw4Group', 'netIpv6Group', 'netGw6Group', 'netDnsGroup'].forEach((id) => setFieldState(id, ''));
-        $('#netStatus').textContent = '';
-        $('#netModeDhcp').checked = true;
-        applyNetModeVisibility();
-    });
-
     // snaps — the search field is a search ONLY: Enter runs the search, never
     // installs. Per-row Install buttons (in the results card) do the install.
     $('#snapSearchBtn').addEventListener('click', searchStore);
@@ -2528,7 +2703,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
     wire();
-    applyNetModeVisibility();
     try {
         applyAuthPayload(await core.auth.status());
         if (state.authenticated) enterApp();
