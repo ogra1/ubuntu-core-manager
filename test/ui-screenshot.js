@@ -1007,55 +1007,56 @@ function mockFactoryJs() {
     };
     const g0 = await page.evaluate(() => {
       const card = document.querySelector('#genCard');
-      const valBy = (cap) => {
+      const rowBy = (cap) => {
         const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
-        const row = rows.find((r) => { const l = r.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === cap; });
-        if (!row) return null;
-        const v = row.querySelector('.ucm-gen__val');
-        return v ? v.textContent.trim() : null;
+        return rows.find((r) => { const l = r.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === cap; }) || null;
       };
-      const sw = document.querySelector('#genCard .ucm-gen__row .p-switch__input');
+      const valIn = (r, sel) => { const v = r && r.querySelector(sel); return v ? v.textContent.trim() : null; };
+      const swIn = (cap) => { const r = rowBy(cap); const i = r && r.querySelector('.p-switch__input'); return i ? i.checked : null; };
+      const timeRow = rowBy('Sync time from internet');
       return {
         hasCard: !!card,
         title: card ? (card.querySelector('.p-card__header .p-heading--5') || {}).textContent || null : null,
+        help: card ? (card.querySelector('.ucm-gen__help') || {}).textContent || null : null,
         full: card ? (card.getBoundingClientRect().width / document.querySelector('.ucm-main').clientWidth) >= 0.8 : false,
-        hostname: valBy('Hostname'),
-        ssh: sw ? sw.checked : null,
-        port: valBy('SSH (remote access)'),
-        http: valBy('HTTP proxy'),
-        https: valBy('HTTPS proxy'),
-        timeserver: valBy('Timeserver address'),
-        timesync: valBy('Timesync'),
-        ipfwd: valBy('IP forwarding'),
+        hostname: valIn(rowBy('Hostname'), '.ucm-gen__val'),
+        ssh: swIn('SSH (remote access)'),
+        port: valIn(rowBy('SSH (remote access)'), '.ucm-gen__field .ucm-gen__val'),
+        http: valIn(rowBy('HTTP proxy'), '.ucm-gen__val'),
+        https: valIn(rowBy('HTTPS proxy'), '.ucm-gen__val'),
+        timeRowPresent: !!timeRow,
+        timeSwitch: swIn('Sync time from internet'),
+        timeserver: valIn(timeRow, '.ucm-gen__field .ucm-gen__val'),
+        ipfwd: swIn('IP forwarding'),
         oldFormGone: !document.querySelector('#netIface') && !document.querySelector('#netplanPre'),
       };
     });
     if (!g0.hasCard) console.log('PAGE ERROR: network view has no General card (round 49b)');
     if (g0.title !== 'General') console.log('PAGE ERROR: General card header not "General" (' + g0.title + ')');
+    if (g0.help !== 'Network related system settings')
+      console.log('PAGE ERROR: the General card subtitle is not "Network related system settings" (got ' + g0.help + ') (round 49c)');
     if (!g0.full) console.log('PAGE ERROR: the General card is not full-width (round 49b)');
     if (g0.hostname !== 'core-kvm-01') console.log('PAGE ERROR: hostname row not read from core conf (got ' + g0.hostname + ')');
     if (g0.ssh !== true) console.log('PAGE ERROR: ssh row should read enabled (round 49b)');
-    if (g0.port !== '22') console.log('PAGE ERROR: ssh port row not read from core.service.ssh.listen-address (got ' + g0.port + ')');
+    if (g0.port !== '22') console.log('PAGE ERROR: ssh port not read from core.service.ssh.listen-address (got ' + g0.port + ')');
     if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy row not read from core.proxy.http (got ' + g0.http + ')');
-    if (g0.https !== '\u2014') console.log('PAGE ERROR: https proxy row should show the unset em-dash (got ' + g0.https + ')');
+    if (g0.https !== 'Not set') console.log('PAGE ERROR: the unset https proxy should read "Not set" (got ' + g0.https + ') (round 49c)');
+    if (!g0.timeRowPresent) console.log('PAGE ERROR: the "Sync time from internet" row (timesync + timeserver) is missing (round 49c)');
+    if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should default ON (round 49c)');
     if (g0.timeserver !== 'Not available yet')
-      console.log('PAGE ERROR: the scaffold timeserver row should read "Not available yet" (round 49b)');
+      console.log('PAGE ERROR: the timeserver scaffold on the time row should read "Not available yet" (got ' + g0.timeserver + ') (round 49c)');
+    if (g0.ipfwd !== false) console.log('PAGE ERROR: the IP forwarding scaffold switch should default OFF (round 49b)');
     if (!g0.oldFormGone) console.log('PAGE ERROR: the old skeleton netplan form should be gone (round 49b)');
-    const g0sw = await page.evaluate(() => {
-      const swOf = (cap) => {
-        const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
-        const r = rows.find((x) => { const l = x.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === cap; });
-        const i = r && r.querySelector('.p-switch__input');
-        return i ? i.checked : null;
-      };
-      return { timesync: swOf('Timesync'), ipfwd: swOf('IP forwarding'), ssh: swOf('SSH (remote access)') };
-    });
-    if (g0sw.timesync !== true) console.log('PAGE ERROR: the Timesync scaffold switch should default ON (round 49b)');
-    if (g0sw.ipfwd !== false) console.log('PAGE ERROR: the IP forwarding scaffold switch should default OFF (round 49b)');
-    if (g0sw.ssh !== true) console.log('PAGE ERROR: the SSH switch should read enabled (round 49b)');
     await page.screenshot({ path: path.join(SHOTS, '9b-network-general.png') });
     // 3b: inline-edit the hostname (the snap-config-popup in-place idiom).
     await clickGenVal('Hostname');
+    const g1s = await page.evaluate(() => {
+      const grp = document.querySelector('#ucmGenEditGroup');
+      return { present: !!grp, buttons: grp ? grp.querySelectorAll('button').length : null, saveBtn: grp ? !!grp.querySelector('.ucm-gen__editsave') : null, hint: grp && grp.querySelector('.ucm-gen__edithint') ? grp.querySelector('.ucm-gen__edithint').textContent : null };
+    });
+    if (g1s.saveBtn) console.log('PAGE ERROR: the general in-place editor must not carry a Save button (round 49c)');
+    if (g1s.present && g1s.buttons !== 0) console.log('PAGE ERROR: the general in-place editor should have no buttons (round 49c)');
+    if (g1s.hint !== 'Enter saves \u2014 Esc cancels') console.log('PAGE ERROR: the general editor hint is wrong (got ' + g1s.hint + ') (round 49c)');
     await page.type('#ucmGenEditGroup .ucm-gen__editinp', 'core-kvm-02');
     await page.keyboard.press('Enter');
     await wait(350);
@@ -1084,18 +1085,29 @@ function mockFactoryJs() {
     }));
     if (g2.port !== '2222') console.log('PAGE ERROR: editing the ssh port did not update the row (got ' + g2.port + ')');
     if (g2.stored !== '2222') console.log('PAGE ERROR: the port edit did not write core.service.ssh.listen-address (got ' + g2.stored + ')');
-    // 3d: the ssh switch hides/restores the port (wired: core.service.ssh.disable).
-    await page.click('#genCard .ucm-gen__row .p-switch__input');
+    // 3d: the ssh switch shows/hides the INLINE port field; the row height must
+    // stay stable (no collapse) when the field comes and goes (round 49c).
+    const rowH = async () => page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'))
+        .find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'SSH (remote access)');
+      return r ? Math.round(r.getBoundingClientRect().height) : null;
+    });
+    const portPresent = async () => page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'))
+        .find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'SSH (remote access)');
+      return !!(r && r.querySelector('.ucm-gen__field'));
+    });
+    let hOn = await rowH(); let pOn = await portPresent();
+    if (!pOn) console.log('PAGE ERROR: the ssh row should show the port field while enabled (round 49c)');
+    await page.click('#genCard [data-gen-row="ssh"] .p-switch__input');
     await wait(350);
-    let g3 = await page.evaluate(() => ({
-      portHidden: !!document.querySelector('#genCard .ucm-gen__portgrp.ucm-hidden'),
-      sw: document.querySelector('#genCard .ucm-gen__row .p-switch__input').checked,
-    }));
-    if (!g3.portHidden) console.log('PAGE ERROR: turning ssh OFF did not hide the port (round 49b)');
-    await page.click('#genCard .ucm-gen__row .p-switch__input');
+    let pOff = await portPresent(); let hOff = await rowH();
+    if (pOff) console.log('PAGE ERROR: turning ssh OFF should remove the port field (round 49c)');
+    if (hOn && hOff && Math.abs(hOn - hOff) > 1)
+      console.log('PAGE ERROR: the ssh row collapsed when the port field hid (on ' + hOn + 'px, off ' + hOff + 'px — round 49c)');
+    await page.click('#genCard [data-gen-row="ssh"] .p-switch__input');
     await wait(350);
-    g3 = await page.evaluate(() => !document.querySelector('#genCard .ucm-gen__portgrp.ucm-hidden'));
-    if (!g3) console.log('PAGE ERROR: turning ssh back ON did not restore the port (round 49b)');
+    if (!(await portPresent())) console.log('PAGE ERROR: turning ssh back ON should restore the port field (round 49c)');
     // 3e: inline-edit the https proxy (was unset -> now set).
     await clickGenVal('HTTPS proxy');
     await page.type('#ucmGenEditGroup .ucm-gen__editinp', 'http://p.core-kvm-02:8080');
@@ -1111,42 +1123,63 @@ function mockFactoryJs() {
     }));
     if (g4.https !== 'http://p.core-kvm-02:8080') console.log('PAGE ERROR: editing the https proxy did not update the row (got ' + g4.https + ')');
     if (g4.stored !== 'http://p.core-kvm-02:8080') console.log('PAGE ERROR: the https proxy edit did not write core.proxy.https (got ' + g4.stored + ')');
-    // 3f: scaffold rows (timeserver/timesync/ip forwarding) are inert placeholders —
-    // disabled, not editable, no core conf PUT possible.
+    // 3f: the scaffold time + ip-forwarding controls are inert placeholders —
+    // disabled, muted, non-editable, and send no core conf PUT.
     const g5 = await page.evaluate(() => {
       const rowBy = (cap) => {
         const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
         const r = rows.find((x) => { const l = x.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === cap; });
         return r || null;
       };
-      const ts = rowBy('Timeserver address');
-      const tsv = ts ? ts.querySelector('.ucm-gen__val') : null;
-      const tsEdit = tsv ? tsv.classList.contains('ucm-conf__editable') : null;
-      const tsMuted = tsv ? tsv.classList.contains('ucm-gen__val--muted') : null;
-      const timesync = rowBy('Timesync');
+      const timeRow = rowBy('Sync time from internet');
+      const tsw = timeRow ? timeRow.querySelector('.p-switch__input') : null;
+      const tsv = timeRow ? timeRow.querySelector('.ucm-gen__field .ucm-gen__val') : null;
       const ipfwd = rowBy('IP forwarding');
-      const tsw = timesync ? timesync.querySelector('.p-switch__input') : null;
       const isw = ipfwd ? ipfwd.querySelector('.p-switch__input') : null;
       return {
+        timeSwitchDisabled: tsw ? tsw.disabled : null,
         timeserverText: tsv ? tsv.textContent.trim() : null,
-        timeserverEditable: tsEdit,
-        timeserverMuted: tsMuted,
-        timesyncDisabled: tsw ? tsw.disabled : null,
+        timeserverEditable: tsv ? tsv.classList.contains('ucm-conf__editable') : null,
+        timeserverMuted: tsv ? tsv.classList.contains('ucm-gen__val--muted') : null,
         ipfwdDisabled: isw ? isw.disabled : null,
-        timesyncOff: tsw ? tsw.checked : null,
         ipfwdOff: isw ? isw.checked : null,
         puts: window.__mockCore.snaps.confPuts(),
       };
     });
     if (g5.timeserverText !== 'Not available yet' || g5.timeserverEditable || !g5.timeserverMuted)
-      console.log('PAGE ERROR: the timeserver scaffold must be a muted, non-editable placeholder (round 49b)');
-    if (g5.timesyncDisabled !== true || g5.ipfwdDisabled !== true)
-      console.log('PAGE ERROR: the timesync + ip forwarding scaffold switches must be disabled (round 49b)');
-    if (g5.timesyncOff !== true || g5.ipfwdOff !== false)
-      console.log('PAGE ERROR: the scaffold switches should keep their default state (timesync on, ip forwarding off) (round 49b)');
+      console.log('PAGE ERROR: the timeserver scaffold must be a muted, non-editable placeholder (round 49c)');
+    if (g5.timeSwitchDisabled !== true || g5.ipfwdDisabled !== true)
+      console.log('PAGE ERROR: the timesync + ip forwarding scaffold switches must be disabled (round 49c)');
+    if (g5.ipfwdOff !== false) console.log('PAGE ERROR: the ip forwarding scaffold switch should keep its OFF default (round 49c)');
     const putsAfter = await page.evaluate(() => window.__mockCore.snaps.confPuts());
-    if (putsAfter !== g5.puts)
-      console.log('PAGE ERROR: the scaffold rows must not be able to send a core conf PUT (round 49b)');
+    if (putsAfter !== g5.puts) console.log('PAGE ERROR: the scaffold rows must not be able to send a core conf PUT (round 49c)');
+    // 3g: an inline-edit error is never permanently stuck — it appears on the
+    //     save attempt and clears LIVE once the value is valid again (the 48f-D
+    //     config-popup idiom, applied to this card). The user's exact case: an
+    //     empty save shows "Enter a value"; typing a value clears it. (The
+    //     clicks/selects below are real CDP; the editor element is read
+    //     null-safely because a regression could have closed it.)
+    await clickGenVal('HTTP proxy');
+    await page.keyboard.press('Backspace'); // the value is preselected -> delete it (empty)
+    await page.keyboard.press('Enter'); // empty save -> "Enter a value"
+    await wait(200);
+    let ge = await page.evaluate(() => {
+      const grp = document.querySelector('#ucmGenEditGroup');
+      return { present: !!grp, err: grp ? grp.classList.contains('is-error') : null, msg: grp && grp.querySelector('.ucm-gen__editmsg') ? grp.querySelector('.ucm-gen__editmsg').textContent : null };
+    });
+    if (!ge.err || ge.msg !== 'Enter a value')
+      console.log('PAGE ERROR: an empty http proxy save did not show "Enter a value" (got ' + JSON.stringify(ge) + ') (round 49c)');
+    await page.type('#ucmGenEditGroup .ucm-gen__editinp', 'http://proxy.core-kvm-01:3128'); // type a valid value
+    await wait(200);
+    ge = await page.evaluate(() => {
+      const grp = document.querySelector('#ucmGenEditGroup');
+      return { present: !!grp, err: grp ? grp.classList.contains('is-error') : null };
+    });
+    if (ge.err)
+      console.log('PAGE ERROR: "Enter a value" did not clear once a valid value was typed (round 49c)');
+    await page.keyboard.press('Escape');
+    await wait(150);
+    // (leave the card in its default state for the shots below)
 
 
     // ---- 4. snaps view (search works WITHOUT a store login) ----

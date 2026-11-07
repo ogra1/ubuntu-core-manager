@@ -461,44 +461,50 @@ html, body {
 .ucm-net__grid .p-form__group--full { grid-column: 1 / -1; }
 @media (max-width: 900px) { .ucm-net__grid { grid-template-columns: 1fr; } }
 .ucm-net .p-form__control { max-width: 24rem; }
-/* ---- network view: full-width General card (round 49b) ---------------------
+/* ---- network view: full-width General card (round 49b/49c) ------------------
    One .p-card spanning the whole view (no col-8/col-4 split, the old skeleton
-   netplan form is gone). Grouped by USE CASE — a [caption | value/control]
-   row per setting: hostname / ssh(+port) / http+https proxy / time / ip
-   forwarding. Editable values use the snap-config-popup in-place idiom (48g):
-   the value text is the click affordance; the toggles use the 48a orange
-   p-switch re-tint. */
+   netplan form is gone). Grouped by USE CASE — a [caption | value/control] row
+   per setting: hostname / ssh(+port) / http+https proxy / time / ip forwarding.
+   Editable values use the snap-config-popup in-place idiom (48g, single-line so
+   there is NO Save button); the toggles use the 48a orange p-switch re-tint.
+   The ssh and time rows carry their extra field (port / timeserver) as an INLINE
+   [label value] unit on the switch line — one line tall, so toggling the switch
+   removes zero vertical space and the row never collapses (49c). */
 .ucm-net-full { width: 100%; }
 #genCard { margin: 0; }
 .ucm-net-card__body { padding: .2rem 1.4rem 1.4rem; }
 .ucm-gen__help { margin: 0 0 1.1rem; }
 .ucm-gen__rows { display: flex; flex-direction: column; }
-.ucm-gen__row { display: flex; align-items: center; gap: 1.2rem; padding: .85rem 0; border-top: 1px solid #f0f0f0; }
+/* a stable row height: the switch is the tallest control, so every row — with or
+   without its inline field — keeps the same height (no collapse when the port
+   field comes and goes). */
+.ucm-gen__row { display: flex; align-items: center; gap: 1.2rem; padding: .85rem 0; border-top: 1px solid #f0f0f0; min-height: 2.9rem; }
 .ucm-gen__row:first-child { border-top: 0; padding-top: .1rem; }
 .ucm-gen__label { flex: 0 0 14rem; font-weight: 600; color: #3b3b3b; font-size: .95rem; }
-.ucm-gen__content { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+.ucm-gen__content { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: .8rem; flex-wrap: nowrap; }
+.ucm-gen__switchline { gap: 1.3rem; }
 /* the editable value — the dotted-underline affordance is .ucm-conf__editable */
 .ucm-gen__val { cursor: pointer; }
-/* the in-place editor (48g idiom): a full-width input in the row */
-.ucm-gen__edit { display: flex; flex-direction: column; gap: .35rem; flex: 1 1 0; min-width: 0; max-width: 28rem; margin: 0; }
+.ucm-gen__slot { display: inline-flex; align-items: center; min-width: 0; }
+/* an inline [label value] unit (the ssh port / timeserver): a muted caption with
+   the editable value to its right, on the switch line */
+.ucm-gen__field { display: inline-flex; align-items: center; gap: .7rem; }
+.ucm-gen__fieldlabel { color: #757575; font-size: .9rem; }
+/* the in-place editor (48g idiom, single-line): the input + the "Enter saves"
+   hint; the error reuses the group's p-form-validation__message (editmsg). */
+.ucm-gen__edit { display: flex; flex-direction: column; gap: .3rem; flex: 1 1 0; min-width: 0; max-width: 28rem; margin: 0; }
 .ucm-gen__edit [hidden] { display: none; }
 .ucm-gen__editinp { font-size: .9rem; }
-.ucm-gen__editsave { align-self: flex-start; height: 1.9rem; margin: 0; }
 .ucm-gen__edithint { margin: 0; font-size: .7rem; color: #888; }
 .ucm-gen__editmsg { margin: 0; }
-/* the ssh switch row: switch + (when enabled) the port box inline */
-.ucm-gen__switchline { gap: 1rem; }
+/* the switch: the 48a orange p-switch re-tint */
 .ucm-gen__sw { gap: .5rem; align-items: center; }
 .ucm-gen__sw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
 .ucm-gen__sw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
 .ucm-gen__sw .p-switch__slider { background: #e0e0e0; }
-.ucm-gen__portgrp { margin: 0; max-width: 16rem; }
-.ucm-gen__portgrp .p-form__label { font-size: .85rem; color: #757575; }
-.ucm-gen__portgrp .ucm-gen__edit { max-width: 12rem; }
-.ucm-gen__rowhelp { flex: 1 1 auto; min-width: 12rem; color: #888; font-size: .8rem; }
-/* scaffold rows (no core.* snapd option yet) render as inert placeholders —
-   the "Not available yet" value is muted (not the dotted-underline edit
-   affordance) and the toggle is a disabled, desaturated switch. */
+/* scaffold rows (no core.* snapd option yet) render as inert placeholders — the
+   value is muted (not the dotted-underline edit affordance) and the toggle is a
+   disabled, desaturated switch. */
 .ucm-gen__val--muted { color: #aaa; font-style: italic; cursor: default; }
 .ucm-gen__sw.is-disabled { opacity: .45; }
 .ucm-gen__sw.is-disabled input { cursor: default; }

@@ -736,10 +736,11 @@ async function loadGeneral() {
 function genInlineEditGroup(field, current, onValid, onSave, placeholder) {
     const grp = el('div', { class: 'p-form__group ucm-gen__edit', id: 'ucmGenEditGroup' });
     const inp = el('input', { class: 'p-form-validation__input ucm-mono ucm-gen__editinp', type: 'text', spellcheck: 'false' });
-    const saveBtn = el('button', { class: 'p-button--brand p-button ucm-gen__editsave', type: 'button', text: 'Save' });
-    const hint = el('p', { class: 'p-form-validation__message ucm-gen__edithint', text: 'Enter saves — Esc cancels' });
+    // round 48f: the config-popup in-place editor is SINGLE-LINE here, so there
+    // is no Save button (the "Enter saves — Esc cancels" hint is the affordance).
+    const hint = el('p', { class: 'ucm-gen__edithint', text: 'Enter saves \u2014 Esc cancels' });
     const msg = el('p', { class: 'p-form-validation__message ucm-gen__editmsg' });
-    grp.append(inp, saveBtn, hint, msg);
+    grp.append(inp, hint, msg);
     inp.placeholder = placeholder || '';
     inp.value = current == null ? '' : String(current);
     const doSave = async () => {
@@ -765,101 +766,90 @@ function genInlineEditGroup(field, current, onValid, onSave, placeholder) {
         if (e.key === 'Enter') { e.preventDefault(); doSave(); }
         else if (e.key === 'Escape') { e.stopPropagation(); closeGenEdit(); }
     });
+    // round 48f-D (config popup): a shown error clears LIVE once the value is
+    // valid again, so it is never "stuck"; a blur to the outside abandons the
+    // edit (the re-render wipes any lingering message).
+    inp.addEventListener('input', () => {
+        if (!grp.classList.contains('is-error')) return;
+        const raw = String(inp.value).trim();
+        if (raw === '') { setFieldState('ucmGenEditGroup', 'error', 'Enter a value'); return; }
+        if (onValid && !onValid(raw)) return; // onValid set the specific message
+        setFieldState('ucmGenEditGroup', '');
+    });
     inp.addEventListener('blur', (e) => {
-        if (e.relatedTarget && grp.contains(e.relatedTarget)) return; // Save-click
+        if (e.relatedTarget && grp.contains(e.relatedTarget)) return;
         closeGenEdit();
     });
-    saveBtn.addEventListener('click', () => doSave());
     return grp;
 }
 
 let genEditGrp = null;
 function closeGenEdit() { if (genEditGrp) { genEditGrp = null; renderGeneral(); } }
 
-function genValText(v) { return (v == null || v === '') ? '\u2014' : String(v); }
+function genValText(v, emptyText) { return (v == null || v === '') ? (emptyText || 'Not set') : String(v); }
 
-/* an editable value row: [caption]  <value  (dotted-underline, click to edit)> */
-function genRowEditable(caption, field, current, onValid, onSave, placeholder, disabled) {
-    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--edit' });
-    row.append(el('span', { class: 'ucm-gen__label', text: caption }));
-    const content = el('div', { class: 'ucm-gen__content' });
-    const val = el('span', { class: 'ucm-mono ucm-gen__val' + (disabled ? ' ucm-gen__val--muted' : ' ucm-conf__val ucm-conf__editable'), text: disabled ? 'Not available yet' : genValText(current) });
+/* an editable value slot: shows the value (the dotted-underline click
+   affordance) or, while editing, the in-place editor. Used standalone (a
+   hostname/proxy row) and inline next to a switch (the ssh port, timeserver). */
+function genEditableSlot(field, current, onValid, onSave, placeholder, disabled, editLabel, emptyText) {
+    const slot = el('span', { class: 'ucm-gen__slot' });
+    const val = el('span', {
+        class: 'ucm-mono ucm-gen__val' + (disabled ? ' ucm-gen__val--muted' : ' ucm-conf__val ucm-conf__editable'),
+        text: genValText(current, disabled ? 'Not available yet' : emptyText),
+    });
     if (disabled) {
         val.title = 'No snapd system option yet';
     } else {
-        val.title = 'Edit ' + caption;
-        let grp = null;
+        val.title = 'Edit ' + (editLabel || field);
         val.addEventListener('click', () => {
-            if (grp) return;
-            grp = genInlineEditGroup(field, current, onValid, onSave, placeholder);
+            if (slot.querySelector('.ucm-gen__edit')) return;
+            const grp = genInlineEditGroup(field, current, onValid, onSave, placeholder);
             genEditGrp = grp;
-            content.replaceChildren(grp);
+            slot.replaceChildren(grp);
             const f = grp.querySelector('input');
-            f.focus();
-            if (f.select) f.select();
+            f.focus(); if (f.select) f.select();
         });
     }
-    content.append(val);
+    slot.append(val);
+    return slot;
+}
+
+/* an inline [label value] unit (the ssh port / timeserver) — a muted caption
+   with the editable value to its right, on the SAME line as the switch, so
+   toggling it never changes the row height (round 49c). */
+function genLabeledField(labelText, slot) {
+    const wrap = el('span', { class: 'ucm-gen__field' });
+    wrap.append(el('span', { class: 'ucm-gen__fieldlabel', text: labelText }), slot);
+    return wrap;
+}
+
+/* a [caption | value] row where the value is an editable slot. */
+function genRowEditable(caption, field, current, onValid, onSave, placeholder, disabled, emptyText) {
+    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--edit' });
+    row.append(el('span', { class: 'ucm-gen__label', text: caption }));
+    const content = el('div', { class: 'ucm-gen__content' });
+    content.append(genEditableSlot(field, current, onValid, onSave, placeholder, disabled, caption, emptyText));
     row.append(content);
     return row;
 }
 
-function genRowSwitch(caption, on, onToggle, help, portGroup, disabled) {
+/* a [caption | switch (+ optional inline field)] row — the ssh and time rows.
+   The switch is the 48a orange p-switch; the inline field is the same unit the
+   port uses. A disabled switch renders the scaffold state (no core.* option). */
+function genSwitchRow(caption, on, onToggle, disabled, extra) {
     const row = el('div', { class: 'ucm-gen__row ucm-gen__row--toggle' });
     row.append(el('span', { class: 'ucm-gen__label', text: caption }));
     const content = el('div', { class: 'ucm-gen__content ucm-gen__switchline' });
     const lab = el('label', { class: 'p-switch ucm-gen__sw' });
-    lab.append(
-        el('input', { class: 'p-switch__input', type: 'checkbox' }),
-        el('span', { class: 'p-switch__slider' }),
-    );
+    lab.append(el('input', { class: 'p-switch__input', type: 'checkbox' }), el('span', { class: 'p-switch__slider' }));
     const input = lab.querySelector('input');
     input.checked = !!on;
-    if (disabled) {
-        lab.classList.add('is-disabled');
-        input.disabled = true;
-        content.append(lab);
-        content.append(el('span', { class: 'ucm-gen__rowhelp', text: 'Not available yet' }));
-        row.append(content);
-        return row;
-    }
-    input.addEventListener('change', onToggle);
+    if (disabled) { lab.classList.add('is-disabled'); input.disabled = true; }
+    else input.addEventListener('change', onToggle);
     content.append(lab);
-    if (portGroup) content.append(portGroup);
-    if (help) content.append(el('span', { class: 'ucm-gen__rowhelp', text: help }));
+    if (extra) content.append(extra);
     row.append(content);
     return row;
-}
-
-/* the SSH row: the enable switch + (when enabled) the port box, which the
-   user edits with the same in-place editor. core.service.ssh.listen-address
-   is a bare port; snapd expands it to 0.0.0.0:PORT + [::]:PORT on apply. */
-function renderGeneralSsh(content, portGroup) {
-    const port = genParseListen(state.gen.listen);
-    const portEdit = el('span', { class: 'ucm-gen__port', title: 'Edit SSH port' });
-    const portVal = el('span', { class: 'ucm-mono ucm-conf__val ucm-gen__val ucm-conf__editable', text: port || 'default' });
-    let portGrp = null;
-    portVal.addEventListener('click', () => {
-        if (portGrp) return;
-        const cur = port || '';
-        const onValid = (raw) => {
-            const n = genPortNum(raw);
-            if (isNaN(n) || n < 1 || n > 65535) { setFieldState('ucmGenEditGroup', 'error', 'A port from 1 to 65535.'); return false; }
-            setFieldState('ucmGenEditGroup', ''); return true;
-        };
-        const onSave = async (raw) => {
-            const change = await core.snaps.confSet('core', { 'service.ssh.listen-address': raw });
-            state.gen.listen = raw;
-            return change;
-        };
-        portGrp = genInlineEditGroup('ssh-port', cur, onValid, onSave, 'e.g. 2222');
-        genEditGrp = portGrp;
-        portEdit.replaceChildren(portGrp);
-        const f = portGrp.querySelector('input');
-        f.focus(); if (f.select) f.select();
-    });
-    portEdit.append(portVal);
-    portGroup.append(portEdit);
 }
 
 function renderGeneral() {
@@ -867,70 +857,56 @@ function renderGeneral() {
     if (!card || !genHasState()) return;
     const body = card.querySelector('.ucm-net-card__body');
     if (!body) return;
-    body.replaceChildren(
-        el('p', { class: 'p-form-help-text ucm-gen__help', text: 'Hostname, remote access (SSH), proxies and time synchronisation. Changes go to snapd (core system config).' })
-    );
+    body.replaceChildren(el('p', { class: 'p-form-help-text ucm-gen__help', text: 'Network related system settings' }));
     const rows = el('div', { class: 'ucm-gen__rows' });
-    rows.append(
-        genRowEditable('Hostname', 'hostname', state.gen.hostname,
-            (v) => { if (!RE_GEN_HOSTNAME.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'Lowercase letters, digits and hyphens; must start and end with a letter or digit.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
-            async (v) => { const c = await core.snaps.confSet('core', { 'system.hostname': v }); return c; },
-            'e.g. core-24'),
-    );
-    // row 2 — ssh (switch + port)
-    const sshRow = el('div', { class: 'ucm-gen__row ucm-gen__row--toggle' });
-    sshRow.append(el('span', { class: 'ucm-gen__label', text: 'SSH (remote access)' }));
-    const sshContent = el('div', { class: 'ucm-gen__content ucm-gen__switchline' });
-    const lab = el('label', { class: 'p-switch ucm-gen__sw' });
-    lab.append(el('input', { class: 'p-switch__input', type: 'checkbox' }), el('span', { class: 'p-switch__slider' }));
-    const sw = lab.querySelector('input');
-    sw.checked = state.gen.ssh;
-    sw.addEventListener('change', async () => {
-        const on = sw.checked;
-        sw.disabled = true;
+    // 1 — hostname (wired: core.system.hostname)
+    rows.append(genRowEditable('Hostname', 'hostname', state.gen.hostname,
+        (v) => { if (!RE_GEN_HOSTNAME.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'Lowercase letters, digits and hyphens; must start and end with a letter or digit.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
+        async (v) => core.snaps.confSet('core', { 'system.hostname': v }), 'e.g. core-24'));
+    // 2 — ssh (wired: core.service.ssh.disable + core.service.ssh.listen-address).
+    //    the port is an INLINE field on the switch line (not a stacked group),
+    //    so turning ssh off removes zero vertical space — the row never collapses.
+    const sshToggle = async () => {
+        const sw = $('#genCard [data-gen-row="ssh"] .p-switch__input');
+        if (sw) sw.disabled = true;
+        const on = state.gen.ssh = !state.gen.ssh;
         try {
             const change = await core.snaps.confSet('core', { 'service.ssh.disable': on ? false : true });
             if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
-            state.gen.ssh = on;
             toast('positive', on ? 'SSH enabled' : 'SSH disabled', on ? 'Remote access is now allowed.' : 'Remote access is now blocked.');
-        } catch (e) { toastErr(e); sw.checked = !on; }
-        finally { sw.disabled = false; renderGeneral(); }
-    });
-    const portGroup = el('div', { class: 'p-form__group ucm-gen__portgrp ucm-hidden' });
-    portGroup.append(el('label', { class: 'p-form__label', text: 'Port' }));
-    renderGeneralSsh(sshContent, portGroup);
-    if (state.gen.ssh) portGroup.classList.remove('ucm-hidden');
-    sshContent.append(lab, portGroup);
-    sshRow.append(sshContent);
+        } catch (e) { state.gen.ssh = !on; toastErr(e); }
+        finally { renderGeneral(); }
+    };
+    const sshRow = genSwitchRow('SSH (remote access)', state.gen.ssh, sshToggle, false);
+    sshRow.dataset.genRow = 'ssh';
+    if (state.gen.ssh) {
+        const port = genParseListen(state.gen.listen);
+        const portSlot = genEditableSlot('ssh-port', port,
+            (raw) => { const n = genPortNum(raw); if (isNaN(n) || n < 1 || n > 65535) { setFieldState('ucmGenEditGroup', 'error', 'A port from 1 to 65535.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
+            async (raw) => { const change = await core.snaps.confSet('core', { 'service.ssh.listen-address': raw }); state.gen.listen = raw; return change; },
+            'e.g. 2222', false, 'SSH port', 'default');
+        sshRow.querySelector('.ucm-gen__switchline').append(genLabeledField('Port', portSlot));
+    }
     rows.append(sshRow);
-    // row 3 — proxies (two editable fields)
+    // 3 — proxies (wired: core.proxy.http / core.proxy.https)
     rows.append(
         genRowEditable('HTTP proxy', 'http', state.gen.http,
             (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
-            async (v) => { const c = await core.snaps.confSet('core', { 'proxy.http': v }); return c; },
-            'e.g. http://proxy.example:3128'),
+            async (v) => core.snaps.confSet('core', { 'proxy.http': v }), 'e.g. http://proxy.example:3128'),
         genRowEditable('HTTPS proxy', 'https', state.gen.https,
             (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
-            async (v) => { const c = await core.snaps.confSet('core', { 'proxy.https': v }); return c; },
-            'e.g. http://proxy.example:3128'),
+            async (v) => core.snaps.confSet('core', { 'proxy.https': v }), 'e.g. http://proxy.example:3128'),
     );
-    // row 4 — time (timeserver editable scaffold + timesync switch scaffold)
-    rows.append(
-        genRowEditable('Timeserver address', 'timeserver', null, null, null, null, true),
-    );
-    // row 5 — timesync + ip forwarding (switches, scaffold: no core.* snapd
-    // option exists — the daemon does not expose these over the conf channel,
-    // so they render as disabled placeholders until a backend is chosen).
-    rows.append(genRowSwitch('Timesync', true, null, null, null, true));
-    rows.append(genRowSwitch('IP forwarding', false, null, null, null, true));
+    // 4 — time (scaffold: no core.* snapd option for timesync/timeserver yet) —
+    //    laid out like the ssh row: [Sync time from internet] (switch)  Timeserver [value].
+    rows.append(genSwitchRow('Sync time from internet', true, null, true,
+        genLabeledField('Timeserver', genEditableSlot('timeserver', null, null, null, null, true, 'Timeserver'))));
+    // 5 — ip forwarding (scaffold: no core.* snapd option yet)
+    rows.append(genSwitchRow('IP forwarding', false, null, true));
     body.append(rows);
 }
 
-async function genSetCore(key, value) {
-    const change = await core.snaps.confSet('core', { [key]: value });
-    if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
-    return change;
-}
+
 /* -------------------------------- snaps ---------------------------------- */
 
 /* Poll a snapd change (returned id from an install/remove/etc. write) until it
