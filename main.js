@@ -895,7 +895,113 @@ async function getNetplan() {
 }
 
 /* ------------------------------------------------------------------ *
- * 8. Interfaces (plug/slot control)
+ * 8. Timesync / NTP (the timeserver-control snap interface)
+ *
+ * The Network "Sync time from internet" row wires to snapd's timeserver-control
+ * interface (core slot). That interface grants, via AppArmor:
+ *   - org.freedesktop.timedate1.SetNTP(bool)        -> enable/disable NTP (LIVE)
+ *   - org.freedesktop.DBus.Properties.Get/GetAll     -> read NTP state
+ *   - rw /etc/systemd/timesyncd.conf                 -> set the NTP server
+ *     (note: timesyncd only picks up a server change after it restarts/reboots)
+ *
+ * D-Bus is the canonical mechanism (timedatectl set-ntp is just a wrapper over
+ * SetNTP, per the interface's own profile). The D-Bus call uses dbus-next; it is
+ * a LAZY require (only on the real path) so the plain-node integration test and
+ * the puppeteer harness never touch it — they inject a transport / use the mock.
+ * ------------------------------------------------------------------ */
+const TIMESYNC_CONF_DEFAULT = '/etc/systemd/timesyncd.conf';
+function timesyncConfPath() { return process.env.UCM_TIMESYNC_CONF || TIMESYNC_CONF_DEFAULT; }
+
+/* The transport is injectable so the integration test can run without a live
+   system bus: __setTimesyncTransport(fn) where fn(spec) -> Promise<body array>. */
+let __timesyncTransport = null;
+function __setTimesyncTransport(fn) { __timesyncTransport = fn; }
+function timesyncTransport(spec) {
+    if (__timesyncTransport) return __timesyncTransport(spec);
+    const { systemBus, Message, MessageType } = require('dbus-next');
+    const bus = systemBus();
+    const msg = new Message(Object.assign({}, spec, { type: MessageType.METHOD_CALL }));
+    return bus.call(msg).then((r) => (r && r.body) || []);
+}
+/* dbus-next returns structured values as Variant {signature, value}; unwrap. */
+function unwrapVariant(v) {
+    return (v && typeof v === 'object' && 'value' in v && 'signature' in v) ? v.value : v;
+}
+const TIME_DATE_DEST = 'org.freedesktop.timedate1';
+const TIME_DATE_PATH = '/org/freedesktop/timedate1';
+const TIME_DATE_IFACE = 'org.freedesktop.timedate1';
+
+/* Read the live NTP on/off. The property name varies by systemd version:
+   NTPEnabled (systemd >= ~240) with NTP as an alias (older). Read whichever
+   is present so it is correct on both the dev box and the Core 24 VM. */
+async function timesyncNtpEnabled() {
+    const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
+        interface: 'org.freedesktop.DBus.Properties', member: 'GetAll', signature: 's', body: [TIME_DATE_IFACE] });
+    const props = (body && body[0]) || {};
+    if ('NTPEnabled' in props) return unwrapVariant(props.NTPEnabled);
+    if ('NTP' in props) return unwrapVariant(props.NTP);
+    return null;
+}
+/* Enable/disable NTP synchronously (SetNTP has no return / no async change). */
+async function timesyncSetNtp(enabled) {
+    await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
+        interface: TIME_DATE_IFACE, member: 'SetNTP', signature: 'b', body: [ !!enabled ] });
+}
+
+/* ---- the timesyncd.conf NTP= line (pure helpers, unit-testable) -----------
+   timesyncd reads [Time] NTP=<server>. We rewrite that ONE line (keeping the
+   rest of the file, including comments, verbatim). */
+function parseTimesyncNtp(text) {
+    if (!text) return null;
+    const m = String(text).split(/\r?\n/).find((l) => /^NTP=/.test(l));
+    if (!m) return null;
+    const v = m.replace(/^NTP=/, '').trim();
+    return v || null;
+}
+function formatTimesyncNtp(text, server) {
+    // Replace the NTP= line, keeping exactly one. The shipped timesyncd.conf
+    // carries a commented "#NTP=" as its designated slot, so: rewrite an
+    // uncommented NTP= if present, else the commented #NTP=, else append.
+    // A single trailing newline (as in a real file) is preserved.
+    const val = 'NTP=' + (server ? String(server) : '');
+    let raw = String(text == null ? '' : text);
+    const hadTrailingNL = raw.endsWith('\n');
+    let lines = raw.split(/\r?\n/);
+    if (lines.length && lines[lines.length - 1] === '') lines.pop(); // drop the trailing empty
+    let activeIdx = -1, commentIdx = -1;
+    lines.forEach((l, i) => {
+        if (activeIdx === -1 && /^NTP=/.test(l)) activeIdx = i;
+        else if (commentIdx === -1 && /^#\s*NTP=/.test(l)) commentIdx = i;
+    });
+    const at = activeIdx !== -1 ? activeIdx : commentIdx;
+    if (at !== -1) lines[at] = val; else lines.push(val);
+    let out = lines.join('\n');
+    if (hadTrailingNL) out += '\n';
+    return out;
+}
+
+/* High-level API used by the IPC handlers (and exported for the unit test). */
+async function timesyncStatus() {
+    let server = null;
+    try { server = parseTimesyncNtp(fs.readFileSync(timesyncConfPath(), 'utf8')); } catch { server = null; }
+    let ntp = null;
+    try { ntp = await timesyncNtpEnabled(); } catch { ntp = null; }
+    return { ntp: ntp === null ? null : !!ntp, server: server || null };
+}
+async function timesyncSetEnabled(enabled) {
+    if (typeof enabled !== 'boolean') throw new Error('timesync enabled must be a boolean');
+    await timesyncSetNtp(enabled);
+}
+async function timesyncSetServer(server) {
+    server = (server == null ? '' : String(server)).trim();
+    if (server.length > 255) throw new Error('timeserver address too long');
+    if (/\n/.test(server)) throw new Error('timeserver address is invalid');
+    const cur = fs.readFileSync(timesyncConfPath(), 'utf8');
+    fs.writeFileSync(timesyncConfPath(), formatTimesyncNtp(cur, server), { mode: 0o644 });
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. Interfaces (plug/slot control)
  * ------------------------------------------------------------------ */
 
 const RE_PLUG_SLOT = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$/;
@@ -1167,6 +1273,8 @@ const api = {
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapServices, controlSnapService,
     getSnapConfig, getNetplan, listInterfaces, confInferType,
+    timesyncStatus, timesyncSetEnabled, timesyncSetServer,
+    parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
 
     installSnap, snapAction, snapComponent,
     setSnapConfig, applyNetplanConfig,
@@ -1435,6 +1543,11 @@ function initElectron() {
     ipcMain.handle('snaps:conf-set', guard((name, conf) => { requireAuth(); return setSnapConfig(name, conf); }));
 
     ipcMain.handle('net:apply', guard((netcfg) => { requireAuth(); return applyNetplanConfig(netcfg); }));
+    // timesync / NTP (timeserver-control interface; reads are open, writes
+    // are console-privileged like the other system changes)
+    ipcMain.handle('timesync:status', guard(() => timesyncStatus()));
+    ipcMain.handle('timesync:set-enabled', guard((b) => { requireAuth(); return timesyncSetEnabled(b); }));
+    ipcMain.handle('timesync:set-server', guard((s) => { requireAuth(); return timesyncSetServer(s); }));
     ipcMain.handle('ifaces:list', guard(() => listInterfaces()));
     ipcMain.handle('ifaces:connect', guard((plug, slot) => { requireAuth(); return connectInterface(plug, slot); }));
     ipcMain.handle('ifaces:disconnect', guard((plug, slot) => { requireAuth(); return disconnectInterface(plug, slot); }));

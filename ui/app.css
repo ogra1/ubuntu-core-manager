@@ -493,6 +493,10 @@ html, body {
    each [label value] unit takes half the content width. The port/timeserver
    fields (single units on a switch line) keep their natural width. */
 .ucm-gen__row--proxies .ucm-gen__field { flex: 1 1 0; }
+/* the time row: switch + the timeserver field + a quiet "applies after a
+   restart" note (round 49f) — one line, same height as the other rows. */
+.ucm-gen__time-extra { display: inline-flex; align-items: center; gap: .9rem; min-width: 0; }
+.ucm-gen__note { color: #999; font-size: .75rem; white-space: nowrap; }
 .ucm-gen__fieldlabel { color: #757575; font-size: .9rem; }
 /* the proxy row: a 50/50 split — "HTTP" + "HTTPS" side by side, each a
    [sub-label over value] unit (round 49d). The row keeps the stable height;

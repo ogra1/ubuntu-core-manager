@@ -735,7 +735,14 @@ async function loadGeneral() {
             if (info && info.host && info.host.hostname) osHost = info.host.hostname;
         } catch { osHost = null; }
     }
-    state.gen = { hostname: p.hostname, ssh: p.ssh, listen: p.listen, http: p.http, https: p.https, osHost };
+    // Timesync / NTP (round 49f, timeserver-control interface): the LIVE on/off
+    // (org.freedesktop.timedate1.SetNTP) + the configured NTP server (the
+    // timesyncd.conf). If the interface isn't reachable (not connected / no bus
+    // in the dev container) the read fails -> default on, no server.
+    let ts = { ntp: true, server: null };
+    try { ts = await core.timesync.status().catch(() => ts); } catch { ts = { ntp: true, server: null }; }
+    state.gen = { hostname: p.hostname, ssh: p.ssh, listen: p.listen, http: p.http, https: p.https, osHost,
+        timesyncNtp: (ts && ts.ntp === null) ? true : !!ts.ntp, timesyncServer: (ts && ts.server) || null };
     const card = $('#genCard');
     if (card) renderGeneral();
 }
@@ -769,7 +776,9 @@ function genInlineEditGroup(field, current, display, onValid, onSave, placeholde
             if (field === 'hostname') state.gen.hostname = raw;
             else if (field === 'http') state.gen.http = raw;
             else if (field === 'https') state.gen.https = raw;
-            toast('positive', 'Saved', field === 'hostname' ? 'Hostname updated' : 'Proxy updated');
+            const savedLabel = { hostname: 'Hostname updated', http: 'Proxy updated', https: 'Proxy updated',
+                'ssh-port': 'SSH port updated', timeserver: 'Timeserver updated (applies after a restart)' }[field] || 'Saved';
+            toast('positive', 'Saved', savedLabel);
             renderGeneral();
         } catch (e) { toastErr(e); closeGenEdit(); }
         finally { grp.classList.remove('is-disabled'); }
@@ -922,11 +931,31 @@ function renderGeneral() {
         sshRow.querySelector('.ucm-gen__switchline').append(genLabeledField('Port', portSlot));
     }
     rows.append(sshRow);
-    // 3 — time (scaffold: no core.* snapd option for timesync/timeserver yet) —
-    //    laid out like the ssh row: [Sync time from internet] (switch)  Timeserver [value].
-    //    round 49e: the time row now sits ABOVE the proxy row (user's ordering).
-    rows.append(genSwitchRow('Sync time from internet', true, null, true,
-        genLabeledField('Timeserver', genEditableSlot('timeserver', null, null, null, null, null, true, 'Timeserver'))));
+    // 3 — time (WIRED, round 49f: the timeserver-control snap interface). The
+    //    on/off is LIVE (timedate1.SetNTP); the NTP server is written to
+    //    /etc/systemd/timesyncd.conf and applies after a timesyncd restart
+    //    (systemd LP #1504657). Laid out like the ssh row: switch + the
+    //    timeserver as an inline [label value] field + a quiet note.
+    const timeserverValid = (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_NTP.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'An NTP server address, e.g. 0.ubuntu.pool.ntp.org.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; };
+    const timeExtra = el('div', { class: 'ucm-gen__time-extra' });
+    timeExtra.append(
+        genLabeledField('Timeserver', genEditableSlot('timeserver', state.gen.timesyncServer, state.gen.timesyncServer, timeserverValid,
+            async (v) => { await core.timesync.setServer(v); state.gen.timesyncServer = v || null; return null; }, 'e.g. 0.ubuntu.pool.ntp.org')),
+        el('span', { class: 'ucm-gen__note', text: 'Applies after a restart' }),
+    );
+    const timeRow = genSwitchRow('Sync time from internet', state.gen.timesyncNtp, async () => {
+        const sw = $('#genCard [data-gen-row="time"] .p-switch__input');
+        if (sw) sw.disabled = true;
+        const on = !(state.gen.timesyncNtp === true);
+        try {
+            await core.timesync.setEnabled(on);
+            state.gen.timesyncNtp = on;
+            toast('positive', on ? 'Time sync enabled' : 'Time sync disabled', on ? 'The system will sync its clock from the internet.' : 'Internet time synchronisation is off.');
+        } catch (e) { toastErr(e); }
+        finally { renderGeneral(); }
+    }, false, timeExtra);
+    timeRow.dataset.genRow = 'time';
+    rows.append(timeRow);
     // 4 — proxies (wired: core.proxy.http / core.proxy.https) — ONE row: "Proxy"
     //    caption, HTTP + HTTPS as two inline fields side by side.
     rows.append(genProxyRow());

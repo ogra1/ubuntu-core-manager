@@ -136,6 +136,13 @@ const api = Object.freeze({
         disconnect: invoke('ifaces:disconnect'),// (plugRef, slotRef)
     }),
 
+    // ---- timesync / NTP (timeserver-control interface, D-Bus timedate1) ---
+    timesync: Object.freeze({
+        status: invoke('timesync:status'),          // { ntp:boolean|null, server:string|null }
+        setEnabled: invoke('timesync:set-enabled'), // (boolean) — LIVE
+        setServer: invoke('timesync:set-server'),   // (string) — applies after a timesyncd restart
+    }),
+
     // ---- misc ------------------------------------------------------------
     ping: () => Promise.resolve('pong'),
 });

@@ -555,6 +555,20 @@ function mockFactoryJs() {
                 },
             },
             network: { async apply() { return {}; } },
+            // round 49f: timesync / NTP — the real app talks to the
+            // timeserver-control interface (timedate1 D-Bus for the on/off,
+            // /etc/systemd/timesyncd.conf for the server). The mock models both
+            // behind one object so the renderer's core.timesync.* is exercised
+            // honestly. ntp defaults ON (a synced device); server unset.
+            timesync: (() => {
+                const __ts = { ntp: true, server: null, puts: 0 };
+                return {
+                    async status() { __ts.puts += 1; return { ntp: __ts.ntp, server: __ts.server }; },
+                    async setEnabled(b) { __ts.puts += 1; __ts.ntp = !!b; return {}; },
+                    async setServer(s) { __ts.puts += 1; __ts.server = (s == null ? null : String(s)); return {}; },
+                    __ts: () => __ts,
+                };
+            })(),
             interfaces: {
                 // LIVE-VERIFIED (snapd 2.77): GET /v2/interfaces -> {plugs, slots}
                 // (unconnected endpoints carry connections: null); POST is an
@@ -1036,6 +1050,8 @@ function mockFactoryJs() {
         timeRow: rowBy('Sync time from internet'),
         timeRowPresent: !!timeRow,
         timeSwitch: swIn('Sync time from internet'),
+        timeserver: (() => { const f = timeRow && timeRow.querySelector('.ucm-gen__field .ucm-gen__val'); return f ? f.textContent.trim() : null; })(),
+        timeNote: (() => { const n = timeRow && timeRow.querySelector('.ucm-gen__note'); return n ? n.textContent.trim() : null; })(),
         timeserver: valIn(timeRow, '.ucm-gen__field .ucm-gen__val'),
         ipfwd: swIn('IP forwarding'),
         oldFormGone: !document.querySelector('#netIface') && !document.querySelector('#netplanPre'),
@@ -1080,9 +1096,11 @@ function mockFactoryJs() {
     if (!g0proxy.timeAboveProxy)
       console.log('PAGE ERROR: the "Sync time from internet" row must come above the proxy row (round 49e)');
     if (!g0.timeRowPresent) console.log('PAGE ERROR: the "Sync time from internet" row (timesync + timeserver) is missing (round 49c)');
-    if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should default ON (round 49c)');
-    if (g0.timeserver !== 'Not available yet')
-      console.log('PAGE ERROR: the timeserver scaffold on the time row should read "Not available yet" (got ' + g0.timeserver + ') (round 49c)');
+    if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should read the live NTP state (on) (round 49f)');
+    if (g0.timeserver !== 'Click to add')
+      console.log('PAGE ERROR: the unset timeserver should read "Click to add" (got ' + g0.timeserver + ') (round 49f)');
+    if (g0.timeNote !== 'Applies after a restart')
+      console.log('PAGE ERROR: the timeserver row should carry the "Applies after a restart" note (got ' + g0.timeNote + ') (round 49f)');
     if (g0.ipfwd !== false) console.log('PAGE ERROR: the IP forwarding scaffold switch should default OFF (round 49b)');
     if (!g0.oldFormGone) console.log('PAGE ERROR: the old skeleton netplan form should be gone (round 49b)');
     await page.screenshot({ path: path.join(SHOTS, '9b-network-general.png') });
@@ -1174,7 +1192,6 @@ function mockFactoryJs() {
       const isw = ipfwd ? ipfwd.querySelector('.p-switch__input') : null;
       return {
         timeSwitchDisabled: tsw ? tsw.disabled : null,
-        timeserverText: tsv ? tsv.textContent.trim() : null,
         timeserverEditable: tsv ? tsv.classList.contains('ucm-conf__editable') : null,
         timeserverMuted: tsv ? tsv.classList.contains('ucm-gen__val--muted') : null,
         ipfwdDisabled: isw ? isw.disabled : null,
@@ -1182,11 +1199,12 @@ function mockFactoryJs() {
         puts: window.__mockCore.snaps.confPuts(),
       };
     });
-    if (g5.timeserverText !== 'Not available yet' || g5.timeserverEditable || !g5.timeserverMuted)
-      console.log('PAGE ERROR: the timeserver scaffold must be a muted, non-editable placeholder (round 49c)');
-    if (g5.timeSwitchDisabled !== true || g5.ipfwdDisabled !== true)
-      console.log('PAGE ERROR: the timesync + ip forwarding scaffold switches must be disabled (round 49c)');
-    if (g5.ipfwdOff !== false) console.log('PAGE ERROR: the ip forwarding scaffold switch should keep its OFF default (round 49c)');
+    if (g5.timeSwitchDisabled !== false)
+      console.log('PAGE ERROR: the "Sync time from internet" switch must be LIVE (enabled), not a disabled scaffold (round 49f)');
+    if (!g5.timeserverEditable || g5.timeserverMuted)
+      console.log('PAGE ERROR: the timeserver must be an editable (wired) value, not a muted scaffold (round 49f)');
+    if (g5.ipfwdDisabled !== true || g5.ipfwdOff !== false)
+      console.log('PAGE ERROR: IP forwarding is still the scaffold (disabled, off) (round 49f)');
     const putsAfter = await page.evaluate(() => window.__mockCore.snaps.confPuts());
     if (putsAfter !== g5.puts) console.log('PAGE ERROR: the scaffold rows must not be able to send a core conf PUT (round 49c)');
     // 3g: an inline-edit error is never permanently stuck — it appears on the
@@ -1233,6 +1251,34 @@ function mockFactoryJs() {
       await loadGeneral();
     });
     await wait(150);
+    // 3i: the LIVE sync toggle (core.timesync.setEnabled) flips the row.
+    const tsPuts0 = await page.evaluate(() => window.__mockCore.timesync.__ts().puts);
+    await page.click('#genCard [data-gen-row="time"] .p-switch__input');
+    await wait(300);
+    let g7 = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Sync time from internet');
+      return { on: r ? r.querySelector('.p-switch__input').checked : null, mockOn: window.__mockCore.timesync.__ts().ntp, puts: window.__mockCore.timesync.__ts().puts };
+    });
+    if (g7.on !== false || g7.mockOn !== false)
+      console.log('PAGE ERROR: turning "Sync time from internet" OFF did not call setEnabled(false) (round 49f)');
+    if (g7.puts !== tsPuts0 + 1)
+      console.log('PAGE ERROR: the sync toggle should send exactly one core.timesync call (round 49f)');
+    await page.click('#genCard [data-gen-row="time"] .p-switch__input');
+    await wait(300);
+    const g7b = await page.evaluate(() => window.__mockCore.timesync.__ts().ntp);
+    if (g7b !== true) console.log('PAGE ERROR: turning "Sync time from internet" back ON should restore NTP (round 49f)');
+    // 3j: edit the timeserver (core.timesync.setServer) -> the value updates.
+    await clickGenVal('Timeserver');
+    await page.type('#ucmGenEditGroup .ucm-gen__editinp', '0.ubuntu.pool.ntp.org');
+    await page.keyboard.press('Enter');
+    await wait(300);
+    const g8 = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Sync time from internet');
+      const v = r ? r.querySelector('.ucm-gen__field .ucm-gen__val') : null;
+      return { val: v ? v.textContent.trim() : null, stored: window.__mockCore.timesync.__ts().server };
+    });
+    if (g8.val !== '0.ubuntu.pool.ntp.org') console.log('PAGE ERROR: editing the timeserver did not update the row (got ' + g8.val + ') (round 49f)');
+    if (g8.stored !== '0.ubuntu.pool.ntp.org') console.log('PAGE ERROR: the timeserver edit did not call core.timesync.setServer (got ' + g8.stored + ') (round 49f)');
     // (leave the card in its default state for the shots below)
 
 

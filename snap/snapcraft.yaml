@@ -30,6 +30,7 @@ apps:
       - snapd-control
       - system-observe
       - mount-observe
+      - timeserver-control
 
 parts:
   app:

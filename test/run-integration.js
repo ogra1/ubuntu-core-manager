@@ -481,6 +481,8 @@ function ok(name, cond, extra = '') {
             ok('auth:create/login/logout handlers registered',
                 !!handlers['auth:create'] && !!handlers['auth:login'] && !!handlers['auth:logout']
                 && !!handlers['sys:cpu']);
+            ok('timesync handlers registered (status open, writes auth-gated)',
+                !!handlers['timesync:status'] && !!handlers['timesync:set-enabled'] && !!handlers['timesync:set-server']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -688,6 +690,44 @@ function ok(name, cond, extra = '') {
     let badSvc = null;
     try { await m.controlSnapService('llama-cpp', '../etc', 'stop', {}); } catch (e) { badSvc = e; }
     ok('reject an invalid service name before socket', !!badSvc && /invalid service name/.test(badSvc.message), badSvc && badSvc.message);
+
+    console.log('\n[13] timesync / NTP (timeserver-control interface, D-Bus timedate1)');
+    {
+        // pure helpers — the timesyncd.conf NTP= line parse/format
+        const parse = m.parseTimesyncNtp;
+        const format = m.formatTimesyncNtp;
+        ok('parseTimesyncNtp reads NTP=', parse('[Time]\n#NTP=\nNTP=0.1.2.3\n') === '0.1.2.3');
+        ok('parseTimesyncNtp null when no NTP= line', parse('[Time]\n#NTP=ntp.ubuntu.com\n') === null);
+        ok('parseTimesyncNtp null for empty NTP=', parse('[Time]\nNTP=\n') === null);
+        ok('formatTimesyncNtp rewrites an existing NTP= line', format('[Time]\nNTP=a.b\n#keep\n', 'x.y.z') === '[Time]\nNTP=x.y.z\n#keep\n');
+        ok('formatTimesyncNtp replaces a commented-out NTP=', format('[Time]\n#NTP=old\n', 'new.host') === '[Time]\nNTP=new.host\n');
+        ok('formatTimesyncNtp appends when no NTP= line', format('[Time]\n', 'h') === '[Time]\nNTP=h\n');
+        ok('formatTimesyncNtp empty server clears the line', format('[Time]\nNTP=old\n', '') === '[Time]\nNTP=\n');
+
+        // timesyncStatus via an INJECTED fake D-Bus transport (no live bus needed)
+        m.__setTimesyncTransport(async (spec) => {
+            if (spec.member === 'GetAll') return [{ NTPEnabled: { signature: 'b', value: true } }]; // Variant, as dbus-next returns
+            if (spec.member === 'SetNTP') { global.__tsNtpSet = spec.body[0]; return []; }
+            throw new Error('unexpected transport call: ' + spec.member);
+        });
+        const TS_CONF = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-ts-')) + '/timesyncd.conf';
+        fs.writeFileSync(TS_CONF, '[Time]\nNTP=9.9.9.9\n');
+        process.env.UCM_TIMESYNC_CONF = TS_CONF;
+        const st = await m.timesyncStatus();
+        ok('timesyncStatus reads NTP from the (Variant) property', st && st.ntp === true, JSON.stringify(st));
+        ok('timesyncStatus reads the configured server from the conf', st && st.server === '9.9.9.9', JSON.stringify(st));
+        await m.timesyncSetEnabled(false);
+        ok('timesyncSetEnabled calls SetNTP(bool)', global.__tsNtpSet === false, JSON.stringify(global.__tsNtpSet));
+        await m.timesyncSetServer('1.1.1.1');
+        ok('timesyncSetServer writes the conf NTP= line', fs.readFileSync(TS_CONF, 'utf8') === '[Time]\nNTP=1.1.1.1\n');
+        let badTs = null;
+        try { await m.timesyncSetEnabled('yes'); } catch (e) { badTs = e; }
+        ok('timesyncSetEnabled rejects a non-boolean', !!badTs && /boolean/.test(badTs.message));
+        m.__setTimesyncTransport(null);
+        delete process.env.UCM_TIMESYNC_CONF;
+        delete global.__tsNtpSet;
+        try { fs.rmSync(path.dirname(TS_CONF), { recursive: true, force: true }); } catch {}
+    }
 
     // 48c2: every shipped icon asset must be WELL-FORMED XML. Chromium (the
     // renderer + the harness) parses SVG-in-<img> leniently and will happily
