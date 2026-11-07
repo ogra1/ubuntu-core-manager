@@ -765,7 +765,9 @@ function genInlineEditGroup(field, current, display, onValid, onSave, placeholde
     const doSave = async () => {
         if (grp.classList.contains('is-disabled')) return;
         const raw = String(inp.value).trim();
-        if (raw === '') { setFieldState('ucmGenEditGroup', 'error', 'Enter a value'); return; }
+        // the timeserver may be left EMPTY (that clears it -> the distro default
+        // NTP) — like the proxies, only the hostname / ssh-port need a value.
+        if (raw === '' && field !== 'timeserver') { setFieldState('ucmGenEditGroup', 'error', 'Enter a value'); return; }
         if (onValid && !onValid(raw)) return; // the field shows its own error
         const curText = (current == null ? '' : String(current)).trim();
         if (raw === curText) { closeGenEdit(); return; } // unchanged -> no PUT
@@ -892,7 +894,11 @@ function genProxyRow() {
     return row;
 }
 
+let genRendering = false;
 function renderGeneral() {
+    if (genRendering) return; // re-entrant (blur fired mid-rebuild) — the outer render wins
+    genRendering = true;
+    try {
     const card = $('#genCard');
     if (!card || !genHasState()) return;
     const body = card.querySelector('.ucm-net-card__body');
@@ -940,7 +946,7 @@ function renderGeneral() {
     const timeExtra = el('div', { class: 'ucm-gen__time-extra' });
     timeExtra.append(
         genLabeledField('Timeserver', genEditableSlot('timeserver', state.gen.timesyncServer, state.gen.timesyncServer, timeserverValid,
-            async (v) => { await core.timesync.setServer(v); state.gen.timesyncServer = v || null; return null; }, 'e.g. 0.ubuntu.pool.ntp.org')),
+            async (v) => { await core.timesync.setServer(v); state.gen.timesyncServer = v || null; return null; }, 'e.g. 0.ubuntu.pool.ntp.org', false, 'Timeserver', 'default')),
         el('span', { class: 'ucm-gen__note', text: 'Applies after a restart' }),
     );
     const timeRow = genSwitchRow('Sync time from internet', state.gen.timesyncNtp, async () => {
@@ -962,6 +968,7 @@ function renderGeneral() {
     // 5 — ip forwarding (scaffold: no core.* snapd option yet)
     rows.append(genSwitchRow('IP forwarding', false, null, true));
     body.append(rows);
+    } finally { genRendering = false; }
 }
 
 

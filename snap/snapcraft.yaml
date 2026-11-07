@@ -38,10 +38,24 @@ parts:
     source: .
     override-build: |
       set -ex
-      # Drop build-only cruft so it never reaches stage/prime.
+      # Drop build-only cruft so it never reaches stage/prime. (The source
+      # node_modules is the dev tree — puppeteer + a full electron install are
+      # NOT what the snap needs; the electron part provides the binary.)
       rm -rf node_modules test snap package-lock.json build/css/*.css.map
       mkdir -p "$CRAFT_PART_INSTALL/app" "$CRAFT_PART_INSTALL/bin"
       cp -r main.js preload.js package.json ui build "$CRAFT_PART_INSTALL/app/"
+      # Ship the runtime D-Bus dependency (main.js lazy-requires dbus-next for
+      # the timeserver-control interface). Install ONLY that package (production,
+      # no dev/electron) into a scratch project and copy the resulting
+      # node_modules tree into the app dir, so it resolves under $SNAP/app.
+      SCRATCH=$(mktemp -d)
+      cd "$SCRATCH"
+      npm init -y >/dev/null
+      npm install --omit=dev --no-audit --no-fund "dbus-next@^0.10.2"
+      mkdir -p "$CRAFT_PART_INSTALL/app/node_modules"
+      cp -a node_modules/. "$CRAFT_PART_INSTALL/app/node_modules/"
+      rm -rf "$SCRATCH"
+      cd -
       cat > "$CRAFT_PART_INSTALL/bin/launcher" <<'LAUNCHER'
       #!/bin/sh
       # Launch the Electron main process from the read-only snap home.

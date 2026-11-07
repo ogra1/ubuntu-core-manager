@@ -565,7 +565,7 @@ function mockFactoryJs() {
                 return {
                     async status() { __ts.puts += 1; return { ntp: __ts.ntp, server: __ts.server }; },
                     async setEnabled(b) { __ts.puts += 1; __ts.ntp = !!b; return {}; },
-                    async setServer(s) { __ts.puts += 1; __ts.server = (s == null ? null : String(s)); return {}; },
+                    async setServer(s) { __ts.puts += 1; __ts.server = (s == null || String(s).trim() === '') ? null : String(s); return {}; },
                     __ts: () => __ts,
                 };
             })(),
@@ -1097,8 +1097,8 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: the "Sync time from internet" row must come above the proxy row (round 49e)');
     if (!g0.timeRowPresent) console.log('PAGE ERROR: the "Sync time from internet" row (timesync + timeserver) is missing (round 49c)');
     if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should read the live NTP state (on) (round 49f)');
-    if (g0.timeserver !== 'Click to add')
-      console.log('PAGE ERROR: the unset timeserver should read "Click to add" (got ' + g0.timeserver + ') (round 49f)');
+    if (g0.timeserver !== 'default')
+      console.log('PAGE ERROR: the unset timeserver should read "default" (the distro NTP, like the ssh port) (got ' + g0.timeserver + ') (round 49g)');
     if (g0.timeNote !== 'Applies after a restart')
       console.log('PAGE ERROR: the timeserver row should carry the "Applies after a restart" note (got ' + g0.timeNote + ') (round 49f)');
     if (g0.ipfwd !== false) console.log('PAGE ERROR: the IP forwarding scaffold switch should default OFF (round 49b)');
@@ -1279,6 +1279,18 @@ function mockFactoryJs() {
     });
     if (g8.val !== '0.ubuntu.pool.ntp.org') console.log('PAGE ERROR: editing the timeserver did not update the row (got ' + g8.val + ') (round 49f)');
     if (g8.stored !== '0.ubuntu.pool.ntp.org') console.log('PAGE ERROR: the timeserver edit did not call core.timesync.setServer (got ' + g8.stored + ') (round 49f)');
+    // 3k: clear the timeserver (empty save) -> it unsets back to "default".
+    await clickGenVal('Timeserver');
+    await page.keyboard.press('Backspace'); // the value is preselected -> delete it
+    await page.keyboard.press('Enter'); // empty is valid for the timeserver (clears it)
+    await wait(300);
+    const g8b = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Sync time from internet');
+      const v = r ? r.querySelector('.ucm-gen__field .ucm-gen__val') : null;
+      return { val: v ? v.textContent.trim() : null, stored: window.__mockCore.timesync.__ts().server };
+    });
+    if (g8b.val !== 'default') console.log('PAGE ERROR: clearing the timeserver should read "default" again (got ' + g8b.val + ') (round 49g)');
+    if (g8b.stored !== null) console.log('PAGE ERROR: clearing the timeserver should unset it (stored=' + g8b.stored + ') (round 49g)');
     // (leave the card in its default state for the shots below)
 
 

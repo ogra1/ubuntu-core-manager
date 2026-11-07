@@ -963,7 +963,6 @@ function formatTimesyncNtp(text, server) {
     // carries a commented "#NTP=" as its designated slot, so: rewrite an
     // uncommented NTP= if present, else the commented #NTP=, else append.
     // A single trailing newline (as in a real file) is preserved.
-    const val = 'NTP=' + (server ? String(server) : '');
     let raw = String(text == null ? '' : text);
     const hadTrailingNL = raw.endsWith('\n');
     let lines = raw.split(/\r?\n/);
@@ -974,7 +973,8 @@ function formatTimesyncNtp(text, server) {
         else if (commentIdx === -1 && /^#\s*NTP=/.test(l)) commentIdx = i;
     });
     const at = activeIdx !== -1 ? activeIdx : commentIdx;
-    if (at !== -1) lines[at] = val; else lines.push(val);
+    const line = server ? ('NTP=' + String(server)) : '#NTP='; // clear -> commented (distro default)
+    if (at !== -1) lines[at] = line; else lines.push(line);
     let out = lines.join('\n');
     if (hadTrailingNL) out += '\n';
     return out;

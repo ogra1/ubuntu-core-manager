@@ -702,7 +702,8 @@ function ok(name, cond, extra = '') {
         ok('formatTimesyncNtp rewrites an existing NTP= line', format('[Time]\nNTP=a.b\n#keep\n', 'x.y.z') === '[Time]\nNTP=x.y.z\n#keep\n');
         ok('formatTimesyncNtp replaces a commented-out NTP=', format('[Time]\n#NTP=old\n', 'new.host') === '[Time]\nNTP=new.host\n');
         ok('formatTimesyncNtp appends when no NTP= line', format('[Time]\n', 'h') === '[Time]\nNTP=h\n');
-        ok('formatTimesyncNtp empty server clears the line', format('[Time]\nNTP=old\n', '') === '[Time]\nNTP=\n');
+        ok('formatTimesyncNtp clearing re-comments the slot (timesyncd default)', format('[Time]\nNTP=old\n', '') === '[Time]\n#NTP=\n');
+        ok('formatTimesyncNtp set then clear round-trips to commented', format(format('[Time]\n#NTP=\n', 'a.b'), '') === '[Time]\n#NTP=\n');
 
         // timesyncStatus via an INJECTED fake D-Bus transport (no live bus needed)
         m.__setTimesyncTransport(async (spec) => {
