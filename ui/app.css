@@ -490,6 +490,14 @@ html, body {
    the editable value to its right, on the switch line */
 .ucm-gen__field { display: inline-flex; align-items: center; gap: .7rem; }
 .ucm-gen__fieldlabel { color: #757575; font-size: .9rem; }
+/* the proxy row: a 50/50 split — "HTTP" + "HTTPS" side by side, each a
+   [sub-label over value] unit (round 49d). The row keeps the stable height;
+   the two halves share it equally. */
+.ucm-gen__row--dual .ucm-gen__content { flex-direction: row; }
+.ucm-gen__dual { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; align-items: start; }
+.ucm-gen__dualfield { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.ucm-gen__dualfield .ucm-gen__fieldlabel { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+@media (max-width: 900px) { .ucm-gen__dual { grid-template-columns: 1fr; gap: 1rem; } }
 /* the in-place editor (48g idiom, single-line): the input + the "Enter saves"
    hint; the error reuses the group's p-form-validation__message (editmsg). */
 .ucm-gen__edit { display: flex; flex-direction: column; gap: .3rem; flex: 1 1 0; min-width: 0; max-width: 28rem; margin: 0; }

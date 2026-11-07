@@ -723,7 +723,19 @@ async function loadGeneral() {
         if (proxy.http != null) p.http = String(proxy.http);
         if (proxy.https != null) p.https = String(proxy.https);
     } catch { /* fall back to the parsed defaults on a malformed doc */ }
-    state.gen = { hostname: p.hostname, ssh: p.ssh, listen: p.listen, http: p.http, https: p.https };
+    // Fallback (round 49d): when snapd has NO hostname setting yet, show the OS
+    // hostname the dashboard already uses instead of a bare "Click to add".
+    // state.host.hostname is the dashboard's cached copy (loadDashboard runs
+    // before the network view is reachable); read it directly if the cache is
+    // not populated yet (a cold open / the harness).
+    let osHost = (state.host && state.host.hostname) ? state.host.hostname : null;
+    if (!p.hostname && !osHost) {
+        try {
+            const info = await core.system.info().catch(() => null);
+            if (info && info.host && info.host.hostname) osHost = info.host.hostname;
+        } catch { osHost = null; }
+    }
+    state.gen = { hostname: p.hostname, ssh: p.ssh, listen: p.listen, http: p.http, https: p.https, osHost };
     const card = $('#genCard');
     if (card) renderGeneral();
 }
@@ -733,7 +745,7 @@ async function loadGeneral() {
    cancels (stopPropagation), a blur to the OUTSIDE abandons. Saving goes
    through the same core.snaps.confSet the config popup uses — an UNCHANGED
    value sends nothing. */
-function genInlineEditGroup(field, current, onValid, onSave, placeholder) {
+function genInlineEditGroup(field, current, display, onValid, onSave, placeholder) {
     const grp = el('div', { class: 'p-form__group ucm-gen__edit', id: 'ucmGenEditGroup' });
     const inp = el('input', { class: 'p-form-validation__input ucm-mono ucm-gen__editinp', type: 'text', spellcheck: 'false' });
     // round 48f: the config-popup in-place editor is SINGLE-LINE here, so there
@@ -742,7 +754,7 @@ function genInlineEditGroup(field, current, onValid, onSave, placeholder) {
     const msg = el('p', { class: 'p-form-validation__message ucm-gen__editmsg' });
     grp.append(inp, hint, msg);
     inp.placeholder = placeholder || '';
-    inp.value = current == null ? '' : String(current);
+    inp.value = display == null ? '' : String(display);
     const doSave = async () => {
         if (grp.classList.contains('is-disabled')) return;
         const raw = String(inp.value).trim();
@@ -786,16 +798,16 @@ function genInlineEditGroup(field, current, onValid, onSave, placeholder) {
 let genEditGrp = null;
 function closeGenEdit() { if (genEditGrp) { genEditGrp = null; renderGeneral(); } }
 
-function genValText(v, emptyText) { return (v == null || v === '') ? (emptyText || 'Not set') : String(v); }
+function genValText(v, emptyText) { return (v == null || v === '') ? (emptyText || 'Click to add') : String(v); }
 
 /* an editable value slot: shows the value (the dotted-underline click
    affordance) or, while editing, the in-place editor. Used standalone (a
    hostname/proxy row) and inline next to a switch (the ssh port, timeserver). */
-function genEditableSlot(field, current, onValid, onSave, placeholder, disabled, editLabel, emptyText) {
+function genEditableSlot(field, current, display, onValid, onSave, placeholder, disabled, editLabel, emptyText) {
     const slot = el('span', { class: 'ucm-gen__slot' });
     const val = el('span', {
         class: 'ucm-mono ucm-gen__val' + (disabled ? ' ucm-gen__val--muted' : ' ucm-conf__val ucm-conf__editable'),
-        text: genValText(current, disabled ? 'Not available yet' : emptyText),
+        text: genValText(display, disabled ? 'Not available yet' : emptyText),
     });
     if (disabled) {
         val.title = 'No snapd system option yet';
@@ -803,7 +815,7 @@ function genEditableSlot(field, current, onValid, onSave, placeholder, disabled,
         val.title = 'Edit ' + (editLabel || field);
         val.addEventListener('click', () => {
             if (slot.querySelector('.ucm-gen__edit')) return;
-            const grp = genInlineEditGroup(field, current, onValid, onSave, placeholder);
+            const grp = genInlineEditGroup(field, current, display, onValid, onSave, placeholder);
             genEditGrp = grp;
             slot.replaceChildren(grp);
             const f = grp.querySelector('input');
@@ -823,12 +835,20 @@ function genLabeledField(labelText, slot) {
     return wrap;
 }
 
+/* a [label value] unit, but the label is a short sub-label (HTTP / HTTPS) so
+   two can sit on ONE row in a 50/50 split (round 49d). */
+function genDualField(labelText, slot) {
+    const wrap = el('div', { class: 'ucm-gen__dualfield' });
+    wrap.append(el('span', { class: 'ucm-gen__fieldlabel', text: labelText }), slot);
+    return wrap;
+}
+
 /* a [caption | value] row where the value is an editable slot. */
-function genRowEditable(caption, field, current, onValid, onSave, placeholder, disabled, emptyText) {
+function genRowEditable(caption, field, current, display, onValid, onSave, placeholder, disabled, emptyText) {
     const row = el('div', { class: 'ucm-gen__row ucm-gen__row--edit' });
     row.append(el('span', { class: 'ucm-gen__label', text: caption }));
     const content = el('div', { class: 'ucm-gen__content' });
-    content.append(genEditableSlot(field, current, onValid, onSave, placeholder, disabled, caption, emptyText));
+    content.append(genEditableSlot(field, current, display, onValid, onSave, placeholder, disabled, caption, emptyText));
     row.append(content);
     return row;
 }
@@ -852,6 +872,21 @@ function genSwitchRow(caption, on, onToggle, disabled, extra) {
     return row;
 }
 
+function genRowDualProxy() {
+    const proxyValid = (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; };
+    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--dual' });
+    row.append(el('span', { class: 'ucm-gen__label', text: 'Proxy' }));
+    const dual = el('div', { class: 'ucm-gen__dual' });
+    dual.append(
+        genDualField('HTTP', genEditableSlot('http', state.gen.http, state.gen.http, proxyValid,
+            (v) => core.snaps.confSet('core', { 'proxy.http': v }), 'e.g. http://proxy.example:3128')),
+        genDualField('HTTPS', genEditableSlot('https', state.gen.https, state.gen.https, proxyValid,
+            (v) => core.snaps.confSet('core', { 'proxy.https': v }), 'e.g. http://proxy.example:3128')),
+    );
+    row.append(dual);
+    return row;
+}
+
 function renderGeneral() {
     const card = $('#genCard');
     if (!card || !genHasState()) return;
@@ -859,8 +894,11 @@ function renderGeneral() {
     if (!body) return;
     body.replaceChildren(el('p', { class: 'p-form-help-text ucm-gen__help', text: 'Network related system settings' }));
     const rows = el('div', { class: 'ucm-gen__rows' });
-    // 1 — hostname (wired: core.system.hostname)
-    rows.append(genRowEditable('Hostname', 'hostname', state.gen.hostname,
+    // 1 — hostname (wired: core.system.hostname). When snapd has no hostname
+    //    setting yet, fall back to the OS hostname the dashboard already shows
+    //    (state.host.hostname from core.system.info()) instead of a bare
+    //    "Click to add" — it is the value an edit would naturally start from.
+    rows.append(genRowEditable('Hostname', 'hostname', state.gen.hostname, state.gen.hostname || state.gen.osHost || null,
         (v) => { if (!RE_GEN_HOSTNAME.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'Lowercase letters, digits and hyphens; must start and end with a letter or digit.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
         async (v) => core.snaps.confSet('core', { 'system.hostname': v }), 'e.g. core-24'));
     // 2 — ssh (wired: core.service.ssh.disable + core.service.ssh.listen-address).
@@ -881,26 +919,20 @@ function renderGeneral() {
     sshRow.dataset.genRow = 'ssh';
     if (state.gen.ssh) {
         const port = genParseListen(state.gen.listen);
-        const portSlot = genEditableSlot('ssh-port', port,
+        const portSlot = genEditableSlot('ssh-port', port, port,
             (raw) => { const n = genPortNum(raw); if (isNaN(n) || n < 1 || n > 65535) { setFieldState('ucmGenEditGroup', 'error', 'A port from 1 to 65535.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
             async (raw) => { const change = await core.snaps.confSet('core', { 'service.ssh.listen-address': raw }); state.gen.listen = raw; return change; },
             'e.g. 2222', false, 'SSH port', 'default');
         sshRow.querySelector('.ucm-gen__switchline').append(genLabeledField('Port', portSlot));
     }
     rows.append(sshRow);
-    // 3 — proxies (wired: core.proxy.http / core.proxy.https)
-    rows.append(
-        genRowEditable('HTTP proxy', 'http', state.gen.http,
-            (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
-            async (v) => core.snaps.confSet('core', { 'proxy.http': v }), 'e.g. http://proxy.example:3128'),
-        genRowEditable('HTTPS proxy', 'https', state.gen.https,
-            (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; },
-            async (v) => core.snaps.confSet('core', { 'proxy.https': v }), 'e.g. http://proxy.example:3128'),
-    );
+    // 3 — proxies (wired: core.proxy.http / core.proxy.https) — ONE row, a
+    //    50/50 split: "Proxy" caption, HTTP + HTTPS fields side by side.
+    rows.append(genRowDualProxy());
     // 4 — time (scaffold: no core.* snapd option for timesync/timeserver yet) —
     //    laid out like the ssh row: [Sync time from internet] (switch)  Timeserver [value].
     rows.append(genSwitchRow('Sync time from internet', true, null, true,
-        genLabeledField('Timeserver', genEditableSlot('timeserver', null, null, null, null, true, 'Timeserver'))));
+        genLabeledField('Timeserver', genEditableSlot('timeserver', null, null, null, null, null, true, 'Timeserver'))));
     // 5 — ip forwarding (scaffold: no core.* snapd option yet)
     rows.append(genSwitchRow('IP forwarding', false, null, true));
     body.append(rows);

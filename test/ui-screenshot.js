@@ -996,13 +996,21 @@ function mockFactoryJs() {
     // existing core.snaps.confGet/confSet bridge (no main.js/preload change).
     await page.click('.ucm-side a[data-view="network"]');
     await wait(700);
-    const clickGenVal = async (caption) => {
-      await page.evaluate((cap) => {
-        const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
-        const row = rows.find((r) => r.querySelector('.ucm-gen__label') && r.querySelector('.ucm-gen__label').textContent.trim() === cap);
-        if (!row) throw new Error('no row for ' + cap);
-        row.querySelector('.ucm-gen__val').click();
-      }, caption);
+    // click the editable value for a given label. A label may be a ROW caption
+    // (Hostname / SSH / Proxy / Sync time / IP forwarding) or a SUB-label inside
+    // the proxy dual-field (HTTP / HTTPS) or an inline field (Port / Timeserver).
+    const clickGenVal = async (label) => {
+      await page.evaluate((lab) => {
+        const card = document.querySelector('#genCard');
+        const byCap = (sel, cls) => Array.from(card.querySelectorAll(sel)).find((n) => {
+          const l = n.querySelector(cls); return l && l.textContent.trim() === lab;
+        });
+        let host = byCap('.ucm-gen__row', '.ucm-gen__label');            // row caption
+        if (!host) host = byCap('.ucm-gen__dualfield', '.ucm-gen__fieldlabel'); // proxy sub-label
+        if (!host) host = byCap('.ucm-gen__field', '.ucm-gen__fieldlabel');    // port/timeserver
+        if (!host) throw new Error('no value for ' + lab);
+        host.querySelector('.ucm-gen__val').click();
+      }, label);
       await wait(120);
     };
     const g0 = await page.evaluate(() => {
@@ -1022,8 +1030,9 @@ function mockFactoryJs() {
         hostname: valIn(rowBy('Hostname'), '.ucm-gen__val'),
         ssh: swIn('SSH (remote access)'),
         port: valIn(rowBy('SSH (remote access)'), '.ucm-gen__field .ucm-gen__val'),
-        http: valIn(rowBy('HTTP proxy'), '.ucm-gen__val'),
-        https: valIn(rowBy('HTTPS proxy'), '.ucm-gen__val'),
+        proxyRow: rowBy('Proxy'),
+        http: valIn(rowBy('Proxy'), '.ucm-gen__dualfield:nth-child(1) .ucm-gen__val'),
+        https: valIn(rowBy('Proxy'), '.ucm-gen__dualfield:nth-child(2) .ucm-gen__val'),
         timeRowPresent: !!timeRow,
         timeSwitch: swIn('Sync time from internet'),
         timeserver: valIn(timeRow, '.ucm-gen__field .ucm-gen__val'),
@@ -1040,7 +1049,18 @@ function mockFactoryJs() {
     if (g0.ssh !== true) console.log('PAGE ERROR: ssh row should read enabled (round 49b)');
     if (g0.port !== '22') console.log('PAGE ERROR: ssh port not read from core.service.ssh.listen-address (got ' + g0.port + ')');
     if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy row not read from core.proxy.http (got ' + g0.http + ')');
-    if (g0.https !== 'Not set') console.log('PAGE ERROR: the unset https proxy should read "Not set" (got ' + g0.https + ') (round 49c)');
+    if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy not read from core.proxy.http (got ' + g0.http + ')');
+    if (g0.https !== 'Click to add') console.log('PAGE ERROR: the unset https proxy should read "Click to add" (got ' + g0.https + ') (round 49d)');
+    const g0dual = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => { const l = x.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === 'Proxy'; });
+      if (!r) return null;
+      const dual = r.querySelector('.ucm-gen__dual');
+      const fields = r.querySelectorAll('.ucm-gen__dualfield');
+      const cs = dual ? getComputedStyle(dual).gridTemplateColumns.split(' ').length : 0;
+      return { isDual: r.classList.contains('ucm-gen__row--dual'), fieldCount: fields.length, cols: cs };
+    });
+    if (!g0dual || !g0dual.isDual || g0dual.fieldCount !== 2 || g0dual.cols !== 2)
+      console.log('PAGE ERROR: the proxies should be on ONE 50/50 row (HTTP + HTTPS side by side) (got ' + JSON.stringify(g0dual) + ') (round 49d)');
     if (!g0.timeRowPresent) console.log('PAGE ERROR: the "Sync time from internet" row (timesync + timeserver) is missing (round 49c)');
     if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should default ON (round 49c)');
     if (g0.timeserver !== 'Not available yet')
@@ -1109,18 +1129,16 @@ function mockFactoryJs() {
     await wait(350);
     if (!(await portPresent())) console.log('PAGE ERROR: turning ssh back ON should restore the port field (round 49c)');
     // 3e: inline-edit the https proxy (was unset -> now set).
-    await clickGenVal('HTTPS proxy');
+    await clickGenVal('HTTPS');
     await page.type('#ucmGenEditGroup .ucm-gen__editinp', 'http://p.core-kvm-02:8080');
     await page.keyboard.press('Enter');
     await wait(350);
-    let g4 = await page.evaluate(() => ({
-      https: (function () {
-        const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
-        const r = rows.find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'HTTPS proxy');
-        return r ? r.querySelector('.ucm-gen__val').textContent.trim() : null;
-      })(),
-      stored: window.__mockCore.snaps.confStore('core').proxy.https,
-    }));
+    let g4 = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Proxy');
+      const fields = r ? r.querySelectorAll('.ucm-gen__dualfield') : [];
+      const v = fields.length ? fields[1].querySelector('.ucm-gen__val') : null;
+      return { https: v ? v.textContent.trim() : null, stored: window.__mockCore.snaps.confStore('core').proxy.https };
+    });
     if (g4.https !== 'http://p.core-kvm-02:8080') console.log('PAGE ERROR: editing the https proxy did not update the row (got ' + g4.https + ')');
     if (g4.stored !== 'http://p.core-kvm-02:8080') console.log('PAGE ERROR: the https proxy edit did not write core.proxy.https (got ' + g4.stored + ')');
     // 3f: the scaffold time + ip-forwarding controls are inert placeholders —
@@ -1159,7 +1177,7 @@ function mockFactoryJs() {
     //     empty save shows "Enter a value"; typing a value clears it. (The
     //     clicks/selects below are real CDP; the editor element is read
     //     null-safely because a regression could have closed it.)
-    await clickGenVal('HTTP proxy');
+    await clickGenVal('HTTP');
     await page.keyboard.press('Backspace'); // the value is preselected -> delete it (empty)
     await page.keyboard.press('Enter'); // empty save -> "Enter a value"
     await wait(200);
@@ -1178,6 +1196,24 @@ function mockFactoryJs() {
     if (ge.err)
       console.log('PAGE ERROR: "Enter a value" did not clear once a valid value was typed (round 49c)');
     await page.keyboard.press('Escape');
+    await wait(150);
+    // 3h: when snapd has NO hostname setting, the field falls back to the OS
+    //     hostname the dashboard already shows (state.host.hostname) — not "Click to add".
+    await page.evaluate(async () => {
+      window.__mockCore.snaps.confStore('core').system.hostname = null; // simulate "no setting yet"
+      await loadGeneral();
+    });
+    await wait(200);
+    const g6 = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Hostname');
+      return r ? r.querySelector('.ucm-gen__val').textContent.trim() : null;
+    });
+    if (g6 !== 'core-kvm-01')
+      console.log('PAGE ERROR: with no snapd hostname the field should fall back to the dashboard OS hostname (got ' + g6 + ') (round 49d)');
+    await page.evaluate(async () => {
+      window.__mockCore.snaps.confStore('core').system.hostname = 'core-kvm-01'; // restore
+      await loadGeneral();
+    });
     await wait(150);
     // (leave the card in its default state for the shots below)
 
