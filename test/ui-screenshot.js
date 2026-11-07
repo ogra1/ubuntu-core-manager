@@ -554,7 +554,22 @@ function mockFactoryJs() {
                     return { id, change: id };
                 },
             },
-            network: { async apply() { return {}; } },
+            network: {
+                async apply() { return {}; },
+                // round 51: IP forwarding — the real app writes the /proc
+                // sysctl nodes (network-control interface) + a pref in
+                // $SNAP_COMMON. The mock models the nodes + the pref behind
+                // one object so the renderer's core.network.forwarding.* is
+                // exercised honestly. Defaults OFF (the kernel default).
+                forwarding: (() => {
+                    const __fw = { v4: false, v6: false, pref: false, puts: 0 };
+                    return {
+                        async status() { return { v4: __fw.v4, v6: __fw.v6, on: __fw.v4 && __fw.v6, pref: __fw.pref }; },
+                        async set(b) { __fw.puts += 1; const on = !!b; __fw.v4 = on; __fw.v6 = on; __fw.pref = on; return {}; },
+                        __fw: () => __fw,
+                    };
+                })(),
+            },
             // round 49f: timesync / NTP — the real app talks to the
             // timeserver-control interface (timedate1 D-Bus for the on/off,
             // /etc/systemd/timesyncd.conf for the server). The mock models both
@@ -1101,7 +1116,7 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: the unset timeserver should read "default" (the distro NTP, like the ssh port) (got ' + g0.timeserver + ') (round 49g)');
     if (g0.timeNote !== 'Applies only after reboot')
       console.log('PAGE ERROR: the timeserver row should carry the "Applies only after reboot" note (got ' + g0.timeNote + ') (round 50)');
-    if (g0.ipfwd !== false) console.log('PAGE ERROR: the IP forwarding scaffold switch should default OFF (round 49b)');
+    if (g0.ipfwd !== false) console.log('PAGE ERROR: IP forwarding should read the live kernel state (off by default) (got ' + g0.ipfwd + ') (round 51)');
     if (!g0.oldFormGone) console.log('PAGE ERROR: the old skeleton netplan form should be gone (round 49b)');
     await page.screenshot({ path: path.join(SHOTS, '9b-network-general.png') });
     // 3b: inline-edit the hostname (the snap-config-popup in-place idiom).
@@ -1191,8 +1206,9 @@ function mockFactoryJs() {
     });
     if (g4.https !== 'http://p.core-kvm-02:8080') console.log('PAGE ERROR: editing the https proxy did not update the row (got ' + g4.https + ')');
     if (g4.stored !== 'http://p.core-kvm-02:8080') console.log('PAGE ERROR: the https proxy edit did not write core.proxy.https (got ' + g4.stored + ')');
-    // 3f: the scaffold time + ip-forwarding controls are inert placeholders —
-    // disabled, muted, non-editable, and send no core conf PUT.
+    // 3f: the time + ip-forwarding controls are LIVE-wired (rounds 49f/51) —
+    // the switches must be enabled, the timeserver editable, and NO core
+    // conf PUT may be sent (they use their own bridges, not the core conf).
     const g5 = await page.evaluate(() => {
       const rowBy = (cap) => {
         const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
@@ -1217,8 +1233,10 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: the "Sync time from internet" switch must be LIVE (enabled), not a disabled scaffold (round 49f)');
     if (!g5.timeserverEditable || g5.timeserverMuted)
       console.log('PAGE ERROR: the timeserver must be an editable (wired) value, not a muted scaffold (round 49f)');
-    if (g5.ipfwdDisabled !== true || g5.ipfwdOff !== false)
-      console.log('PAGE ERROR: IP forwarding is still the scaffold (disabled, off) (round 49f)');
+    if (g5.ipfwdDisabled !== false)
+      console.log('PAGE ERROR: the IP forwarding switch must be LIVE (wired, round 51), not a disabled scaffold');
+    if (g5.ipfwdOff !== false)
+      console.log('PAGE ERROR: IP forwarding should default OFF (the kernel default) (round 51)');
     const putsAfter = await page.evaluate(() => window.__mockCore.snaps.confPuts());
     if (putsAfter !== g5.puts) console.log('PAGE ERROR: the scaffold rows must not be able to send a core conf PUT (round 49c)');
     // 3g: an inline-edit error is never permanently stuck — it appears on the
@@ -1305,6 +1323,26 @@ function mockFactoryJs() {
     });
     if (g8b.val !== 'default') console.log('PAGE ERROR: clearing the timeserver should read "default" again (got ' + g8b.val + ') (round 49g)');
     if (g8b.stored !== null) console.log('PAGE ERROR: clearing the timeserver should unset it (stored=' + g8b.stored + ') (round 49g)');
+    // 3l: the LIVE ip-forwarding toggle (core.network.forwarding.set) — it
+    //     writes the kernel nodes immediately AND persists the pref (round 51).
+    const fw0 = await page.evaluate(() => window.__mockCore.network.forwarding.__fw());
+    const ipfwdOn = async () => page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => { const l = x.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === 'IP forwarding'; });
+      return r ? r.querySelector('.p-switch__input').checked : null;
+    });
+    await page.click('#genCard [data-gen-row="ipfwd"] .p-switch__input');
+    await wait(300);
+    const g9a = await page.evaluate(() => ({ mock: window.__mockCore.network.forwarding.__fw() }));
+    if (await ipfwdOn() !== true) console.log('PAGE ERROR: the IP forwarding toggle did not turn the row ON (round 51)');
+    if (!(g9a.mock.v4 && g9a.mock.v6 && g9a.mock.pref === true))
+      console.log('PAGE ERROR: the IP forwarding toggle did not write the live nodes + the preference (got ' + JSON.stringify(g9a.mock) + ') (round 51)');
+    if (g9a.mock.puts !== fw0.puts + 1) console.log('PAGE ERROR: the IP forwarding toggle should send exactly one set call (got ' + (g9a.mock.puts - fw0.puts) + ') (round 51)');
+    // back OFF — the card is left in its default state for the shots below
+    await page.click('#genCard [data-gen-row="ipfwd"] .p-switch__input');
+    await wait(300);
+    const g9b = await page.evaluate(() => ({ mock: window.__mockCore.network.forwarding.__fw() }));
+    if (await ipfwdOn() !== false || g9b.mock.v4 !== false || g9b.mock.v6 !== false || g9b.mock.pref !== false)
+      console.log('PAGE ERROR: turning IP forwarding back OFF did not clear the nodes + the pref (got ' + JSON.stringify(g9b.mock) + ') (round 51)');
     // (leave the card in its default state for the shots below)
 
 

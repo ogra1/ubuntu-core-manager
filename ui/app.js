@@ -680,8 +680,10 @@ async function loadNetwork() {
      core.proxy.http / core.proxy.https  string (URL; snapd applies it to the
                                             store + snap operations)
    There is NO core.* option for timesync, the timeserver, or IP forwarding —
-   those rows are UI scaffold only (the user deferred their backend; the
-   daemon does not expose them through the conf channel), clearly noted.
+   none of them reaches the daemon via the conf channel. Timesync/timeserver
+   are wired through the timeserver-control interface (round 49f); IP
+   forwarding through the network-control interface (round 51: the kernel's
+   /proc sysctl nodes, live + a persisted pref re-applied at startup).
 
    Editing uses the SNAP-CONFIG POPUP's in-place idiom (round 48g): the value
    text is the affordance (dotted underline on hover); clicking it swaps in a
@@ -741,8 +743,15 @@ async function loadGeneral() {
     // in the dev container) the read fails -> default on, no server.
     let ts = { ntp: true, server: null };
     try { ts = await core.timesync.status().catch(() => ts); } catch { ts = { ntp: true, server: null }; }
+    // IP forwarding (round 51, network-control interface): the LIVE kernel
+    // state is the truth the switch shows (like the timesync toggle reads
+    // live SetNTP state) — if the read fails (plug not connected / dev) it
+    // renders OFF, and a set() failure toasts.
+    let fw = { on: null, pref: false };
+    try { fw = await core.network.forwarding.status().catch(() => fw); } catch { fw = { on: null, pref: false }; }
     state.gen = { hostname: p.hostname, ssh: p.ssh, listen: p.listen, http: p.http, https: p.https, osHost,
-        timesyncNtp: (ts && ts.ntp === null) ? true : !!ts.ntp, timesyncServer: (ts && ts.server) || null };
+        timesyncNtp: (ts && ts.ntp === null) ? true : !!ts.ntp, timesyncServer: (ts && ts.server) || null,
+        ipfwd: fw.on === true };
     const card = $('#genCard');
     if (card) renderGeneral();
 }
@@ -965,8 +974,26 @@ function renderGeneral() {
     // 4 — proxies (wired: core.proxy.http / core.proxy.https) — ONE row: "Proxy"
     //    caption, HTTP + HTTPS as two inline fields side by side.
     rows.append(genProxyRow());
-    // 5 — ip forwarding (scaffold: no core.* snapd option yet)
-    rows.append(genSwitchRow('IP forwarding', false, null, true));
+    // 5 — ip forwarding (Wired, round 51: the network-control interface —
+    //    live /proc sysctl writes + a persisted pref the app re-applies at
+    //    startup; there is NO core.* snapd option for it).
+    const fwRow = genSwitchRow('IP forwarding', state.gen.ipfwd === true, async () => {
+        const sw = $('#genCard [data-gen-row="ipfwd"] .p-switch__input');
+        if (sw) sw.disabled = true;
+        const on = !(state.gen.ipfwd === true);
+        try {
+            await core.network.forwarding.set(on);
+            state.gen.ipfwd = on;
+            const st = await core.network.forwarding.status().catch(() => null);
+            if (st && st.on !== null) state.gen.ipfwd = st.on === true; // the kernel is the truth
+            toast('positive', on ? 'IP forwarding enabled' : 'IP forwarding disabled',
+                on ? 'IPv4 + IPv6 packets are now forwarded between interfaces. The setting survives reboots.'
+                   : 'Packet forwarding is off. The setting survives reboots.');
+        } catch (e) { state.gen.ipfwd = on ? false : true; toastErr(e); }
+        finally { renderGeneral(); }
+    }, false);
+    fwRow.dataset.genRow = 'ipfwd';
+    rows.append(fwRow);
     body.append(rows);
     } finally { genRendering = false; }
 }

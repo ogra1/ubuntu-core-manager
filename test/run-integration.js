@@ -483,6 +483,8 @@ function ok(name, cond, extra = '') {
                 && !!handlers['sys:cpu']);
             ok('timesync handlers registered (status open, writes auth-gated)',
                 !!handlers['timesync:status'] && !!handlers['timesync:set-enabled'] && !!handlers['timesync:set-server']);
+            ok('ip-forwarding handlers registered (status open, writes auth-gated)',
+                !!handlers['net:forwarding-status'] && !!handlers['net:forwarding-set']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -734,6 +736,69 @@ function ok(name, cond, extra = '') {
         delete global.__tsNtpSet;
         delete global.__tsNtpSig;
         try { fs.rmSync(path.dirname(TS_CONF), { recursive: true, force: true }); } catch {}
+    }
+
+    console.log('\n[14] ip forwarding (network-control interface, /proc sysctl nodes)');
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-ipfwd-'));
+        const node = (n) => path.join(dir, n);
+        ['ip_forward', 'v6all', 'v6default'].forEach((n) => fs.writeFileSync(node(n), '0\n'));
+        const PREF = path.join(dir, 'ipforward.pref');
+        process.env.UCM_IPFWD_PREF = PREF;
+        m.__setIpfwdNodes({ v4: node('ip_forward'), v6: node('v6all'), v6default: node('v6default') });
+
+        let st = await m.ipfwdStatus();
+        ok('ipfwdStatus reads the live nodes (off by default)',
+            st && st.v4 === false && st.v6 === false && st.on === false && st.pref === false, JSON.stringify(st));
+        await m.ipfwdSet(true);
+        ok('ipfwdSet(true) writes ALL THREE forwarding nodes (v4 + v6 all/default)',
+            fs.readFileSync(node('ip_forward'), 'utf8').trim() === '1'
+            && fs.readFileSync(node('v6all'), 'utf8').trim() === '1'
+            && fs.readFileSync(node('v6default'), 'utf8').trim() === '1');
+        st = await m.ipfwdStatus();
+        ok('ipfwdSet(true) persists the preference (on)', st.pref === true, JSON.stringify(st));
+        st = await m.ipfwdStatus();
+        ok('ipfwdStatus reflects the live state after set', st.on === true && st.pref === true, JSON.stringify(st));
+        await m.ipfwdSet(false);
+        ok('ipfwdSet(false) clears the nodes (v4 + v6 all/default)',
+            fs.readFileSync(node('ip_forward'), 'utf8').trim() === '0'
+            && fs.readFileSync(node('v6all'), 'utf8').trim() === '0'
+            && fs.readFileSync(node('v6default'), 'utf8').trim() === '0');
+        st = await m.ipfwdStatus();
+        ok('ipfwdSet(false) clears the preference (off)', st.pref === false, JSON.stringify(st));
+        // boot re-apply: a stored "on" wins over the kernel-default (off) state
+        fs.writeFileSync(PREF, 'on');
+        ['ip_forward', 'v6all', 'v6default'].forEach((n) => fs.writeFileSync(node(n), '0\n'));
+        await m.ipfwdApplyPref();
+        ok('ipfwdApplyPref re-applies a stored "on" at startup',
+            fs.readFileSync(node('ip_forward'), 'utf8').trim() === '1'
+            && fs.readFileSync(node('v6default'), 'utf8').trim() === '1');
+        // ...and an "off" pref never forces the nodes off (non-destructive)
+        fs.writeFileSync(PREF, 'off');
+        ['ip_forward', 'v6all', 'v6default'].forEach((n) => fs.writeFileSync(node(n), '1\n'));
+        await m.ipfwdApplyPref();
+        ok('ipfwdApplyPref never forces nodes OFF (a stale pref is not destructive)',
+            fs.readFileSync(node('ip_forward'), 'utf8').trim() === '1'
+            && fs.readFileSync(node('v6all'), 'utf8').trim() === '1');
+        // a missing/unreadable node degrades to null, not a throw
+        fs.rmSync(node('v6all'));
+        st = await m.ipfwdStatus();
+        ok('ipfwdStatus degrades to null when a node is unreadable', st.v6 === null && st.on === null, JSON.stringify(st));
+        let badFw = null;
+        try { await m.ipfwdSet('yes'); } catch (e) { badFw = e; }
+        ok('ipfwdSet rejects a non-boolean', !!badFw && /boolean/.test(badFw.message));
+        // the boot re-apply must be WIRED into app startup as an UNCOMMENTED
+        // call (a commented-out or removed call must FAIL this, not just a
+        // substring match)
+        const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+        const bootCall = mainSrc.split(/\r?\n/).some((l) =>
+            /ipfwdApplyPref\(\)/.test(l) && !/^\s*\/\//.test(l) && !/function ipfwdApplyPref/.test(l));
+        ok('app startup re-applies the ip-forwarding pref (uncommented ipfwdApplyPref() call)',
+            bootCall, 'no uncommented ipfwdApplyPref() call found in main.js');
+
+        m.__setIpfwdNodes(null);
+        delete process.env.UCM_IPFWD_PREF;
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
     }
 
     // 48c2: every shipped icon asset must be WELL-FORMED XML. Chromium (the

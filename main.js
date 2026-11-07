@@ -1005,6 +1005,74 @@ async function timesyncSetServer(server) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 8b. IP forwarding (the network-control snap interface)
+ *
+ * The Network "IP forwarding" row flips the kernel's IPv4 + IPv6 forwarding
+ * switches. There is NO core.* snapd option for it (checked the full list,
+ * round 49b) and no D-Bus surface — the sanctioned mechanism is the sysctl
+ * nodes, which the network-control interface grants to a strict snap:
+ *   @{PROC}/sys/net/ipv{4,6}/** rw   (source @8d4d073 interfaces/builtin/
+ *                                      network_control.go)
+ * The nodes are root-writable files, so a plain fs.write flips them — no
+ * shell-out, no /etc (the app's standing rule). The /proc state does NOT
+ * survive a reboot (kernel default, usually 0), so the user's choice is
+ * persisted in $SNAP_COMMON/ipforward.pref and RE-APPLIED on app startup
+ * (whenReady -> ipfwdApplyPref): the console is the kiosk's primary UI and
+ * is up from boot.
+ * ------------------------------------------------------------------ */
+const IPFWD_NODES = {
+    v4: '/proc/sys/net/ipv4/ip_forward',
+    v6: '/proc/sys/net/ipv6/conf/all/forwarding',
+    v6default: '/proc/sys/net/ipv6/conf/default/forwarding', // new interfaces inherit
+};
+function ipfwdPrefPath() {
+    return process.env.UCM_IPFWD_PREF || (stateDir() ? path.join(stateDir(), 'ipforward.pref') : null);
+}
+/* Injectable node paths — the integration test uses temp files (the dev
+   container cannot exercise the real /proc nodes under confinement). */
+let __ipfwdNodes = null;
+function __setIpfwdNodes(n) { __ipfwdNodes = n; }
+function ipfwdNodePaths() { return __ipfwdNodes || IPFWD_NODES; }
+function ipfwdReadNode(p) {
+    try { return fs.readFileSync(p, 'utf8').trim() === '1'; } catch { return null; }
+}
+function ipfwdPrefRead() {
+    const p = ipfwdPrefPath();
+    if (!p) return false;
+    try { return fs.readFileSync(p, 'utf8').trim() === 'on'; } catch { return false; }
+}
+function ipfwdPrefWrite(on) {
+    const p = ipfwdPrefPath();
+    if (!p) return; // dev mode (no $SNAP_COMMON / state dir) — nothing durable
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, on ? 'on' : 'off', { mode: 0o600 });
+}
+async function ipfwdStatus() {
+    const n = ipfwdNodePaths();
+    const v4 = ipfwdReadNode(n.v4);
+    const v6 = ipfwdReadNode(n.v6);
+    return { v4, v6, on: (v4 === null || v6 === null) ? null : (v4 && v6), pref: ipfwdPrefRead() };
+}
+async function ipfwdSet(on) {
+    if (typeof on !== 'boolean') throw new Error('ip forwarding must be a boolean');
+    const n = ipfwdNodePaths();
+    for (const p of Object.values(n)) {
+        try { fs.writeFileSync(p, on ? '1' : '0'); }
+        catch (e) { throw new Error('cannot write ' + p + ' (is the network-control interface connected?) — ' + e.message); }
+    }
+    ipfwdPrefWrite(on);
+}
+/* Re-apply the stored preference at boot. Only ever turns forwarding ON —
+   turning it OFF is an explicit user action, so a stale pref can never
+   surprise the user with a disabled path. Failures are non-fatal (the plug
+   may not be connected, or the nodes unreadable in dev). */
+async function ipfwdApplyPref() {
+    try {
+        if (ipfwdPrefRead()) await ipfwdSet(true);
+    } catch (e) { console.error('ip forwarding boot-apply failed:', e.message); }
+}
+
+/* ------------------------------------------------------------------ *
  * 9. Interfaces (plug/slot control)
  * ------------------------------------------------------------------ */
 
@@ -1279,6 +1347,7 @@ const api = {
     getSnapConfig, getNetplan, listInterfaces, confInferType,
     timesyncStatus, timesyncSetEnabled, timesyncSetServer,
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
+    ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
 
     installSnap, snapAction, snapComponent,
     setSnapConfig, applyNetplanConfig,
@@ -1552,6 +1621,10 @@ function initElectron() {
     ipcMain.handle('timesync:status', guard(() => timesyncStatus()));
     ipcMain.handle('timesync:set-enabled', guard((b) => { requireAuth(); return timesyncSetEnabled(b); }));
     ipcMain.handle('timesync:set-server', guard((s) => { requireAuth(); return timesyncSetServer(s); }));
+    // ip forwarding (network-control interface; reads open, writes are
+    // console-privileged like the other system changes)
+    ipcMain.handle('net:forwarding-status', guard(() => ipfwdStatus()));
+    ipcMain.handle('net:forwarding-set', guard((b) => { requireAuth(); return ipfwdSet(b); }));
     ipcMain.handle('ifaces:list', guard(() => listInterfaces()));
     ipcMain.handle('ifaces:connect', guard((plug, slot) => { requireAuth(); return connectInterface(plug, slot); }));
     ipcMain.handle('ifaces:disconnect', guard((plug, slot) => { requireAuth(); return disconnectInterface(plug, slot); }));
@@ -1559,6 +1632,7 @@ function initElectron() {
     // ---- app lifecycle ------------------------------------------------
     app.whenReady().then(() => {
         createKioskWindow();
+        ipfwdApplyPref(); // round 51: re-apply the stored ip-forwarding pref at startup
         app.on('activate', () => {
             if (BrowserWindow.getAllWindows().length === 0) createKioskWindow();
         });

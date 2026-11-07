@@ -127,6 +127,11 @@ const api = Object.freeze({
         apply: invoke('net:apply'),
         // netcfg = { interface, mode:'dhcp4'|'static', ipv4?, ipv6?,
         //            gateway4?, gateway6?, dns? }
+        // ---- ip forwarding (network-control interface, round 51) -------
+        forwarding: Object.freeze({
+            status: invoke('net:forwarding-status'), // => { v4, v6, on, pref } (null = unreadable)
+            set: invoke('net:forwarding-set'),       // (boolean) — LIVE + persisted
+        }),
     }),
 
     // ---- plug/slot interface control ------------------------------------
