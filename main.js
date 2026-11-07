@@ -942,10 +942,14 @@ async function timesyncNtpEnabled() {
     if ('NTP' in props) return unwrapVariant(props.NTP);
     return null;
 }
-/* Enable/disable NTP synchronously (SetNTP has no return / no async change). */
+/* Enable/disable NTP synchronously (SetNTP has no return / no async change).
+   Signature is (use_ntp: b, interactive: b) — "bb" (verified by live bus
+   introspection of org.freedesktop.timedate1). The 2nd arg is the polkit
+   "interactive" flag; a privileged snap calls it non-interactively (false),
+   and the timeserver-control interface grants SetNTP directly (no polkit). */
 async function timesyncSetNtp(enabled) {
     await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
-        interface: TIME_DATE_IFACE, member: 'SetNTP', signature: 'b', body: [ !!enabled ] });
+        interface: TIME_DATE_IFACE, member: 'SetNTP', signature: 'bb', body: [ !!enabled, false ] });
 }
 
 /* ---- the timesyncd.conf NTP= line (pure helpers, unit-testable) -----------

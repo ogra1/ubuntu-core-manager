@@ -708,7 +708,7 @@ function ok(name, cond, extra = '') {
         // timesyncStatus via an INJECTED fake D-Bus transport (no live bus needed)
         m.__setTimesyncTransport(async (spec) => {
             if (spec.member === 'GetAll') return [{ NTPEnabled: { signature: 'b', value: true } }]; // Variant, as dbus-next returns
-            if (spec.member === 'SetNTP') { global.__tsNtpSet = spec.body[0]; return []; }
+            if (spec.member === 'SetNTP') { global.__tsNtpSet = spec.body.slice(); global.__tsNtpSig = spec.signature; return []; }
             throw new Error('unexpected transport call: ' + spec.member);
         });
         const TS_CONF = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-ts-')) + '/timesyncd.conf';
@@ -718,7 +718,12 @@ function ok(name, cond, extra = '') {
         ok('timesyncStatus reads NTP from the (Variant) property', st && st.ntp === true, JSON.stringify(st));
         ok('timesyncStatus reads the configured server from the conf', st && st.server === '9.9.9.9', JSON.stringify(st));
         await m.timesyncSetEnabled(false);
-        ok('timesyncSetEnabled calls SetNTP(bool)', global.__tsNtpSet === false, JSON.stringify(global.__tsNtpSet));
+        ok('timesyncSetEnabled uses the "bb" SetNTP signature (use_ntp, interactive)',
+            global.__tsNtpSig === 'bb', JSON.stringify(global.__tsNtpSig));
+        ok('timesyncSetEnabled sends SetNTP(false, false)',
+            Array.isArray(global.__tsNtpSet) && global.__tsNtpSet.length === 2
+                && global.__tsNtpSet[0] === false && global.__tsNtpSet[1] === false,
+            JSON.stringify(global.__tsNtpSet));
         await m.timesyncSetServer('1.1.1.1');
         ok('timesyncSetServer writes the conf NTP= line', fs.readFileSync(TS_CONF, 'utf8') === '[Time]\nNTP=1.1.1.1\n');
         let badTs = null;
@@ -727,6 +732,7 @@ function ok(name, cond, extra = '') {
         m.__setTimesyncTransport(null);
         delete process.env.UCM_TIMESYNC_CONF;
         delete global.__tsNtpSet;
+        delete global.__tsNtpSig;
         try { fs.rmSync(path.dirname(TS_CONF), { recursive: true, force: true }); } catch {}
     }
 
