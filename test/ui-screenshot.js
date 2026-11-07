@@ -1031,8 +1031,9 @@ function mockFactoryJs() {
         ssh: swIn('SSH (remote access)'),
         port: valIn(rowBy('SSH (remote access)'), '.ucm-gen__field .ucm-gen__val'),
         proxyRow: rowBy('Proxy'),
-        http: valIn(rowBy('Proxy'), '.ucm-gen__dualfield:nth-child(1) .ucm-gen__val'),
-        https: valIn(rowBy('Proxy'), '.ucm-gen__dualfield:nth-child(2) .ucm-gen__val'),
+        http: valIn(rowBy('Proxy'), '.ucm-gen__field:nth-of-type(1) .ucm-gen__val'),
+        https: valIn(rowBy('Proxy'), '.ucm-gen__field:nth-of-type(2) .ucm-gen__val'),
+        timeRow: rowBy('Sync time from internet'),
         timeRowPresent: !!timeRow,
         timeSwitch: swIn('Sync time from internet'),
         timeserver: valIn(timeRow, '.ucm-gen__field .ucm-gen__val'),
@@ -1051,16 +1052,33 @@ function mockFactoryJs() {
     if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy row not read from core.proxy.http (got ' + g0.http + ')');
     if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy not read from core.proxy.http (got ' + g0.http + ')');
     if (g0.https !== 'Click to add') console.log('PAGE ERROR: the unset https proxy should read "Click to add" (got ' + g0.https + ') (round 49d)');
-    const g0dual = await page.evaluate(() => {
-      const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => { const l = x.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === 'Proxy'; });
-      if (!r) return null;
-      const dual = r.querySelector('.ucm-gen__dual');
-      const fields = r.querySelectorAll('.ucm-gen__dualfield');
-      const cs = dual ? getComputedStyle(dual).gridTemplateColumns.split(' ').length : 0;
-      return { isDual: r.classList.contains('ucm-gen__row--dual'), fieldCount: fields.length, cols: cs };
+    // round 49e: the two proxy fields are INLINE [label value] units on one
+    // line (like the port/timeserver), ~50% width each, and the "Sync time
+    // from internet" row sits ABOVE the proxy row.
+    const g0proxy = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('#genCard .ucm-gen__row'));
+      const idx = (cap) => rows.findIndex((x) => { const l = x.querySelector('.ucm-gen__label'); return l && l.textContent.trim() === cap; });
+      const p = rows[idx('Proxy')];
+      if (!p) return null;
+      const fields = Array.from(p.querySelectorAll('.ucm-gen__field'));
+      const tops = fields.map((f) => Math.round(f.getBoundingClientRect().top));
+      const w = fields.map((f) => Math.round(f.getBoundingClientRect().width));
+      return {
+        fieldCount: fields.length,
+        sameLine: tops.length === 2 && Math.abs(tops[0] - tops[1]) <= 2,
+        w0: w[0], w1: w[1],
+        halfish: w[0] > 0 && Math.abs(w[0] - w[1]) <= Math.max(w[0], w[1]) * 0.2,
+        timeAboveProxy: idx('Sync time from internet') >= 0 && idx('Sync time from internet') < idx('Proxy'),
+      };
     });
-    if (!g0dual || !g0dual.isDual || g0dual.fieldCount !== 2 || g0dual.cols !== 2)
-      console.log('PAGE ERROR: the proxies should be on ONE 50/50 row (HTTP + HTTPS side by side) (got ' + JSON.stringify(g0dual) + ') (round 49d)');
+    if (!g0proxy || g0proxy.fieldCount !== 2)
+      console.log('PAGE ERROR: the proxy row should carry the HTTP + HTTPS fields (got ' + JSON.stringify(g0proxy) + ') (round 49e)');
+    if (!g0proxy.sameLine)
+      console.log('PAGE ERROR: the HTTP + HTTPS proxy fields must be on ONE line (the port/timeserver idiom), not stacked (round 49e)');
+    if (!g0proxy.halfish)
+      console.log('PAGE ERROR: the proxy fields should split ~50/50 (widths ' + g0proxy.w0 + '/' + g0proxy.w1 + ') (round 49e)');
+    if (!g0proxy.timeAboveProxy)
+      console.log('PAGE ERROR: the "Sync time from internet" row must come above the proxy row (round 49e)');
     if (!g0.timeRowPresent) console.log('PAGE ERROR: the "Sync time from internet" row (timesync + timeserver) is missing (round 49c)');
     if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should default ON (round 49c)');
     if (g0.timeserver !== 'Not available yet')
@@ -1135,7 +1153,7 @@ function mockFactoryJs() {
     await wait(350);
     let g4 = await page.evaluate(() => {
       const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Proxy');
-      const fields = r ? r.querySelectorAll('.ucm-gen__dualfield') : [];
+      const fields = r ? r.querySelectorAll('.ucm-gen__field') : [];
       const v = fields.length ? fields[1].querySelector('.ucm-gen__val') : null;
       return { https: v ? v.textContent.trim() : null, stored: window.__mockCore.snaps.confStore('core').proxy.https };
     });

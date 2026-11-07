@@ -835,14 +835,6 @@ function genLabeledField(labelText, slot) {
     return wrap;
 }
 
-/* a [label value] unit, but the label is a short sub-label (HTTP / HTTPS) so
-   two can sit on ONE row in a 50/50 split (round 49d). */
-function genDualField(labelText, slot) {
-    const wrap = el('div', { class: 'ucm-gen__dualfield' });
-    wrap.append(el('span', { class: 'ucm-gen__fieldlabel', text: labelText }), slot);
-    return wrap;
-}
-
 /* a [caption | value] row where the value is an editable slot. */
 function genRowEditable(caption, field, current, display, onValid, onSave, placeholder, disabled, emptyText) {
     const row = el('div', { class: 'ucm-gen__row ucm-gen__row--edit' });
@@ -872,18 +864,22 @@ function genSwitchRow(caption, on, onToggle, disabled, extra) {
     return row;
 }
 
-function genRowDualProxy() {
+function genProxyRow() {
+    // round 49e: HTTP + HTTPS are INLINE [label value] units (the same unit the
+    // ssh port and the timeserver use) so the row is one line tall like the
+    // others — not a stacked 50/50 block. Each field is 50% of the content
+    // (.ucm-gen__field { flex: 1 1 0 }), so the split reads evenly.
     const proxyValid = (v) => { if (v === '') { setFieldState('ucmGenEditGroup', ''); return true; } if (!RE_GEN_PROXY.test(v)) { setFieldState('ucmGenEditGroup', 'error', 'A URL, e.g. http://proxy.example:3128.'); return false; } setFieldState('ucmGenEditGroup', ''); return true; };
-    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--dual' });
+    const row = el('div', { class: 'ucm-gen__row ucm-gen__row--proxies' });
     row.append(el('span', { class: 'ucm-gen__label', text: 'Proxy' }));
-    const dual = el('div', { class: 'ucm-gen__dual' });
-    dual.append(
-        genDualField('HTTP', genEditableSlot('http', state.gen.http, state.gen.http, proxyValid,
+    const content = el('div', { class: 'ucm-gen__content' });
+    content.append(
+        genLabeledField('HTTP', genEditableSlot('http', state.gen.http, state.gen.http, proxyValid,
             (v) => core.snaps.confSet('core', { 'proxy.http': v }), 'e.g. http://proxy.example:3128')),
-        genDualField('HTTPS', genEditableSlot('https', state.gen.https, state.gen.https, proxyValid,
+        genLabeledField('HTTPS', genEditableSlot('https', state.gen.https, state.gen.https, proxyValid,
             (v) => core.snaps.confSet('core', { 'proxy.https': v }), 'e.g. http://proxy.example:3128')),
     );
-    row.append(dual);
+    row.append(content);
     return row;
 }
 
@@ -926,13 +922,14 @@ function renderGeneral() {
         sshRow.querySelector('.ucm-gen__switchline').append(genLabeledField('Port', portSlot));
     }
     rows.append(sshRow);
-    // 3 — proxies (wired: core.proxy.http / core.proxy.https) — ONE row, a
-    //    50/50 split: "Proxy" caption, HTTP + HTTPS fields side by side.
-    rows.append(genRowDualProxy());
-    // 4 — time (scaffold: no core.* snapd option for timesync/timeserver yet) —
+    // 3 — time (scaffold: no core.* snapd option for timesync/timeserver yet) —
     //    laid out like the ssh row: [Sync time from internet] (switch)  Timeserver [value].
+    //    round 49e: the time row now sits ABOVE the proxy row (user's ordering).
     rows.append(genSwitchRow('Sync time from internet', true, null, true,
         genLabeledField('Timeserver', genEditableSlot('timeserver', null, null, null, null, null, true, 'Timeserver'))));
+    // 4 — proxies (wired: core.proxy.http / core.proxy.https) — ONE row: "Proxy"
+    //    caption, HTTP + HTTPS as two inline fields side by side.
+    rows.append(genProxyRow());
     // 5 — ip forwarding (scaffold: no core.* snapd option yet)
     rows.append(genSwitchRow('IP forwarding', false, null, true));
     body.append(rows);
