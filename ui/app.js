@@ -779,7 +779,7 @@ function genInlineEditGroup(field, current, display, onValid, onSave, placeholde
             else if (field === 'http') state.gen.http = raw;
             else if (field === 'https') state.gen.https = raw;
             const savedLabel = { hostname: 'Hostname updated', http: 'Proxy updated', https: 'Proxy updated',
-                'ssh-port': 'SSH port updated', timeserver: 'Timeserver updated (applies after a restart)' }[field] || 'Saved';
+                'ssh-port': 'SSH port updated', timeserver: 'Timeserver updated (applies only after reboot)' }[field] || 'Saved';
             toast('positive', 'Saved', savedLabel);
             renderGeneral();
         } catch (e) { toastErr(e); closeGenEdit(); }
@@ -809,7 +809,7 @@ function genInlineEditGroup(field, current, display, onValid, onSave, placeholde
 let genEditGrp = null;
 function closeGenEdit() { if (genEditGrp) { genEditGrp = null; renderGeneral(); } }
 
-function genValText(v, emptyText) { return (v == null || v === '') ? (emptyText || 'Click to add') : String(v); }
+function genValText(v, emptyText) { return (v == null || v === '') ? (emptyText || '.....') : String(v); }
 
 /* an editable value slot: shows the value (the dotted-underline click
    affordance) or, while editing, the in-place editor. Used standalone (a
@@ -903,7 +903,7 @@ function renderGeneral() {
     if (!card || !genHasState()) return;
     const body = card.querySelector('.ucm-net-card__body');
     if (!body) return;
-    body.replaceChildren(el('p', { class: 'p-form-help-text ucm-gen__help', text: 'Network related system settings' }));
+    body.replaceChildren(el('p', { class: 'p-form-help-text ucm-gen__help', text: 'System Settings' }));
     const rows = el('div', { class: 'ucm-gen__rows' });
     // 1 — hostname (wired: core.system.hostname). When snapd has no hostname
     //    setting yet, fall back to the OS hostname the dashboard already shows
@@ -947,7 +947,7 @@ function renderGeneral() {
     timeExtra.append(
         genLabeledField('Timeserver', genEditableSlot('timeserver', state.gen.timesyncServer, state.gen.timesyncServer, timeserverValid,
             async (v) => { await core.timesync.setServer(v); state.gen.timesyncServer = v || null; return null; }, 'e.g. 0.ubuntu.pool.ntp.org', false, 'Timeserver', 'default')),
-        el('span', { class: 'ucm-gen__note', text: 'Applies after a restart' }),
+        el('span', { class: 'ucm-gen__note', text: 'Applies only after reboot' }),
     );
     const timeRow = genSwitchRow('Sync time from internet', state.gen.timesyncNtp, async () => {
         const sw = $('#genCard [data-gen-row="time"] .p-switch__input');

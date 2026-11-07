@@ -1059,15 +1059,15 @@ function mockFactoryJs() {
     });
     if (!g0.hasCard) console.log('PAGE ERROR: network view has no General card (round 49b)');
     if (g0.title !== 'General') console.log('PAGE ERROR: General card header not "General" (' + g0.title + ')');
-    if (g0.help !== 'Network related system settings')
-      console.log('PAGE ERROR: the General card subtitle is not "Network related system settings" (got ' + g0.help + ') (round 49c)');
+    if (g0.help !== 'System Settings')
+      console.log('PAGE ERROR: the General card subtitle is not "System Settings" (got ' + g0.help + ') (round 50)');
     if (!g0.full) console.log('PAGE ERROR: the General card is not full-width (round 49b)');
     if (g0.hostname !== 'core-kvm-01') console.log('PAGE ERROR: hostname row not read from core conf (got ' + g0.hostname + ')');
     if (g0.ssh !== true) console.log('PAGE ERROR: ssh row should read enabled (round 49b)');
     if (g0.port !== '22') console.log('PAGE ERROR: ssh port not read from core.service.ssh.listen-address (got ' + g0.port + ')');
     if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy row not read from core.proxy.http (got ' + g0.http + ')');
     if (g0.http !== 'http://proxy.core-kvm-01:3128') console.log('PAGE ERROR: http proxy not read from core.proxy.http (got ' + g0.http + ')');
-    if (g0.https !== 'Click to add') console.log('PAGE ERROR: the unset https proxy should read "Click to add" (got ' + g0.https + ') (round 49d)');
+    if (g0.https !== '.....') console.log('PAGE ERROR: the unset https proxy should read the five-dot placeholder "....." (got ' + g0.https + ') (round 50)');
     // round 49e: the two proxy fields are INLINE [label value] units on one
     // line (like the port/timeserver), ~50% width each, and the "Sync time
     // from internet" row sits ABOVE the proxy row.
@@ -1099,8 +1099,8 @@ function mockFactoryJs() {
     if (g0.timeSwitch !== true) console.log('PAGE ERROR: the "Sync time from internet" switch should read the live NTP state (on) (round 49f)');
     if (g0.timeserver !== 'default')
       console.log('PAGE ERROR: the unset timeserver should read "default" (the distro NTP, like the ssh port) (got ' + g0.timeserver + ') (round 49g)');
-    if (g0.timeNote !== 'Applies after a restart')
-      console.log('PAGE ERROR: the timeserver row should carry the "Applies after a restart" note (got ' + g0.timeNote + ') (round 49f)');
+    if (g0.timeNote !== 'Applies only after reboot')
+      console.log('PAGE ERROR: the timeserver row should carry the "Applies only after reboot" note (got ' + g0.timeNote + ') (round 50)');
     if (g0.ipfwd !== false) console.log('PAGE ERROR: the IP forwarding scaffold switch should default OFF (round 49b)');
     if (!g0.oldFormGone) console.log('PAGE ERROR: the old skeleton netplan form should be gone (round 49b)');
     await page.screenshot({ path: path.join(SHOTS, '9b-network-general.png') });
@@ -1108,8 +1108,22 @@ function mockFactoryJs() {
     await clickGenVal('Hostname');
     const g1s = await page.evaluate(() => {
       const grp = document.querySelector('#ucmGenEditGroup');
-      return { present: !!grp, buttons: grp ? grp.querySelectorAll('button').length : null, saveBtn: grp ? !!grp.querySelector('.ucm-gen__editsave') : null, hint: grp && grp.querySelector('.ucm-gen__edithint') ? grp.querySelector('.ucm-gen__edithint').textContent : null };
+      const inp = grp ? grp.querySelector('.ucm-gen__editinp') : null;
+      const hint = grp ? grp.querySelector('.ucm-gen__edithint') : null;
+      const rect = (e) => e ? e.getBoundingClientRect() : null;
+      return { present: !!grp, buttons: grp ? grp.querySelectorAll('button').length : null, saveBtn: grp ? !!grp.querySelector('.ucm-gen__editsave') : null, hint: hint ? hint.textContent : null,
+        /* round 50: the bundle's form-input 18.88px margin-bottom + the hint's
+           6.56px padding-top used to park the "Enter saves" line ~30px below
+           the input, ballooning the row when a value mapped to the editor.
+           Both must be 0; only the group's own 4.8px gap may separate them. */
+        inpMb: inp ? getComputedStyle(inp).marginBottom : null,
+        hintPt: hint ? getComputedStyle(hint).paddingTop : null,
+        inpGap: (inp && hint) ? (rect(hint).top - rect(inp).bottom) : null };
     });
+    if (g1s.inpMb !== '0px' || g1s.hintPt !== '0px')
+      console.log('PAGE ERROR: the editor input/hint still carry phantom spacing (mb ' + g1s.inpMb + ', pt ' + g1s.hintPt + ' — the row must not expand, round 50)');
+    if (g1s.inpGap != null && g1s.inpGap > 8)
+      console.log('PAGE ERROR: the editor input->hint gap is too large (' + g1s.inpGap.toFixed(1) + 'px, the row must not expand — round 50)');
     if (g1s.saveBtn) console.log('PAGE ERROR: the general in-place editor must not carry a Save button (round 49c)');
     if (g1s.present && g1s.buttons !== 0) console.log('PAGE ERROR: the general in-place editor should have no buttons (round 49c)');
     if (g1s.hint !== 'Enter saves \u2014 Esc cancels') console.log('PAGE ERROR: the general editor hint is wrong (got ' + g1s.hint + ') (round 49c)');

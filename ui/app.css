@@ -505,8 +505,8 @@ html, body {
    hint; the error reuses the group's p-form-validation__message (editmsg). */
 .ucm-gen__edit { display: flex; flex-direction: column; gap: .3rem; flex: 1 1 0; min-width: 0; max-width: 28rem; margin: 0; }
 .ucm-gen__edit [hidden] { display: none; }
-.ucm-gen__editinp { font-size: .9rem; }
-.ucm-gen__edithint { margin: 0; font-size: .7rem; color: #888; }
+.ucm-gen__editinp { font-size: .9rem; margin-bottom: 0; } /* bundle form-input 18.88px margin would push the hint down (round 50) */
+.ucm-gen__edithint { margin: 0; padding-top: 0; font-size: .7rem; color: #888; } /* bundle stacked-heading 6.56px padding (round 50) */
 .ucm-gen__editmsg { margin: 0; }
 /* the switch: the 48a orange p-switch re-tint */
 .ucm-gen__sw { gap: .5rem; align-items: center; }
