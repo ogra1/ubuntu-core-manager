@@ -987,8 +987,8 @@ function renderGeneral() {
             const st = await core.network.forwarding.status().catch(() => null);
             if (st && st.on !== null) state.gen.ipfwd = st.on === true; // the kernel is the truth
             toast('positive', on ? 'IP forwarding enabled' : 'IP forwarding disabled',
-                on ? 'IPv4 + IPv6 packets are now forwarded between interfaces. The setting survives reboots.'
-                   : 'Packet forwarding is off. The setting survives reboots.');
+                on ? 'IPv4 + IPv6 packets are now forwarded between interfaces.'
+                   : 'Packet forwarding is off.');
         } catch (e) { state.gen.ipfwd = on ? false : true; toastErr(e); }
         finally { renderGeneral(); }
     }, false);

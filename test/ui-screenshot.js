@@ -1332,6 +1332,21 @@ function mockFactoryJs() {
     });
     await page.click('#genCard [data-gen-row="ipfwd"] .p-switch__input');
     await wait(300);
+    // the ON toast (round 52): the title says the state, the message does not
+    // restate the expected persistence ("survives reboots" is dropped). Find it
+    // BY TITLE — 3j/3k toasts are still in the 6s-TTL stack at this point.
+    const fwToast = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('.ucm-toasts .p-notification'));
+      const t = all.find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'IP forwarding enabled');
+      return t ? { msg: (t.querySelector('.p-notification__message') || {}).textContent || null } : null;
+    });
+    if (!fwToast) console.log('PAGE ERROR: the IP forwarding ON toast is missing (round 52)');
+    else {
+      if (fwToast.msg !== 'IPv4 + IPv6 packets are now forwarded between interfaces.')
+        console.log('PAGE ERROR: the IP forwarding ON toast message is wrong (got ' + JSON.stringify(fwToast.msg) + ') (round 52)');
+      if (/reboots/i.test(fwToast.msg))
+        console.log('PAGE ERROR: the IP forwarding toast restates the expected persistence ("survives reboots") (round 52)');
+    }
     const g9a = await page.evaluate(() => ({ mock: window.__mockCore.network.forwarding.__fw() }));
     if (await ipfwdOn() !== true) console.log('PAGE ERROR: the IP forwarding toggle did not turn the row ON (round 51)');
     if (!(g9a.mock.v4 && g9a.mock.v6 && g9a.mock.pref === true))
@@ -1340,9 +1355,16 @@ function mockFactoryJs() {
     // back OFF — the card is left in its default state for the shots below
     await page.click('#genCard [data-gen-row="ipfwd"] .p-switch__input');
     await wait(300);
-    const g9b = await page.evaluate(() => ({ mock: window.__mockCore.network.forwarding.__fw() }));
+    const g9b = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('.ucm-toasts .p-notification'));
+      const t = all.find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'IP forwarding disabled');
+      return { mock: window.__mockCore.network.forwarding.__fw(),
+               offToastMsg: t ? (t.querySelector('.p-notification__message') || {}).textContent || null : null };
+    });
     if (await ipfwdOn() !== false || g9b.mock.v4 !== false || g9b.mock.v6 !== false || g9b.mock.pref !== false)
       console.log('PAGE ERROR: turning IP forwarding back OFF did not clear the nodes + the pref (got ' + JSON.stringify(g9b.mock) + ') (round 51)');
+    if (g9b.offToastMsg !== 'Packet forwarding is off.')
+      console.log('PAGE ERROR: the IP forwarding OFF toast message is wrong (got ' + JSON.stringify(g9b.offToastMsg) + ') (round 52)');
     // (leave the card in its default state for the shots below)
 
 
