@@ -749,6 +749,7 @@ function ok(name, cond, extra = '') {
             { ifname: 'eth0', index: 2, flags: ['UP', 'LOWER_UP'], linkType: 'ether' },
             { ifname: 'enp3s0', index: 3, flags: ['UP', 'LOWER_UP'], linkType: 'ether' },
             { ifname: 'br0', index: 4, kind: 'bridge', flags: [], linkType: 'ether' },
+            { ifname: 'enp5s0', index: 5, flags: ['UP', 'LOWER_UP'], linkType: 'ether', master: 'br0' },
         ]);
         const ADDR = JSON.stringify([
             { ifname: 'eth0', addr_info: [
@@ -787,17 +788,23 @@ function ok(name, cond, extra = '') {
         ok('a "n/a" DNS line is NOT a server (enp3s0 dns empty)', d0('enp3s0') && JSON.stringify(d0('enp3s0').dns) === JSON.stringify([]));
         ok('the kind=bridge link is typed bridge + not connected (no UP flag)',
             d0('br0') && d0('br0').type === 'bridge' && d0('br0').connected === false);
+        ok('an enslaved device (master: br0) is NOT a card (it is a bridge member)',
+            !d0('enp5s0'), dev0.map((d) => d.name).join(','));
+        ok('the bridge card carries its LIVE members from the master field',
+            d0('br0') && JSON.stringify(d0('br0').members) === JSON.stringify(['enp5s0']),
+            d0('br0') && JSON.stringify(d0('br0').members));
         ok('an absent iw does not crash and yields no wifi', dev0.every((d) => d.type !== 'wifi'));
 
-        // mergeNetplanDevices(): the configured overlay + the netplan-only add
+        // mergeNetplanDevices(): the configured overlay only — a netplan
+        // entry with no live device (incl. a catch-all) creates NO card
         const merged = m.mergeNetplanDevices(dev0, { network: { version: 2,
-            ethernets: { eth0: { dhcp4: true } },
+            ethernets: { eth0: { dhcp4: true }, all: { dhcp4: true } },
             bridges: { br0: { dhcp4: true, interfaces: ['enp3s0'] } },
             wifis: { wlp3s0: { dhcp4: true } } } });
         const mm = (n) => merged.find((d) => d.name === n);
         ok('a netplan-defined device is flagged configured + carries its def', mm('eth0') && mm('eth0').configured === true && mm('eth0').netplan.dhcp4 === true);
-        ok('a netplan-only device (wlp3s0) is ADDED as a card', mm('wlp3s0') && mm('wlp3s0').connected === false && mm('wlp3s0').type === 'wifi');
-        ok('the added netplan-only device keeps its def', mm('wlp3s0') && mm('wlp3s0').netplan.dhcp4 === true);
+        ok('a netplan-only device (wlp3s0) does NOT create a card', !mm('wlp3s0'), mm('wlp3s0') && mm('wlp3s0').name);
+        ok('a netplan-only catch-all (all) does NOT create a card', !mm('all'), mm('all') && mm('all').name);
 
         // buildNetDeviceDef(): the canonical v2 builders + the rejections
         const bd = m.buildNetDeviceDef;

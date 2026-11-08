@@ -1077,7 +1077,11 @@ function netCardView(d) {
         rows.push(['Network', aps.length ? aps[0] : null]);
     }
     if (d.type === 'bridge') {
-        const mem = d.netplan && d.netplan.interfaces && d.netplan.interfaces.length ? d.netplan.interfaces : null;
+        // LIVE members first (the kernel truth, from the master field); the
+        // netplan member list is only a fallback (a "config" value for a
+        // bridge whose members are not up yet).
+        const mem = (d.members && d.members.length) ? d.members
+            : (d.netplan && d.netplan.interfaces && d.netplan.interfaces.length ? d.netplan.interfaces : null);
         rows.push(['Members', mem ? mem.join(', ') : null]);
     }
     const staticish = d.configured && d.netplan && Array.isArray(d.netplan.addresses) && d.netplan.addresses.length;

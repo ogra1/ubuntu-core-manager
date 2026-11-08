@@ -863,10 +863,18 @@ async function getNetplan() {
  *             'vrf'|'dummy'|'veth'|'other',
  *     connected,             // operstate/flags
  *     addresses: [{ family, cidr }],  // live (all families, scope!=link)
+ *     members,               // live bridge members (the master field; [] otherwise)
  *     gateway,               // live default-route via (string|null)
  *     dns,                   // live DNS servers (string[])
  *     configured,            // has a netplan definition (bool)
  *     netplan, }             // the netplan definition object (or null)
+ *
+ * The CARD LIST IS THE KERNEL TRUTH + the user's pending adds — never the
+ * netplan document. Netplan entries that name no live device (catch-all
+ * directives like "all:", stale or failed entries) must not face the user;
+ * netplan stays a backend document. An enslaved link (ip link's `master`
+ * field, e.g. a NIC bridged into br0) is a MEMBER — it shows on the bridge
+ * card's Members row, not as its own card.
  *
  * Applying: netApplyDevice(cfg) builds the device's netplan entry
  * (ethernets|wifis|bridges, v2 canonical fields: dhcp4/addresses/
@@ -940,9 +948,17 @@ async function listNetDevices() {
             }
         }
     }
+    // live bridge membership: ip -j link show carries a `master` field on
+    // every enslaved link (verified: a dummy set into a bridge reports
+    // "master":"br0"). Enslaved links are members of that device, not cards.
+    const membersByMaster = {};
+    for (const l of links) {
+        if (l.ifname && l.ifname !== 'lo' && l.master) (membersByMaster[l.master] = membersByMaster[l.master] || []).push(l.ifname);
+    }
     const devices = [];
     for (const l of links) {
         if (!l.ifname || l.ifname === 'lo') continue; // loopback is not a card
+        if (l.master) continue; // enslaved (bridge/bond/vrf member) — a member, not a card
         const kind = l.kind || null;
         const type = wifi.has(l.ifname) ? 'wifi' : netLinkType(kind, l.linkType);
         const up = (l.flags || []).includes('UP') || (l.flags || []).includes('LOWER_UP');
@@ -957,6 +973,7 @@ async function listNetDevices() {
         const gw = routes.find((r) => r.dev === l.ifname);
         devices.push({
             name: l.ifname, type, connected: !!up, addresses,
+            members: type === 'bridge' ? (membersByMaster[l.ifname] || []) : [],
             gateway: (gw && gw.gateway) || null,
             dns: dnsBy[l.ifname] || [],
             configured: false, netplan: null,
@@ -966,9 +983,12 @@ async function listNetDevices() {
 }
 
 /* Merge the netplan document's definitions over the live device list:
-   configured=true + the netplan entry for names the doc defines; devices the
-   doc defines but the kernel does not currently have (e.g. a bridge right
-   after a failed apply, or one not yet brought up) are ADDED. */
+   configured=true + the netplan entry for names the doc defines. A netplan
+   entry with NO live device creates NO card (catch-all directives like
+   "all:", stale entries — netplan is a backend document, the card list is
+   the kernel truth + the user's pending adds). A bridge the user created
+   via "Add bridge" becomes a card when the kernel has it (after snapd
+   applies the netplan), not before. */
 function mergeNetplanDevices(devices, doc) {
     const net = (doc && doc.network) || {};
     const sections = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
@@ -980,13 +1000,7 @@ function mergeNetplanDevices(devices, doc) {
             if (!RE_NET_NAME.test(name)) continue;
             const d = by.get(name);
             if (d) { d.configured = true; d.netplan = def; }
-            else {
-                const type = sec === 'wifis' ? 'wifi' : (sec === 'bridges' ? 'bridge'
-                    : sec === 'bonds' ? 'bond' : sec === 'vlans' ? 'vlan' : 'ethernet');
-                const nd = { name, type, connected: false, addresses: [], gateway: null, dns: [], configured: true, netplan: def };
-                by.set(name, nd);
-                devices.push(nd);
-            }
+            // no live device -> no card (see the docstring)
         }
     }
     // type refinement: a netplan wifis entry wins over the kernel guess, and

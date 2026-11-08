@@ -191,6 +191,9 @@ const NETPLAN = {
                 gateway4: '10.0.0.1',
                 dns: { nameservers: { addresses: ['1.1.1.1', '8.8.8.8'] } },
             },
+            // a catch-all directive (real VM netplans carry these) — it must
+            // NEVER create a card (netplan is a backend document)
+            all: { dhcp4: true },
         },
         wifis: {
             wlp3s0: {
@@ -199,7 +202,7 @@ const NETPLAN = {
             },
         },
         bridges: {
-            br0: { dhcp4: true, interfaces: ['enp5s0'] },
+            br0: { dhcp4: true },
         },
     },
 };
@@ -210,6 +213,7 @@ const NETPLAN = {
 const NETDEVICES = [
     { name: 'eth0',   type: 'ethernet', connected: true,  addresses: [{ family: 'inet',  cidr: '192.168.1.50/24' }, { family: 'inet6', cidr: '2001:db8::50/64' }], gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
     { name: 'enp3s0', type: 'ethernet', connected: true,  addresses: [], gateway: null,                                 dns: [] },
+    { name: 'enp5s0', type: 'ethernet', connected: true,  master: 'br0', addresses: [], gateway: null,                   dns: [] },
     { name: 'wlp3s0', type: 'wifi',     connected: true,  addresses: [{ family: 'inet',  cidr: '192.168.1.51/24' }],   gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
     { name: 'br0',    type: 'bridge',   connected: false, addresses: [], gateway: null,                                 dns: [] },
 ];
@@ -600,14 +604,15 @@ function mockFactoryJs() {
                 let __netSeq = 0;
                 const __netMerge = () => {
                     const flat = net0(__netDoc);
-                    return NETDEVICES.map((d) => {
+                    // the card list is the kernel truth: enslaved links
+                    // (master set) are members, not cards, and a netplan
+                    // entry with no live device creates NO card.
+                    return NETDEVICES.filter((d) => !d.master).map((d) => {
                         const n = JSON.parse(JSON.stringify(d));
+                        if (n.type === 'bridge') n.members = NETDEVICES.filter((x) => x.master === n.name).map((x) => x.name);
                         if (flat[n.name]) { n.configured = true; n.netplan = flat[n.name].def; if (flat[n.name].sec === 'wifis') n.type = 'wifi'; }
                         return n;
-                    }).concat(Object.keys(flat).filter((name) => !NETDEVICES.some((d) => d.name === name)).map((name) => {
-                        const t = flat[name].sec === 'wifis' ? 'wifi' : flat[name].sec === 'bridges' ? 'bridge' : flat[name].sec === 'bonds' ? 'bond' : flat[name].sec === 'vlans' ? 'vlan' : 'ethernet';
-                        return { name, type: t, connected: false, addresses: [], gateway: null, dns: [], configured: true, netplan: flat[name].def };
-                    }));
+                    });
                 };
                 const __netValidate = (cfg) => {
                     if (!cfg || typeof cfg !== 'object') throw new Error('network config payload required');
@@ -650,6 +655,12 @@ function mockFactoryJs() {
                     }
                     if (!net[section]) net[section] = {};
                     net[section][cfg.name] = def;
+                    // snapd/netplan APPLIES the doc: a newly defined bridge
+                    // comes into existence in the kernel and becomes a live
+                    // card (an eth/wifi redefinition does not create devices).
+                    if (section === 'bridges' && !NETDEVICES.some((x) => x.name === cfg.name)) {
+                        NETDEVICES.push({ name: cfg.name, type: 'bridge', connected: false, addresses: [], gateway: null, dns: [] });
+                    }
                     __netPuts += 1;
                     __netSeq += 1;
                     const id = 'netdev' + __netSeq;
@@ -1513,6 +1524,8 @@ function mockFactoryJs() {
         gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : null,
         twoUp: cards.length >= 2 && sameRow(rects[0], rects[1]) && widthsOk(rects[0], rects[1]),
         eth0: by('eth0') || null, enp3: by('enp3s0') || null, wlp3: by('wlp3s0') || null, br0: by('br0') || null,
+        noEnp5: by('enp5s0') === undefined,
+        noAll: by('all') === undefined,
       };
     });
     if (!gN.hasSec || gN.title !== 'Interfaces')
@@ -1522,6 +1535,10 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: the "Add bridge" ghost button is missing (got ' + JSON.stringify(gN.addLabel) + ') (round 53)');
     if (JSON.stringify(gN.names) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0']))
       console.log('PAGE ERROR: the device cards are wrong (got ' + JSON.stringify(gN.names) + ', want eth0/enp3s0/wlp3s0/br0) (round 53)');
+    if (gN.noEnp5 === false)
+      console.log('PAGE ERROR: an enslaved NIC (a bridge member) must not get its own card (round 53b)');
+    if (gN.noAll === false)
+      console.log('PAGE ERROR: a netplan-only catch-all entry must not create a card (round 53b)');
     // the grid is 2-up at 1440px: the first two cards share a top row (within
     // 2px) with similar widths — measured, not eyeballed.
     if (gN.gridCols !== 2 || !gN.twoUp)
@@ -1566,7 +1583,7 @@ function mockFactoryJs() {
     if (!cBr0) console.log('PAGE ERROR: no br0 device card (round 53)');
     else {
         if (cBr0.pill !== 'Not connected') console.log('PAGE ERROR: br0 status pill is not "Not connected" (got ' + cBr0.pill + ') (round 53)');
-        if (netRow(cBr0, 'Members') !== 'enp5s0') console.log('PAGE ERROR: br0 Members is not its netplan member list (got ' + JSON.stringify(netRow(cBr0, 'Members')) + ') (round 53)');
+        if (netRow(cBr0, 'Members') !== 'enp5s0') console.log('PAGE ERROR: br0 Members is not the LIVE member list (got ' + JSON.stringify(netRow(cBr0, 'Members')) + ') (round 53b)');
         if (netRow(cBr0, 'Configured') !== 'Automatic (DHCP)') console.log('PAGE ERROR: br0 Configured is not "Automatic (DHCP)" (got ' + JSON.stringify(netRow(cBr0, 'Configured')) + ') (round 53)');
     }
     // the view state carries NO inputs (inputs are hidden until needed)
