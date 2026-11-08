@@ -194,25 +194,25 @@ function ok(name, cond, extra = '') {
 
 
 
-    console.log('\n[6] netplan via snapd external config (core.system.network.netplan)');
-    const before = await m.getNetplan();
-    ok('read current netplan doc', before.network.ethernets.eth0.dhcp4 === true, JSON.stringify(before).slice(0, 100));
-    await m.applyNetplanConfig({
-        interface: 'eth0', mode: 'static',
-        ipv4: '192.168.1.50/24', gateway4: '192.168.1.1', dns: ['1.1.1.1'],
-    });
-    const written = state.confSets[state.confSets.length - 1];
-    ok('conf PUT went to core snap', written && written.name === 'core', JSON.stringify(written && written.name));
-    const yamlSent = written && written.data['system.network.netplan'];
-    ok('netplan yaml contains static address', yamlSent && yamlSent.includes('192.168.1.50/24') && yamlSent.includes('gateway4: 192.168.1.1'),
-        String(yamlSent).slice(0, 120));
-    ok('original other keys preserved', yamlSent && yamlSent.includes('network:') && yamlSent.includes('version: 2'));
-    let netErr = null;
-    try { await m.applyNetplanConfig({ interface: 'eth0; rm -rf /', mode: 'static', ipv4: '10.0.0.5/24' }); } catch (e) { netErr = e; }
-    ok('reject injected interface name', !!netErr && /invalid interface name/.test(netErr.message), netErr && netErr.message);
+    console.log('\n[6] netplan write path (core.system.network.netplan) — the round-1 single-interface writer is gone (round 53)');
+    const deadGone = (() => { const src = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8'); return !src.includes('applyNetplanConfig') && !src.includes('buildNetplanIface'); })();
+    ok('the dead round-1 netplan writer (buildNetplanIface/applyNetplanConfig) is removed', deadGone);
+    // the live write path is netApplyDevice (one device -> the netplan doc);
+    // its full coverage is [13.5]. Here: prove a static ethernet reaches the
+    // socket as canonical YAML. The payload is read from the RECORDED PUT
+    // (state.confSets) — no settle wait, so this section stays as fast as the
+    // round-1 one it replaced (the [7] mosquitto install races the [5]
+    // install's 300ms settle; added delay here would 400 it).
+    await m.netApplyDevice({ name: 'eth0', type: 'ethernet', mode: 'static', address: '192.168.1.50/24', gateway: '192.168.1.1', dns: ['1.1.1.1'] });
+    const written6 = state.confSets[state.confSets.length - 1];
+    ok('conf PUT went to core snap', written6 && written6.name === 'core', JSON.stringify(written6 && written6.name));
+    const yamlSent = written6 && written6.data['system.network.netplan'];
+    ok('netApplyDevice wrote the static entry (addresses + gateway4)', yamlSent && yamlSent.includes('192.168.1.50/24') && yamlSent.includes('gateway4: 192.168.1.1'),
+        String(yamlSent).slice(0, 140));
+    ok('netApplyDevice preserved version: 2 + network:', yamlSent && yamlSent.includes('version: 2') && yamlSent.includes('network:'));
     let cidrErr = null;
-    try { await m.applyNetplanConfig({ interface: 'eth0', mode: 'static', ipv4: '999.1.1.1/24' }); } catch (e) { cidrErr = e; }
-    ok('reject malformed CIDR (999.x)', !!cidrErr && /ipv4 must be/.test(cidrErr.message), cidrErr && cidrErr.message);
+    try { await m.netApplyDevice({ name: 'eth0', type: 'ethernet', mode: 'static', address: '999.1.1.1/24' }); } catch (e) { cidrErr = e; }
+    ok('reject malformed CIDR (999.x) before the socket', !!cidrErr && /prefix/.test(cidrErr.message), cidrErr && cidrErr.message);
 
     console.log('\n[7] host diagnostics (read-only)');
     // install a brand-new snap: the write returns a change id; the stub settles
@@ -485,6 +485,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['timesync:status'] && !!handlers['timesync:set-enabled'] && !!handlers['timesync:set-server']);
             ok('ip-forwarding handlers registered (status open, writes auth-gated)',
                 !!handlers['net:forwarding-status'] && !!handlers['net:forwarding-set']);
+            ok('net devices handlers registered (list open, apply auth-gated) + the dead net:apply is gone',
+                !!handlers['net:devices'] && !!handlers['net:apply-device'] && !handlers['net:apply']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -736,6 +738,117 @@ function ok(name, cond, extra = '') {
         delete global.__tsNtpSet;
         delete global.__tsNtpSig;
         try { fs.rmSync(path.dirname(TS_CONF), { recursive: true, force: true }); } catch {}
+    }
+
+    console.log('\n[13.5] network devices (the network-control interface: ip / iw / resolvectl + netplan)');
+    {
+        // canned live tool output (the tools' absence is a dev-container reality —
+        // the readers are injectable, so unit-test with canned bytes).
+        const LINK = JSON.stringify([
+            { ifname: 'lo', index: 1, flags: ['UP', 'LOOPBACK'], linkType: 'ether' },
+            { ifname: 'eth0', index: 2, flags: ['UP', 'LOWER_UP'], linkType: 'ether' },
+            { ifname: 'enp3s0', index: 3, flags: ['UP', 'LOWER_UP'], linkType: 'ether' },
+            { ifname: 'br0', index: 4, kind: 'bridge', flags: [], linkType: 'ether' },
+        ]);
+        const ADDR = JSON.stringify([
+            { ifname: 'eth0', addr_info: [
+                { family: 'inet', local: '192.168.1.50', prefixlen: 24, scope: 'global' },
+                { family: 'inet6', local: '2001:db8::50', prefixlen: 64, scope: 'global' },
+                { family: 'inet6', local: 'fe80::1', prefixlen: 64, scope: 'link' },
+            ] },
+            { ifname: 'enp3s0', addr_info: [ { family: 'inet6', local: 'fe80::2', prefixlen: 64, scope: 'link' } ] },
+        ]);
+        // NOTE: the default-route JSON field is `gateway` (the probe that read
+        // `gvia` came up empty).
+        const ROUTE = JSON.stringify([ { dev: 'eth0', gateway: '192.168.1.1', protocol: 'dhcp' } ]);
+        const RES = 'Global:\n\tLVS: no\n\nLink 2 (eth0)\n\tCurrent Scopes: none\n\tDNS Servers: 192.168.1.1\n\nLink 3 (enp3s0)\n\tDNS Servers: n/a\n';
+        m.__setNetLive({
+            link: async () => ({ ok: true, stdout: LINK }),
+            addr: async () => ({ ok: true, stdout: ADDR }),
+            route: async () => ({ ok: true, stdout: ROUTE }),
+            iw: async () => ({ ok: false, stdout: '' }),
+            dns: async () => ({ ok: true, stdout: RES }),
+        });
+
+        // listNetDevices(): the merged LIVE per-device shape
+        const dev0 = await m.listNetDevices();
+        const d0 = (n) => dev0.find((d) => d.name === n);
+        ok('loopback is not a card', !d0('lo'), dev0.map((d) => d.name).join(','));
+        ok('eth0 type is ethernet + connected', d0('eth0') && d0('eth0').type === 'ethernet' && d0('eth0').connected === true);
+        ok('eth0 addresses keep the v4 + the GLOBAL v6, drop the scope-link v6',
+            d0('eth0') && JSON.stringify(d0('eth0').addresses) === JSON.stringify([
+                { family: 'inet', cidr: '192.168.1.50/24' }, { family: 'inet6', cidr: '2001:db8::50/64' }]),
+            d0('eth0') && JSON.stringify(d0('eth0').addresses));
+        ok('enp3s0 (only a link-local v6) has NO displayable addresses',
+            d0('enp3s0') && Array.isArray(d0('enp3s0').addresses) && d0('enp3s0').addresses.length === 0);
+        ok('eth0 gateway comes from the `gateway` route key', d0('eth0') && d0('eth0').gateway === '192.168.1.1');
+        ok('enp3s0 has no default route -> gateway null', d0('enp3s0') && d0('enp3s0').gateway === null);
+        ok('the resolvectl text parse gives eth0 its DNS', d0('eth0') && JSON.stringify(d0('eth0').dns) === JSON.stringify(['192.168.1.1']));
+        ok('a "n/a" DNS line is NOT a server (enp3s0 dns empty)', d0('enp3s0') && JSON.stringify(d0('enp3s0').dns) === JSON.stringify([]));
+        ok('the kind=bridge link is typed bridge + not connected (no UP flag)',
+            d0('br0') && d0('br0').type === 'bridge' && d0('br0').connected === false);
+        ok('an absent iw does not crash and yields no wifi', dev0.every((d) => d.type !== 'wifi'));
+
+        // mergeNetplanDevices(): the configured overlay + the netplan-only add
+        const merged = m.mergeNetplanDevices(dev0, { network: { version: 2,
+            ethernets: { eth0: { dhcp4: true } },
+            bridges: { br0: { dhcp4: true, interfaces: ['enp3s0'] } },
+            wifis: { wlp3s0: { dhcp4: true } } } });
+        const mm = (n) => merged.find((d) => d.name === n);
+        ok('a netplan-defined device is flagged configured + carries its def', mm('eth0') && mm('eth0').configured === true && mm('eth0').netplan.dhcp4 === true);
+        ok('a netplan-only device (wlp3s0) is ADDED as a card', mm('wlp3s0') && mm('wlp3s0').connected === false && mm('wlp3s0').type === 'wifi');
+        ok('the added netplan-only device keeps its def', mm('wlp3s0') && mm('wlp3s0').netplan.dhcp4 === true);
+
+        // buildNetDeviceDef(): the canonical v2 builders + the rejections
+        const bd = m.buildNetDeviceDef;
+        ok('eth dhcp builds {dhcp4:true} in ethernets', (() => { const r = bd({ name: 'eth0', type: 'ethernet', mode: 'dhcp' }); return r.section === 'ethernets' && r.def.dhcp4 === true; })());
+        const st = bd({ name: 'eth0', type: 'ethernet', mode: 'static', address: '192.168.1.99/24', gateway: '192.168.1.1', dns: ['1.1.1.1', '8.8.8.8'] });
+        ok('eth static builds addresses + gateway4 + dns.nameservers',
+            JSON.stringify(st.def.addresses) === JSON.stringify(['192.168.1.99/24']) && st.def.gateway4 === '192.168.1.1'
+            && JSON.stringify(st.def.dns.nameservers.addresses) === JSON.stringify(['1.1.1.1', '8.8.8.8']));
+        const wf = bd({ name: 'wlp3s0', type: 'wifi', mode: 'dhcp', ssid: 'HomeNet', password: 'secret123', hidden: true });
+        ok('wifi builds access-points.<ssid>.password + hidden in wifis',
+            wf.section === 'wifis' && wf.def['access-points'].HomeNet.password === 'secret123' && wf.def['access-points'].HomeNet.hidden === true);
+        const br = bd({ name: 'br1', type: 'bridge', mode: 'static', address: '10.0.0.1/24', interfaces: ['eth0', 'enp3s0'] });
+        ok('bridge builds interfaces[] + static in bridges',
+            br.section === 'bridges' && JSON.stringify(br.def.interfaces) === JSON.stringify(['eth0', 'enp3s0']) && JSON.stringify(br.def.addresses) === JSON.stringify(['10.0.0.1/24']));
+        const rej = (cfg, re) => { let e = null; try { bd(cfg); } catch (x) { e = x; } return e && re.test(e.message); };
+        ok('REJECT bad device name', rej({ name: 'bad;rm', type: 'ethernet', mode: 'dhcp' }, /invalid device name/));
+        ok('REJECT bad CIDR (999.x) in static mode', rej({ name: 'eth0', type: 'ethernet', mode: 'static', address: '999.1.1.1/24' }, /prefix/));
+        ok('REJECT a bare (no-prefix) static address', rej({ name: 'eth0', type: 'ethernet', mode: 'static', address: '10.0.0.1' }, /prefix/));
+        ok('REJECT a bad gateway', rej({ name: 'eth0', type: 'ethernet', mode: 'static', address: '10.0.0.1/24', gateway: 'not-an-ip' }, /gateway/));
+        ok('REJECT a bad bridge member name', rej({ name: 'br1', type: 'bridge', mode: 'dhcp', interfaces: ['bad;rm'] }, /invalid bridge member/));
+        ok('REJECT a wifi with no SSID', rej({ name: 'wlp3s0', type: 'wifi', mode: 'dhcp', ssid: '' }, /SSID/));
+        ok('REJECT a wifi password shorter than 8', rej({ name: 'wlp3s0', type: 'wifi', mode: 'dhcp', ssid: 'HomeNet', password: 'short' }, /8-64/));
+        ok('REJECT an unknown device type', rej({ name: 'x', type: 'banana', mode: 'dhcp' }, /unknown device type/));
+
+        // netApplyDevice(): the FULL-doc read-modify-write through the stub
+        await m.netApplyDevice({ name: 'wlp3s0', type: 'wifi', mode: 'dhcp', ssid: 'HomeNet', password: 'secret123' });
+        await new Promise((r) => setTimeout(r, 350));
+        let doc = m.fromYaml(state.netplanYaml);
+        ok('netApplyDevice(wifi) wrote the canonical access-points.password',
+            doc.network.wifis && doc.network.wifis.wlp3s0['access-points'].HomeNet.password === 'secret123',
+            JSON.stringify(doc.network.wifis));
+        // a device RE-TYPED leaves its old section (ethernet->wifi)
+        await m.netApplyDevice({ name: 'eth0', type: 'wifi', mode: 'dhcp', ssid: 'Net', password: 'password123' });
+        await new Promise((r) => setTimeout(r, 350));
+        doc = m.fromYaml(state.netplanYaml);
+        ok('a re-typed device leaves its OLD section (ethernets.eth0 gone)', !doc.network.ethernets || !doc.network.ethernets.eth0, JSON.stringify(doc.network.ethernets));
+        ok('a re-typed device lands in its NEW section (wifis.eth0)', doc.network.wifis && doc.network.wifis.eth0 && doc.network.wifis.eth0['access-points'].Net, JSON.stringify(doc.network.wifis));
+        ok('version: 2 is preserved across the re-write', doc.network.version === 2, String(doc.network.version));
+        // an emptied section is DROPPED (the doc must not carry "ethernets: {}")
+        const ethKeys = doc.network.ethernets && Object.keys(doc.network.ethernets).length;
+        if (ethKeys) {
+            const last = Object.keys(doc.network.ethernets)[0];
+            await m.netApplyDevice({ name: last, type: 'bridge', mode: 'dhcp', interfaces: ['enp3s0'] });
+            await new Promise((r) => setTimeout(r, 350));
+            doc = m.fromYaml(state.netplanYaml);
+            ok('an emptied section is dropped from the doc', !doc.network.ethernets, JSON.stringify(doc.network.ethernets));
+        } else {
+            ok('an emptied section is dropped from the doc (already none)', !doc.network.ethernets);
+        }
+
+        m.__setNetLive(null);
     }
 
     console.log('\n[14] ip forwarding (network-control interface, /proc sysctl nodes)');

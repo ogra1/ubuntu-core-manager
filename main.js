@@ -9,8 +9,11 @@
  *   - All privileged I/O happens HERE, in the main process (Node).
  *   - snapd is reached exclusively over its Unix Domain Socket
  *     (/run/snapd.socket, exposed to this strict-confinement snap by the
- *     connected `snapd-control` interface) — no shell-outs, no direct
- *     /etc writes, no renderer-side network.
+ *     connected `snapd-control` interface). Network state is read with
+ *     the standard tools the `network-control` interface is built around
+ *     (ip, iw, resolvectl — read-only); network config is written through
+ *     snapd's netplan external config. No direct /etc writes, no
+ *     renderer-side network.
  *   - TWO independent auth layers (see section 4):
  *       (a) LOCAL admin gate  — the UI lock screen. A local password set on
  *           first boot (offline) and stored hashed in $SNAP_COMMON. This is
@@ -66,12 +69,8 @@ const RE_CHANNEL = /^[A-Za-z0-9._+-]+(\/[A-Za-z0-9._+-]+){0,2}$/;
 // IPv4 CIDR, e.g. 192.168.1.50/24
 const RE_IPV4_CIDR = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\/(3[0-2]|2\d|1\d|[1-9])$/;
 // IPv6 CIDR, e.g. fd00::1/64
-const RE_IPV6_CIDR = /^[0-9a-f:]+\/(12[0-8]|1[01]\d|[1-9]\d)$/i;
 const RE_IPV4 = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
-const RE_IPV6 = /^[0-9a-f:]+$/i;
 
-// Netplan interface names: eth0, enp3s0, ens18, wlan0, ...
-const RE_IFACE_NAME = /^[A-Za-z][A-Za-z0-9._:-]{0,15}$/;
 
 // Config keys: dotted lowercase identifiers.
 const RE_CONF_KEY = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)*$/;
@@ -827,63 +826,6 @@ async function setSnapConfig(name, conf) {
     return snapdRequest('PUT', '/v2/snaps/' + encodeURIComponent(name) + '/conf', { body, auth: A() });
 }
 
-/** Build the netplan section for one static-IP (or DHCP) interface. */
-function buildNetplanIface({ interface: ifname, mode, ipv4, ipv6, gateway4, gateway6, dns }) {
-    const net = {};
-    if (mode === 'dhcp4') {
-        net.dhcp4 = true;
-    } else if (mode === 'static') {
-        if (!RE_IPV4_CIDR.test(ipv4)) throw new Error('ipv4 must be IPv4 with /prefix (e.g. 192.168.1.50/24)');
-        if (gateway4 && !RE_IPV4.test(gateway4)) throw new Error('gateway4 must be a bare IPv4 address');
-        const v4 = { addresses: [ipv4] };
-        if (gateway4) v4.gateway4 = gateway4;
-        net.ipv4 = v4;
-        if (ipv6) {
-            if (!RE_IPV6_CIDR.test(ipv6)) throw new Error('ipv6 must be IPv6 with /prefix (e.g. fd00::1/64)');
-            if (gateway6 && !RE_IPV6.test(gateway6)) throw new Error('gateway6 must be a bare IPv6 address');
-            const v6 = { addresses: [ipv6] };
-            if (gateway6) v6.gateway6 = gateway6;
-            net.ipv6 = v6;
-        }
-    } else {
-        throw new Error('mode must be "dhcp4" or "static"');
-    }
-    if (dns === true || Array.isArray(dns)) {
-        const d = dns === true ? [] : dns.map((x) => {
-            if (typeof x !== 'string' || !(RE_IPV4.test(x) || RE_IPV6.test(x))) {
-                throw new Error('invalid dns entry: ' + JSON.stringify(x));
-            }
-            return x;
-        });
-        if (d.length) net.dns = { nameservers: { addresses: d } };
-    }
-    return net;
-}
-
-/**
- * Apply a network change through snapd's netplan external config
- * (PUT /v2/snaps/core/conf, key system.network.netplan). Read-modify-write
- * on the full document; snapd/netplan apply it atomically.
- */
-async function applyNetplanConfig(netcfg) {
-    if (!netcfg || typeof netcfg !== 'object') throw new Error('network config payload required');
-    const iface = netcfg.interface;
-    if (typeof iface !== 'string' || !RE_IFACE_NAME.test(iface)) {
-        throw new Error('invalid interface name: ' + JSON.stringify(iface));
-    }
-
-    const cur = await getSnapConfig('core', 'system.network.netplan');
-    const doc = (cur && typeof cur === 'string') ? fromYaml(cur)
-        : (cur && yamlIsMap(cur)) ? cur : {};
-    if (!yamlIsMap(doc.network)) doc.network = {};
-    if (!yamlIsMap(doc.network.ethernets)) doc.network.ethernets = {};
-
-    doc.network.ethernets[iface] = buildNetplanIface(netcfg);
-
-    const yaml = toYaml(doc);
-    return setSnapConfig('core', { 'system.network.netplan': yaml });
-}
-
 /** Read the active netplan document as a parsed JS object.
  * snapd's conf GET with ?keys=X returns { "X": <value> } — unwrap it. */
 async function getNetplan() {
@@ -892,6 +834,278 @@ async function getNetplan() {
         ? res['system.network.netplan'] : res;
     if (typeof cur === 'string') return fromYaml(cur);
     return cur;
+}
+
+/* ------------------------------------------------------------------ *
+ * 7b. Network DEVICES (the network-control snap interface)
+ *
+ * The Network page's Interfaces section shows every network device with
+ * its LIVE state (the kernel truth — what SSH would actually connect
+ * with) and edits its netplan definition (the configured truth, applied
+ * through snapd's netplan external config, which does Config.Try + a
+ * 30s rollback + a store-reachability check before it commits — see
+ * snapd configcore/netplan.go).
+ *
+ * Live state comes from the standard network tools the network-control
+ * interface is BUILT around (ip, iw, resolvectl — all in its AppArmor
+ * grant, like the ip/sysctl tools):
+ *   ip -j link show        -> per device: kind (bridge/bond/...), link_type
+ *                             (ether/wireless/...), operstate/flags
+ *   ip -j addr show        -> per device: addresses (family+local+prefixlen)
+ *   ip -j route show default -> per device: the default-route gateway
+ *   iw dev                 -> which devices are Wi-Fi (absent = none)
+ *   resolvectl status      -> per device: the DNS servers actually in use
+ * (resolvectl has no -o json on older systemd, so a text parser is the
+ * canonical path; ip -j is stable JSON.)
+ *
+ * Device model (merged per name):
+ *   { name, type: 'ethernet'|'wired'|'wifi'|'bridge'|'bond'|'vlan'|'tunnel'|
+ *             'vrf'|'dummy'|'veth'|'other',
+ *     connected,             // operstate/flags
+ *     addresses: [{ family, cidr }],  // live (all families, scope!=link)
+ *     gateway,               // live default-route via (string|null)
+ *     dns,                   // live DNS servers (string[])
+ *     configured,            // has a netplan definition (bool)
+ *     netplan, }             // the netplan definition object (or null)
+ *
+ * Applying: netApplyDevice(cfg) builds the device's netplan entry
+ * (ethernets|wifis|bridges, v2 canonical fields: dhcp4/addresses/
+ * gateway4/dns.nameservers; wifis + access-points; bridges + interfaces)
+ * and PUTs the FULL document through the existing core conf bridge.
+ * ------------------------------------------------------------------ */
+const RE_NET_NAME = /^[A-Za-z][A-Za-z0-9._:-]{0,15}$/;
+
+/* Injectable live readers — the integration test uses canned outputs (the
+   tools' absence / the confined path are dev-container realities). */
+let __netLive = null;
+function __setNetLive(fns) { __netLive = fns; }
+async function netRunLive(fn) {
+    if (__netLive && __netLive[fn]) return __netLive[fn]();
+    const { execFile } = require('child_process');
+    return new Promise((resolve) => {
+        const args = LIVE_TOOLS[fn];
+        execFile(args[0], args.slice(1), { encoding: 'utf8', timeout: 8000 }, (err, stdout) => {
+            resolve({ ok: !err, stdout: stdout || '' });
+        });
+    });
+}
+const LIVE_TOOLS = {
+    link: ['ip', '-j', 'link', 'show'],
+    addr: ['ip', '-j', 'addr', 'show'],
+    route: ['ip', '-j', 'route', 'show', 'default'],
+    iw: ['iw', 'dev'],
+    dns: ['resolvectl', 'status'],
+};
+
+function netLinkType(kind, linkType) {
+    if (kind === 'bridge') return 'bridge';
+    if (kind === 'bond') return 'bond';
+    if (kind === 'veth') return 'veth';
+    if (kind === 'dummy') return 'dummy';
+    if (kind === 'vrf') return 'vrf';
+    if (kind === 'tun' || kind === 'tap' || kind === 'gre' || kind === 'ip6tnl' || kind === 'sit' || kind === 'erspan' || kind === 'vti' || kind === 'vti6' || kind === 'ipip') return 'tunnel';
+    if (linkType === 'vlan' || kind === 'vlan') return 'vlan';
+    if (linkType === 'wireless') return 'wifi';
+    if (linkType === 'ether') return 'ethernet';
+    return kind ? 'other' : 'ethernet'; // a bare physical NIC
+}
+
+/* Parse the five live sources into the merged per-device model. Pure over
+   its inputs (the readers are injectable), so unit-testable with canned
+   tool output. */
+async function listNetDevices() {
+    const [linkR, addrR, routeR, iwR, dnsR] = await Promise.all([
+        netRunLive('link'), netRunLive('addr'), netRunLive('route'), netRunLive('iw'), netRunLive('dns')]);
+    const links = (linkR.ok && linkR.stdout) ? (JSON.parse(linkR.stdout) || []) : [];
+    const addrs = (addrR.ok && addrR.stdout) ? (JSON.parse(addrR.stdout) || []) : [];
+    const routes = (routeR.ok && routeR.stdout) ? (JSON.parse(routeR.stdout) || []) : [];
+    const wifi = new Set();
+    if (iwR.ok && iwR.stdout) {
+        // "Device wlan0 [stacked]"
+        for (const m of iwR.stdout.matchAll(/^Device\s+(\S+)/gm)) wifi.add(m[1]);
+    }
+    // resolvectl status (text):  "Link 28 (eth0)" ... "       DNS Servers: a b c"
+    const dnsBy = {};
+    if (dnsR.ok && dnsR.stdout) {
+        let cur = null;
+        for (const line of dnsR.stdout.split('\n')) {
+            const h = line.match(/^Link\s+\d+\s+\(([^)]+)\)/);
+            if (h) { cur = h[1]; dnsBy[cur] = []; continue; }
+            const d = line.match(/^\s+DNS Servers:\s+(.*)$/);
+            if (d && cur) {
+                // resolved prints "n/a" for a link with no DNS — that is
+                // the ABSENCE of servers, not a server.
+                const servers = d[1].trim().split(/\s+/).filter((x) => x && x !== 'n/a');
+                if (servers.length) dnsBy[cur] = servers;
+            }
+        }
+    }
+    const devices = [];
+    for (const l of links) {
+        if (!l.ifname || l.ifname === 'lo') continue; // loopback is not a card
+        const kind = l.kind || null;
+        const type = wifi.has(l.ifname) ? 'wifi' : netLinkType(kind, l.linkType);
+        const up = (l.flags || []).includes('UP') || (l.flags || []).includes('LOWER_UP');
+        const addresses = [];
+        const a = (addrs.find((x) => x.ifname === l.ifname) || {});
+        for (const ai of (a.addr_info || [])) {
+            if (ai.family === 'inet' || ai.family === 'inet6') {
+                if (ai.scope === 'link' && ai.family === 'inet6') continue; // not displayable
+                addresses.push({ family: ai.family, cidr: ai.local + '/' + ai.prefixlen });
+            }
+        }
+        const gw = routes.find((r) => r.dev === l.ifname);
+        devices.push({
+            name: l.ifname, type, connected: !!up, addresses,
+            gateway: (gw && gw.gateway) || null,
+            dns: dnsBy[l.ifname] || [],
+            configured: false, netplan: null,
+        });
+    }
+    return devices;
+}
+
+/* Merge the netplan document's definitions over the live device list:
+   configured=true + the netplan entry for names the doc defines; devices the
+   doc defines but the kernel does not currently have (e.g. a bridge right
+   after a failed apply, or one not yet brought up) are ADDED. */
+function mergeNetplanDevices(devices, doc) {
+    const net = (doc && doc.network) || {};
+    const sections = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
+    const by = new Map(devices.map((d) => [d.name, d]));
+    for (const sec of sections) {
+        const m = net[sec];
+        if (!m || typeof m !== 'object') continue;
+        for (const [name, def] of Object.entries(m)) {
+            if (!RE_NET_NAME.test(name)) continue;
+            const d = by.get(name);
+            if (d) { d.configured = true; d.netplan = def; }
+            else {
+                const type = sec === 'wifis' ? 'wifi' : (sec === 'bridges' ? 'bridge'
+                    : sec === 'bonds' ? 'bond' : sec === 'vlans' ? 'vlan' : 'ethernet');
+                const nd = { name, type, connected: false, addresses: [], gateway: null, dns: [], configured: true, netplan: def };
+                by.set(name, nd);
+                devices.push(nd);
+            }
+        }
+    }
+    // type refinement: a netplan wifis entry wins over the kernel guess, and
+    // a bridges/bonds/vlans entry sets the type even for a live link.
+    for (const sec of sections) {
+        const m = net[sec];
+        if (!m || typeof m !== 'object') continue;
+        for (const name of Object.keys(m)) {
+            const d = by.get(name);
+            if (!d) continue;
+            if (sec === 'wifis') d.type = 'wifi';
+            else if (sec === 'bridges' && d.type !== 'wifi') d.type = 'bridge';
+            else if (sec === 'bonds' && d.type !== 'wifi') d.type = 'bond';
+            else if (sec === 'vlans') d.type = 'vlan';
+        }
+    }
+    return devices;
+}
+
+/* ---- the netplan doc builder (pure) ------------------------------------
+   cfg = { name, type: 'ethernet'|'wifi'|'bridge',
+           mode: 'dhcp'|'static', address?, gateway?, dns?,
+           ssid?, password?, hidden?,
+           interfaces? }
+   Returns { section, def } (section = the doc's device-type key). v1 scope:
+   IPv4 addressing only (DHCP or a static address+gateway+DNS); Wi-Fi is
+   WPA-PSK (access-points); bridges carry a member list. The def uses the
+   CANONICAL netplan v2 fields (netplan-yaml.md) — addresses/gateway4/dns.
+   nameservers — NOT the old round-1 ipv4.gateway4 shape. */
+function buildNetDeviceDef(cfg) {
+    if (!cfg || typeof cfg !== 'object') throw new Error('network config payload required');
+    if (typeof cfg.name !== 'string' || !RE_NET_NAME.test(cfg.name)) {
+        throw new Error('invalid device name: ' + JSON.stringify(cfg.name));
+    }
+    const def = {};
+    const staticPart = () => {
+        if (typeof cfg.address !== 'string' || !RE_IPV4_CIDR.test(cfg.address)) {
+            throw new Error('IPv4 address must carry a /prefix (e.g. 192.168.1.50/24)');
+        }
+        def.addresses = [cfg.address];
+        if (cfg.gateway) {
+            if (!RE_IPV4.test(cfg.gateway)) throw new Error('gateway must be a bare IPv4 address');
+            def.gateway4 = cfg.gateway;
+        }
+    };
+    const dnsPart = () => {
+        if (cfg.dns) {
+            const d = (Array.isArray(cfg.dns) ? cfg.dns : [cfg.dns]).map((x) => String(x).trim()).filter(Boolean);
+            if (!d.length) throw new Error('DNS servers list is empty');
+            for (const x of d) if (!(RE_IPV4.test(x) || /^[0-9a-f:.]+$/i.test(x))) throw new Error('invalid DNS address: ' + x);
+            if (d.length) def.dns = { nameservers: { addresses: d } };
+        }
+    };
+    if (cfg.type === 'bridge') {
+        const members = Array.isArray(cfg.interfaces) ? cfg.interfaces.map((x) => String(x).trim()).filter(Boolean) : [];
+        for (const x of members) if (!RE_NET_NAME.test(x)) throw new Error('invalid bridge member: ' + x);
+        def.interfaces = members;
+        if (cfg.mode === 'static') staticPart(); else def.dhcp4 = true;
+        dnsPart();
+        return { section: 'bridges', def };
+    }
+    if (cfg.type === 'wifi') {
+        if (typeof cfg.ssid !== 'string' || !cfg.ssid.trim() || cfg.ssid.length > 32) {
+            throw new Error('a Wi-Fi network name (SSID) is required');
+        }
+        const ap = {};
+        const pw = (cfg.password == null) ? '' : String(cfg.password);
+        if (pw) {
+            if (pw.length < 8 || pw.length > 64) throw new Error('the Wi-Fi password must be 8-64 characters');
+            ap.password = pw;
+        }
+        if (cfg.hidden === true) ap.hidden = true;
+        def['access-points'] = { [cfg.ssid.trim()]: ap };
+        if (cfg.mode === 'static') staticPart(); else def.dhcp4 = true;
+        dnsPart();
+        return { section: 'wifis', def };
+    }
+    if (cfg.type !== 'ethernet') throw new Error('unknown device type: ' + cfg.type);
+    if (cfg.mode === 'static') staticPart(); else def.dhcp4 = true;
+    dnsPart();
+    return { section: 'ethernets', def };
+}
+
+/* Apply ONE device's netplan definition: read the current full doc, REPLACE
+   just this device's entry in its section (delete it from the others), write
+   the whole document back through the core conf bridge. snapd hands it to
+   netplan with Config.Try + 30s rollback + store-reachability guard. */
+async function netApplyDevice(cfg) {
+    const { section, def } = buildNetDeviceDef(cfg);
+    // Read via getNetplan() — it unwraps the { 'system.network.netplan': <yaml> }
+    // conf response AND parses the YAML. A raw getSnapConfig returns the WRAPPER
+    // object, so treating it as the doc would double-encode the write (the
+    // round-1 single-interface writer had exactly this latent bug — its test
+    // only asserted substring presence in the SENT yaml, so it never fired).
+    const cur = await getNetplan();
+    const doc = (cur && yamlIsMap(cur)) ? cur : {};
+    if (!yamlIsMap(doc.network)) doc.network = {};
+    if (!doc.network.version) doc.network.version = 2;
+    // this device leaves the other sections (it may have moved type)
+    for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
+        if (yamlIsMap(doc.network[sec])) delete doc.network[sec][cfg.name];
+        else if (doc.network[sec] == null) { /* nothing */ }
+    }
+    if (!yamlIsMap(doc.network[section])) doc.network[section] = {};
+    doc.network[section][cfg.name] = def;
+    // drop sections that ended up empty (keeps the doc tidy, netplan-valid)
+    for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
+        if (yamlIsMap(doc.network[sec]) && Object.keys(doc.network[sec]).length === 0) delete doc.network[sec];
+    }
+    const yaml = toYaml(doc);
+    return setSnapConfig('core', { 'system.network.netplan': yaml });
+}
+
+/* Read the live device list merged with the netplan definitions. */
+async function getNetDevices() {
+    const devices = await listNetDevices();
+    let doc = null;
+    try { doc = await getNetplan(); } catch { doc = null; }
+    return mergeNetplanDevices(devices, doc);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1331,7 +1545,7 @@ const api = {
     SNAPD_SOCKET,
     SESSION_TIMEOUT_MS,
     validSnapName, validChannel,
-    toYaml, fromYaml, buildNetplanIface,
+    toYaml, fromYaml,
     readHostStats, readProcNetDev, readCpuUtilization, readNetTraffic,
 
     // local admin gate (the UI lock screen; offline)
@@ -1348,9 +1562,11 @@ const api = {
     timesyncStatus, timesyncSetEnabled, timesyncSetServer,
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
+    getNetDevices, netApplyDevice, buildNetDeviceDef, mergeNetplanDevices,
+    listNetDevices, netLinkType, __setNetLive,
 
     installSnap, snapAction, snapComponent,
-    setSnapConfig, applyNetplanConfig,
+    setSnapConfig,
     connectInterface, disconnectInterface,
 };
 
@@ -1615,7 +1831,6 @@ function initElectron() {
     ipcMain.handle('snaps:conf-get', guard((name, key) => getSnapConfig(name, key || null)));
     ipcMain.handle('snaps:conf-set', guard((name, conf) => { requireAuth(); return setSnapConfig(name, conf); }));
 
-    ipcMain.handle('net:apply', guard((netcfg) => { requireAuth(); return applyNetplanConfig(netcfg); }));
     // timesync / NTP (timeserver-control interface; reads are open, writes
     // are console-privileged like the other system changes)
     ipcMain.handle('timesync:status', guard(() => timesyncStatus()));
@@ -1623,6 +1838,10 @@ function initElectron() {
     ipcMain.handle('timesync:set-server', guard((s) => { requireAuth(); return timesyncSetServer(s); }));
     // ip forwarding (network-control interface; reads open, writes are
     // console-privileged like the other system changes)
+    // network devices (round 53): the live list (open) + the per-device
+    // netplan apply (console-privileged, like the other network changes)
+    ipcMain.handle('net:devices', guard(() => getNetDevices()));
+    ipcMain.handle('net:apply-device', guard((cfg) => { requireAuth(); return netApplyDevice(cfg); }));
     ipcMain.handle('net:forwarding-status', guard(() => ipfwdStatus()));
     ipcMain.handle('net:forwarding-set', guard((b) => { requireAuth(); return ipfwdSet(b); }));
     ipcMain.handle('ifaces:list', guard(() => listInterfaces()));

@@ -12,7 +12,10 @@ description: |
   netplan external config, plug/slot interface control, and system
   monitoring. All privileged I/O goes through the snapd Unix Domain Socket
   (/run/snapd.socket, exposed by the connected `snapd-control` interface).
-  No shell-outs, no direct /etc writes; every renderer payload is validated
+  Live network state is read with the standard tools the `network-control`
+  interface is built around (ip, iw, resolvectl); network config is written
+  through snapd's netplan external config. No direct /etc writes; every
+  renderer payload is validated
   by regex allow-lists in the main process before it reaches the socket.
 
 confinement: strict

@@ -124,9 +124,10 @@ const api = Object.freeze({
 
     // ---- network configuration (via snapd netplan external config) -----
     network: Object.freeze({
-        apply: invoke('net:apply'),
-        // netcfg = { interface, mode:'dhcp4'|'static', ipv4?, ipv6?,
-        //            gateway4?, gateway6?, dns? }
+        // ---- network devices (round 53, network-control interface) ----
+        // live state (ip/iw/resolvectl) merged with the netplan definitions
+        devices: invoke('net:devices'),               // => [ { name, type, connected, addresses[], gateway, dns[], configured, netplan } ]
+        applyDevice: invoke('net:apply-device'),      // (cfg) — one device's netplan entry, full-doc PUT
         // ---- ip forwarding (network-control interface, round 51) -------
         forwarding: Object.freeze({
             status: invoke('net:forwarding-status'), // => { v4, v6, on, pref } (null = unreadable)

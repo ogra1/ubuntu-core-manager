@@ -1033,3 +1033,68 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     padding: .65rem 0;
     height: 0;
 }
+
+/* ---- network view: Interfaces section (round 53) --------------------------
+   A 2-up responsive grid of flat device cards under the General card. Each
+   card shows the LIVE state (the kernel truth — what SSH connects with) in
+   the dashboard's .ucm-kv row idiom; "Change settings" swaps the card body
+   for the in-place netplan edit form (Static-IP switch, address fields
+   hidden until needed, DNS chips, Wi-Fi SSID/password, bridge members) and
+   the card spans the row while editing. */
+#netIfaceSec { margin-top: 1.6rem; }
+.ucm-iface-head {
+    display: flex; align-items: center; gap: 1rem;
+    margin: 0 0 .8rem; padding: 0 2px;
+}
+.ucm-iface-title { font-size: 1.05rem; font-weight: 600; color: #3b3b3b; }
+.ucm-iface-count { color: #757575; font-size: .9rem; }
+.ucm-iface-addwrap { margin-left: auto; }
+.ucm-iface-add {
+    color: var(--ucm-orange); font-weight: 500;
+    padding: 0 .6rem; height: 1.7rem; margin: 0;
+}
+.ucm-iface-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 900px) { .ucm-iface-grid { grid-template-columns: 1fr; } }
+.ucm-netcard { margin: 0; }
+.ucm-netcard--editing { grid-column: 1 / -1; }
+.ucm-netcard__head {
+    display: flex; align-items: center; gap: .7rem;
+    padding-top: .9rem; padding-bottom: .7rem;
+}
+.ucm-netcard__head .p-heading--5 { padding-top: 0; }
+.ucm-netcard__name { font-size: .95rem; font-weight: 600; }
+.ucm-netcard__type { color: #757575; font-size: .8rem; white-space: nowrap; }
+.ucm-netcard__head .p-status-label { margin-left: auto; flex: 0 0 auto; }
+.ucm-netcard__rows { margin: 0 .2rem .6rem; }
+.ucm-netcard__rows > div { padding: .5rem 0; }
+.ucm-netcard__rows dd { font-size: .9rem; word-break: break-word; }
+.ucm-netcard__v { font-family: "Ubuntu Mono variable", monospace; font-size: .85rem; }
+.ucm-netcard__foot { display: flex; align-items: center; gap: .9rem; padding: .15rem 0 .2rem; }
+.ucm-netcard__edit { display: flex; flex-direction: column; gap: .55rem; padding: .2rem 0 .5rem; }
+.ucm-netcard__fg { margin: 0; }
+.ucm-netcard__fg .p-form-validation__input { margin-bottom: 0; max-width: 26rem; }
+.ucm-netcard__row { display: flex; align-items: center; gap: 1rem; }
+.ucm-netcard__row .ucm-muted { font-size: .75rem; }
+.ucm-netcard__sw { gap: .5rem; align-items: center; flex: 0 0 auto; }
+.ucm-netcard__sw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
+.ucm-netcard__sw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
+.ucm-netcard__sw .p-switch__slider { background: #e0e0e0; }
+.ucm-netcard__static { display: flex; flex-direction: column; gap: .55rem; flex: 1 1 auto; min-width: 0; }
+.ucm-netcard__static[hidden] { display: none; }
+.ucm-netcard__members { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.1rem; }
+.ucm-netcard__memberscap { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+.ucm-netcard__member .ucm-mono { font-size: .85rem; }
+.ucm-netcard__dnsrow { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; }
+.ucm-netcard__dnschip {
+    margin: 0; padding: 0 .5rem; vertical-align: baseline;
+    background: #f4f4f4; border: 1px solid #e0e0e0;
+    font-family: "Ubuntu Mono variable", monospace; font-size: .8rem;
+}
+.ucm-netcard__dnschip .p-chip__dismiss {
+    margin: 0 0 0 .15rem; padding: 0 .2rem;
+    background-size: .65rem;
+}
+.ucm-netcard__dnsrow .p-form-validation__input {
+    flex: 1 1 12rem; margin: 0; border-radius: 0;
+    font-family: "Ubuntu Mono variable", monospace;
+}

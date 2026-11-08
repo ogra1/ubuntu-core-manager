@@ -192,8 +192,27 @@ const NETPLAN = {
                 dns: { nameservers: { addresses: ['1.1.1.1', '8.8.8.8'] } },
             },
         },
+        wifis: {
+            wlp3s0: {
+                dhcp4: true,
+                'access-points': { HomeNet: { password: 'secret123' } },
+            },
+        },
+        bridges: {
+            br0: { dhcp4: true, interfaces: ['enp5s0'] },
+        },
     },
 };
+
+/* round 53: the LIVE device state the mock's core.network.devices() returns
+   (the five tools' output merged, exactly as main.js listNetDevices() does
+   over the network-control interface). */
+const NETDEVICES = [
+    { name: 'eth0',   type: 'ethernet', connected: true,  addresses: [{ family: 'inet',  cidr: '192.168.1.50/24' }, { family: 'inet6', cidr: '2001:db8::50/64' }], gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
+    { name: 'enp3s0', type: 'ethernet', connected: true,  addresses: [], gateway: null,                                 dns: [] },
+    { name: 'wlp3s0', type: 'wifi',     connected: true,  addresses: [{ family: 'inet',  cidr: '192.168.1.51/24' }],   gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
+    { name: 'br0',    type: 'bridge',   connected: false, addresses: [], gateway: null,                                 dns: [] },
+];
 
 // The mock is (re)created inside the page so functions survive
 // evaluateOnNewDocument (argument serialization would strip them).
@@ -217,6 +236,7 @@ function mockFactoryJs() {
         let localAuthed = false;
         let cpuCalls = 0;
         let netCalls = 0;
+        let __netDoc = JSON.parse(JSON.stringify(NETPLAN));
         const __SUBS = [];
         const status = () => ({
             initialized: localSet,
@@ -369,7 +389,7 @@ function mockFactoryJs() {
                         { id: '15', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T09:00:00Z' },
                     ];
                 },
-                async netplan() { return NETPLAN; },
+                async netplan() { return JSON.parse(JSON.stringify(__netDoc)); },
                 // data partition mock: /run/mnt/data present (the core case),
                 // 33.3% of 8 GiB used, 409.6 MiB root reserve.
                 async dataDisk() {
@@ -554,13 +574,95 @@ function mockFactoryJs() {
                     return { id, change: id };
                 },
             },
-            network: {
-                async apply() { return {}; },
+            network: (() => {
+                // round 53: network DEVICES — the renderer's core.network
+                // .devices() / .applyDevice() (preload net:devices /
+                // net:apply-device). The mock models the full doc
+                // read-modify-write behind one private closure (like the
+                // snaps conf __store): __netDoc is the LIVE netplan document
+                // (seeds from the NETPLAN const), devices() overlays it on
+                // the NETDEVICES live list, applyDevice(cfg) validates like
+                // the renderer, rewrites the doc and returns a CHANGES-style
+                // async id that settles after 250ms. __setNetplan/__puts are
+                // the harness escape hatches for asserting the written doc.
+                const NETDEVICES = ${JSON.stringify(NETDEVICES)};
+                    const net0 = (doc) => {
+                        const net = (doc && doc.network) || {};
+                        const out = {};
+                        for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'])
+                            for (const k of Object.keys(net[sec] || {})) out[k] = { def: (net[sec])[k], sec };
+                        return out;
+                    };
+                    const RE_NET_NAME_M = /^[A-Za-z][A-Za-z0-9._:-]{0,15}$/;
+                const RE_NET_CIDR_M = /^(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}\\/(3[0-2]|2\\d|1\\d|[1-9])$/;
+                const RE_NET_IPV4_M = /^(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}$/;
+                let __netPuts = 0;
+                let __netSeq = 0;
+                const __netMerge = () => {
+                    const flat = net0(__netDoc);
+                    return NETDEVICES.map((d) => {
+                        const n = JSON.parse(JSON.stringify(d));
+                        if (flat[n.name]) { n.configured = true; n.netplan = flat[n.name].def; if (flat[n.name].sec === 'wifis') n.type = 'wifi'; }
+                        return n;
+                    }).concat(Object.keys(flat).filter((name) => !NETDEVICES.some((d) => d.name === name)).map((name) => {
+                        const t = flat[name].sec === 'wifis' ? 'wifi' : flat[name].sec === 'bridges' ? 'bridge' : flat[name].sec === 'bonds' ? 'bond' : flat[name].sec === 'vlans' ? 'vlan' : 'ethernet';
+                        return { name, type: t, connected: false, addresses: [], gateway: null, dns: [], configured: true, netplan: flat[name].def };
+                    }));
+                };
+                const __netValidate = (cfg) => {
+                    if (!cfg || typeof cfg !== 'object') throw new Error('network config payload required');
+                    if (!RE_NET_NAME_M.test(cfg.name)) throw new Error('invalid device name: ' + JSON.stringify(cfg.name));
+                    const def = {};
+                    if (cfg.mode === 'static') {
+                        if (!RE_NET_CIDR_M.test(cfg.address)) throw new Error('IPv4 address must carry a /prefix (e.g. 192.168.1.50/24)');
+                        def.addresses = [cfg.address];
+                        if (cfg.gateway) {
+                            if (!RE_NET_IPV4_M.test(cfg.gateway)) throw new Error('gateway must be an IPv4 address');
+                            def.gateway4 = cfg.gateway;
+                        }
+                    } else def.dhcp4 = true;
+                    if (cfg.dns) def.dns = { nameservers: { addresses: (Array.isArray(cfg.dns) ? cfg.dns : [cfg.dns]).slice() } };
+                    let section;
+                    if (cfg.type === 'bridge') {
+                        section = 'bridges';
+                        def.interfaces = (cfg.interfaces || []).slice();
+                        for (const x of def.interfaces) if (!RE_NET_NAME_M.test(x)) throw new Error('invalid bridge member: ' + x);
+                    } else if (cfg.type === 'wifi') {
+                        section = 'wifis';
+                        if (!cfg.ssid || !String(cfg.ssid).trim()) throw new Error('a Wi-Fi network name (SSID) is required');
+                        const ap = {};
+                        if (cfg.password) {
+                            if (String(cfg.password).length < 8 || String(cfg.password).length > 64) throw new Error('the Wi-Fi password must be 8-64 characters');
+                            ap.password = String(cfg.password);
+                        }
+                        if (cfg.hidden) ap.hidden = true;
+                        def['access-points'] = { [String(cfg.ssid).trim()]: ap };
+                    } else {
+                        section = 'ethernets';
+                    }
+                    return { section, def };
+                };
+                const __netApply = (cfg) => {
+                    const { section, def } = __netValidate(cfg);
+                    const net = __netDoc.network;
+                    for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
+                        if (net[sec]) { delete net[sec][cfg.name]; if (!Object.keys(net[sec]).length) delete net[sec]; }
+                    }
+                    if (!net[section]) net[section] = {};
+                    net[section][cfg.name] = def;
+                    __netPuts += 1;
+                    __netSeq += 1;
+                    const id = 'netdev' + __netSeq;
+                    CHANGES[id] = { id, status: 'Doing', kind: 'configure-snap', t0: Date.now() };
+                    setTimeout(() => { CHANGES[id] = { id, status: 'Done' }; }, 250);
+                    return { id, change: id };
+                };
                 // round 51: IP forwarding — the real app writes the /proc
                 // sysctl nodes (network-control interface) + a pref in
                 // $SNAP_COMMON. The mock models the nodes + the pref behind
                 // one object so the renderer's core.network.forwarding.* is
                 // exercised honestly. Defaults OFF (the kernel default).
+                return {
                 forwarding: (() => {
                     const __fw = { v4: false, v6: false, pref: false, puts: 0 };
                     return {
@@ -569,7 +671,13 @@ function mockFactoryJs() {
                         __fw: () => __fw,
                     };
                 })(),
-            },
+                async devices() { return __netMerge(); },
+                async applyDevice(cfg) { return __netApply(cfg); },
+                __netdoc: () => __netDoc,
+                __setNetplan(o) { __netDoc = o; },
+                __netputs: () => __netPuts,
+                };
+            })(),
             // round 49f: timesync / NTP — the real app talks to the
             // timeserver-control interface (timedate1 D-Bus for the on/off,
             // /etc/systemd/timesyncd.conf for the server). The mock models both
@@ -1366,6 +1474,385 @@ function mockFactoryJs() {
     if (g9b.offToastMsg !== 'Packet forwarding is off.')
       console.log('PAGE ERROR: the IP forwarding OFF toast message is wrong (got ' + JSON.stringify(g9b.offToastMsg) + ') (round 52)');
     // (leave the card in its default state for the shots below)
+
+    // ---- 4n. network view, INTERFACES section (round 53) ----
+    // One card per device: the DEFAULT body shows the LIVE values (the
+    // kernel truth — the address SSH connects with), read via the
+    // network-control tools; "Change settings" swaps in the in-place
+    // netplan edit form. Backed by the mock core.network.devices() /
+    // .applyDevice() (a private netplan-doc closure the drives assert).
+    await page.click('.ucm-side a[data-view="network"]');
+    await wait(700);
+    const netCardOf = async (name) => page.evaluate((nm) => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === nm);
+      return card ? {
+        type: (card.querySelector('.ucm-netcard__type') || {}).textContent || null,
+        pill: (card.querySelector('.p-status-label') || {}).textContent || null,
+        rows: Array.from(card.querySelectorAll('.ucm-netcard__rows > div')).map((r) => ({
+          k: (r.querySelector('dt') || {}).textContent || null,
+          v: (r.querySelector('dd') || {}).textContent || null,
+        })),
+      } : null;
+    }, name);
+    const netRow = (card, k) => (card ? (card.rows.find((r) => r.k === k) || {}).v : null);
+    const gN = await page.evaluate(() => {
+      const sec = document.querySelector('#netIfaceSec');
+      const cards = Array.from(document.querySelectorAll('[data-netcard]'));
+      const by = (nm) => cards.find((c) => c.dataset.netcard === nm);
+      const grid = document.querySelector('#netIfaceGrid');
+      const rects = cards.map((c) => c.getBoundingClientRect());
+      const sameRow = (a, b) => Math.abs(a.top - b.top) <= 2;
+      const widthsOk = (a, b) => Math.abs(a.width - b.width) <= Math.max(a.width, b.width) * 0.2;
+      return {
+        hasSec: !!sec,
+        title: sec ? (sec.querySelector('.ucm-iface-title') || {}).textContent || null : null,
+        count: sec ? (sec.querySelector('#netIfaceCount') || {}).textContent || null : null,
+        addBtn: !!document.querySelector('#netAddDevice'),
+        addLabel: (() => { const b = document.querySelector('#netAddDevice'); return b ? b.textContent.trim() : null; })(),
+        names: cards.map((c) => c.dataset.netcard),
+        gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : null,
+        twoUp: cards.length >= 2 && sameRow(rects[0], rects[1]) && widthsOk(rects[0], rects[1]),
+        eth0: by('eth0') || null, enp3: by('enp3s0') || null, wlp3: by('wlp3s0') || null, br0: by('br0') || null,
+      };
+    });
+    if (!gN.hasSec || gN.title !== 'Interfaces')
+      console.log('PAGE ERROR: the Interfaces section header is missing or not "Interfaces" (got ' + JSON.stringify(gN.title) + ') (round 53)');
+    if (gN.count !== '4 devices') console.log('PAGE ERROR: the Interfaces count is not "4 devices" (got ' + JSON.stringify(gN.count) + ') (round 53)');
+    if (!gN.addBtn || gN.addLabel !== 'Add bridge')
+      console.log('PAGE ERROR: the "Add bridge" ghost button is missing (got ' + JSON.stringify(gN.addLabel) + ') (round 53)');
+    if (JSON.stringify(gN.names) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0']))
+      console.log('PAGE ERROR: the device cards are wrong (got ' + JSON.stringify(gN.names) + ', want eth0/enp3s0/wlp3s0/br0) (round 53)');
+    // the grid is 2-up at 1440px: the first two cards share a top row (within
+    // 2px) with similar widths — measured, not eyeballed.
+    if (gN.gridCols !== 2 || !gN.twoUp)
+      console.log('PAGE ERROR: the device grid is not 2-up (cols ' + gN.gridCols + ', twoUp ' + gN.twoUp + ') (round 53)');
+    // ...and collapses to 1-up on a narrow window
+    await page.setViewport({ width: 760, height: 900 });
+    await wait(250);
+    const gNn = await page.evaluate(() => ({
+      cols: getComputedStyle(document.querySelector('#netIfaceGrid')).gridTemplateColumns.split(' ').length,
+    }));
+    await page.setViewport({ width: 1440, height: 900 });
+    await wait(250);
+    if (gNn.cols !== 1) console.log('PAGE ERROR: the device grid should collapse to 1-up on a narrow window (got ' + gNn.cols + ' cols) (round 53)');
+    // card bodies: the LIVE values are the default view (the SSH-address
+    // requirement) — eth0 192.168.1.50/24, enp3s0 no addresses, wlp3s0 its
+    // SSID from the netplan, br0 not connected with its members.
+    const cEth = await netCardOf('eth0');
+    if (!cEth) console.log('PAGE ERROR: no eth0 device card (round 53)');
+    else {
+        if (cEth.type !== 'Ethernet') console.log('PAGE ERROR: eth0 type is not "Ethernet" (got ' + cEth.type + ') (round 53)');
+        if (cEth.pill !== 'Connected') console.log('PAGE ERROR: eth0 status pill is not "Connected" (got ' + cEth.pill + ') (round 53)');
+        if (netRow(cEth, 'Addresses') !== '192.168.1.50/24, 2001:db8::50/64')
+            console.log('PAGE ERROR: eth0 Addresses is not the LIVE address (got ' + JSON.stringify(netRow(cEth, 'Addresses')) + ', want "192.168.1.50/24, 2001:db8::50/64") (round 53)');
+        if (netRow(cEth, 'Gateway') !== '192.168.1.1') console.log('PAGE ERROR: eth0 Gateway is not the LIVE gateway (got ' + JSON.stringify(netRow(cEth, 'Gateway')) + ') (round 53)');
+        if (netRow(cEth, 'DNS') !== '192.168.1.1') console.log('PAGE ERROR: eth0 DNS is not the LIVE resolver (got ' + JSON.stringify(netRow(cEth, 'DNS')) + ') (round 53)');
+        if (netRow(cEth, 'Configured') !== 'Automatic (DHCP)') console.log('PAGE ERROR: eth0 Configured is not "Automatic (DHCP)" (got ' + JSON.stringify(netRow(cEth, 'Configured')) + ') (round 53)');
+    }
+    const cEnp = await netCardOf('enp3s0');
+    if (!cEnp) console.log('PAGE ERROR: no enp3s0 device card (round 53)');
+    else if (netRow(cEnp, 'Addresses') !== '\u2014')
+        console.log('PAGE ERROR: enp3s0 (no addresses) should show the em-dash (got ' + JSON.stringify(netRow(cEnp, 'Addresses')) + ') (round 53)');
+    const cWlp = await netCardOf('wlp3s0');
+    if (!cWlp) console.log('PAGE ERROR: no wlp3s0 device card (round 53)');
+    else {
+        if (cWlp.type !== 'Wi-Fi') console.log('PAGE ERROR: wlp3s0 type is not "Wi-Fi" (got ' + cWlp.type + ') (round 53)');
+        if (netRow(cWlp, 'Network') !== 'HomeNet')
+            console.log('PAGE ERROR: wlp3s0 Network is not its netplan SSID (got ' + JSON.stringify(netRow(cWlp, 'Network')) + ') (round 53)');
+        if (netRow(cWlp, 'Addresses') !== '192.168.1.51/24')
+            console.log('PAGE ERROR: wlp3s0 Addresses is not the LIVE address (got ' + JSON.stringify(netRow(cWlp, 'Addresses')) + ') (round 53)');
+    }
+    const cBr0 = await netCardOf('br0');
+    if (!cBr0) console.log('PAGE ERROR: no br0 device card (round 53)');
+    else {
+        if (cBr0.pill !== 'Not connected') console.log('PAGE ERROR: br0 status pill is not "Not connected" (got ' + cBr0.pill + ') (round 53)');
+        if (netRow(cBr0, 'Members') !== 'enp5s0') console.log('PAGE ERROR: br0 Members is not its netplan member list (got ' + JSON.stringify(netRow(cBr0, 'Members')) + ') (round 53)');
+        if (netRow(cBr0, 'Configured') !== 'Automatic (DHCP)') console.log('PAGE ERROR: br0 Configured is not "Automatic (DHCP)" (got ' + JSON.stringify(netRow(cBr0, 'Configured')) + ') (round 53)');
+    }
+    // the view state carries NO inputs (inputs are hidden until needed)
+    const gNview = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      return { inputs: card ? card.querySelectorAll('input').length : null, editBtn: card ? !!Array.from(card.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Change settings') : null };
+    });
+    if (gNview.inputs !== 0) console.log('PAGE ERROR: the eth0 view state must carry no inputs (got ' + gNview.inputs + ') (round 53)');
+    if (!gNview.editBtn) console.log('PAGE ERROR: the eth0 card has no "Change settings" affordance (round 53)');
+    await page.screenshot({ path: path.join(SHOTS, '9c-network-interfaces.png') });
+
+    // (a) open the eth0 edit form: DHCP by default, the address fields
+    //     hidden until the Static switch is on, no SSID field, the name
+    //     locked for an existing device.
+    await page.click('[data-netcard="eth0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNa = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      if (!card) return null;
+      const fieldOf = (label) => Array.from(card.querySelectorAll('.ucm-netcard__fg label')).find((l) => l.textContent.trim() === label);
+      const inpOf = (label) => { const f = fieldOf(label); return f && f.parentElement ? f.parentElement.querySelector('input') : null; };
+      const ni = inpOf('Name');
+      return {
+        isEditing: card.classList.contains('ucm-netcard--editing'),
+        spansRow: card.getBoundingClientRect().width >= document.querySelector('#netIfaceGrid').getBoundingClientRect().width - 4,
+        staticSw: card.querySelector('.ucm-netcard__sw .p-switch__input') ? card.querySelector('.ucm-netcard__sw .p-switch__input').checked : null,
+        staticHidden: card.querySelector('.ucm-netcard__static') ? card.querySelector('.ucm-netcard__static').hidden : null,
+        namePresent: !!ni, nameDisabled: ni ? ni.disabled : null,
+        addrPresent: !!inpOf('IPv4 address'), gwPresent: !!inpOf('Gateway'),
+        dnsRow: !!card.querySelector('.ucm-netcard__dnsrow input'),
+        hasSsid: !!fieldOf('Network'),
+        cancel: !!Array.from(card.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Cancel'),
+        apply: !!Array.from(card.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Apply'),
+      };
+    });
+    if (!gNa) console.log('PAGE ERROR: the eth0 card did not enter the edit state (round 53)');
+    else {
+        if (!gNa.isEditing || !gNa.spansRow)
+            console.log('PAGE ERROR: the editing card should span the grid row (editing ' + gNa.isEditing + ', spans ' + gNa.spansRow + ') (round 53)');
+        if (gNa.staticSw !== false) console.log('PAGE ERROR: eth0 (DHCP) should open with the Static IP switch OFF (round 53)');
+        if (gNa.staticHidden !== true) console.log('PAGE ERROR: the address fields must be hidden until the Static switch is on (round 53)');
+        if (!gNa.dnsRow) console.log('PAGE ERROR: the DNS chip input is missing from the edit form (round 53)');
+        if (gNa.hasSsid) console.log('PAGE ERROR: an ethernet card must not carry a Wi-Fi SSID field (round 53)');
+        if (!gNa.namePresent || gNa.nameDisabled !== true)
+            console.log('PAGE ERROR: the name must be DISABLED for an existing device (round 53)');
+        if (!gNa.cancel || !gNa.apply) console.log('PAGE ERROR: the edit form is missing Cancel/Apply (round 53)');
+    }
+    // (b) flip the Static switch (a REAL click) -> the fields are revealed;
+    //     type an address + gateway -> Apply -> the mock netplan doc carries
+    //     the canonical entry (the apply-through-netplan proof).
+    await page.click('[data-netcard="eth0"] .ucm-netcard__sw .p-switch__input');
+    await wait(200);
+    const gNb0 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      const sf = card ? card.querySelector('.ucm-netcard__static') : null;
+      return { hidden: sf ? sf.hidden : null, addr: sf ? sf.querySelectorAll('input').length : null };
+    });
+    if (gNb0.hidden !== false || gNb0.addr !== 2)
+        console.log('PAGE ERROR: the Static switch must reveal the address + gateway inputs (hidden ' + gNb0.hidden + ', inputs ' + gNb0.addr + ') (round 53)');
+    await page.click('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input');
+    await page.type('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', '192.168.1.99/24');
+    await page.type('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(2) input', '192.168.1.1');
+    const netPutsB = await page.evaluate(() => window.__mockCore.network.__netputs());
+    await page.click('[data-netcard="eth0"] button.p-button--brand');
+    await wait(900);
+    const gNb = await page.evaluate(() => {
+      const doc = window.__mockCore.network.__netdoc();
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      const t = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Configuration applied');
+      const rows = card ? Array.from(card.querySelectorAll('.ucm-netcard__rows > div')).map((r) => (r.querySelector('dt') || {}).textContent) : null;
+      const cfg = card ? Array.from(card.querySelectorAll('.ucm-netcard__rows > div')).find((r) => (r.querySelector('dt') || {}).textContent === 'Configured') : null;
+      return {
+        addr: doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.addresses || null,
+        gw: doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.gateway4 || null,
+        dhcp: doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.dhcp4 || null,
+        toast: !!t, viewRows: rows, cfg: cfg ? cfg.querySelector('dd').textContent : null,
+      };
+    });
+    if (JSON.stringify(gNb.addr) !== JSON.stringify(['192.168.1.99/24']))
+        console.log('PAGE ERROR: the Apply did not write eth0 static into the netplan doc (got ' + JSON.stringify(gNb.addr) + ') (round 53)');
+    if (gNb.gw !== '192.168.1.1') console.log('PAGE ERROR: the Apply did not write the gateway4 (got ' + JSON.stringify(gNb.gw) + ') (round 53)');
+    if (gNb.dhcp === true) console.log('PAGE ERROR: a static eth0 must not carry dhcp4: true (round 53)');
+    if (!gNb.toast) console.log('PAGE ERROR: the successful Apply did not toast "Configuration applied" (round 53)');
+    if (JSON.stringify(gNb.viewRows) !== JSON.stringify(['Addresses', 'Gateway', 'DNS', 'Configured']))
+        console.log('PAGE ERROR: the eth0 card should be back in its LIVE view state (rows ' + JSON.stringify(gNb.viewRows) + ') (round 53)');
+    if (gNb.cfg !== 'Static IP') console.log('PAGE ERROR: eth0 Configured should now read "Static IP" (got ' + JSON.stringify(gNb.cfg) + ') (round 53)');
+    await page.screenshot({ path: path.join(SHOTS, '9d-network-eth0-static.png') });
+
+    // (c) re-open: the form is PRE-FILLED from the netplan (the static
+    //     switch on, the address filled) -> Cancel leaves the doc as-is.
+    await page.click('[data-netcard="eth0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNc = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      const sf = card ? card.querySelector('.ucm-netcard__static') : null;
+      const inps = sf ? Array.from(sf.querySelectorAll('input')).map((i) => i.value) : null;
+      return {
+        sw: card ? card.querySelector('.ucm-netcard__sw .p-switch__input').checked : null,
+        hidden: sf ? sf.hidden : null,
+        inps,
+      };
+    });
+    if (gNc.sw !== true || gNc.hidden !== false)
+        console.log('PAGE ERROR: a static device must re-open with the Static switch ON and the fields revealed (got ' + JSON.stringify(gNc) + ') (round 53)');
+    if (JSON.stringify(gNc.inps) !== JSON.stringify(['192.168.1.99/24', '192.168.1.1']))
+        console.log('PAGE ERROR: the netplan values must prefill the form (got ' + JSON.stringify(gNc.inps) + ') (round 53)');
+    await page.click('[data-netcard="eth0"] .ucm-netcard__foot--edit button.p-button--base');
+    await wait(250);
+    const gNc2 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      return { editing: card ? card.classList.contains('ucm-netcard--editing') : null };
+    });
+    if (gNc2.editing !== false)
+        console.log('PAGE ERROR: Cancel should leave the card in its view state (round 53)');
+
+    // (d) the Wi-Fi form prefills the netplan SSID + password (masked).
+    await page.click('[data-netcard="wlp3s0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNd = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'wlp3s0');
+      if (!card) return null;
+      const fieldOf = (label) => Array.from(card.querySelectorAll('.ucm-netcard__fg label')).find((l) => l.textContent.trim() === label);
+      const inpOf = (label) => { const f = fieldOf(label); return f && f.parentElement ? f.parentElement.querySelector('input') : null; };
+      const s = inpOf('Network'), p = inpOf('Wi-Fi password');
+      return {
+        ssid: s ? s.value : null, pw: p ? p.value : null, pwType: p ? p.type : null,
+        hasHidden: !!Array.from(card.querySelectorAll('.p-switch')).find((l) => l.textContent.trim() === 'Hidden network'), hasMembers: !!card.querySelector('.ucm-netcard__members'),
+      };
+    });
+    if (!gNd) console.log('PAGE ERROR: the wlp3s0 card did not enter the edit state (round 53)');
+    else {
+        if (gNd.ssid !== 'HomeNet') console.log('PAGE ERROR: the Wi-Fi SSID must prefill from the netplan (got ' + JSON.stringify(gNd.ssid) + ') (round 53)');
+        if (gNd.pw !== 'secret123' || gNd.pwType !== 'password')
+            console.log('PAGE ERROR: the Wi-Fi password must prefill masked (got ' + JSON.stringify(gNd.pw) + ' type ' + gNd.pwType + ') (round 53)');
+        if (!gNd.hasHidden) console.log('PAGE ERROR: the Wi-Fi form is missing the Hidden-network switch (round 53)');
+        if (gNd.hasMembers) console.log('PAGE ERROR: a Wi-Fi card must not carry the bridge member list (round 53)');
+    }
+    await page.click('[data-netcard="wlp3s0"] .ucm-netcard__foot--edit button.p-button--base');
+    await wait(250);
+    await page.screenshot({ path: path.join(SHOTS, '9e-network-wifi-edit.png') });
+
+    // (e) "Add bridge" -> a pending card (name editable + prefilled, the
+    //     member checklist excludes the virtual br0) -> Apply writes it.
+    await page.click('#netAddDevice');
+    await wait(250);
+    const gNe0 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'br1');
+      if (!card) return null;
+      const nameFg = Array.from(card.querySelectorAll('.ucm-netcard__fg')).find((f) => f.querySelector('label') && f.querySelector('label').textContent.trim() === 'Name');
+      const nameInp = nameFg ? nameFg.querySelector('input') : null;
+      const mem = card ? card.querySelector('.ucm-netcard__members') : null;
+      return {
+        editing: card.classList.contains('ucm-netcard--editing'),
+        nameVal: nameInp ? nameInp.value : null, nameDisabled: nameInp ? nameInp.disabled : null,
+        members: mem ? Array.from(mem.querySelectorAll('.ucm-netcard__member .ucm-mono')).map((x) => x.textContent.trim()) : null,
+        hasBridge: !!document.querySelector('[data-netcard="br0"]'),
+      };
+    });
+    if (!gNe0) console.log('PAGE ERROR: "Add bridge" did not spawn the pending br1 card (round 53)');
+    else {
+        if (!gNe0.editing) console.log('PAGE ERROR: the new bridge card should open in the edit state (round 53)');
+        if (gNe0.nameVal !== 'br1' || gNe0.nameDisabled !== false)
+            console.log('PAGE ERROR: the pending bridge name must be editable and prefilled "br1" (got ' + JSON.stringify(gNe0) + ') (round 53)');
+        if (JSON.stringify(gNe0.members) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0']))
+            console.log('PAGE ERROR: the member checklist should list the physical devices only, NO br0 (got ' + JSON.stringify(gNe0.members) + ') (round 53)');
+    }
+    await page.click('[data-netcard="br1"] .ucm-netcard__member .p-switch__input');
+    await wait(150);
+    await page.click('[data-netcard="br1"] .ucm-netcard__dnsrow input');
+    await page.type('[data-netcard="br1"] .ucm-netcard__dnsrow input', '2.2.2.2');
+    await page.keyboard.press('Enter');
+    await wait(200);
+    const gNe1 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'br1');
+      const chip = card ? card.querySelector('.ucm-netcard__dnschip') : null;
+      return { chip: chip ? chip.querySelector('span').textContent.trim() : null };
+    });
+    if (gNe1.chip !== '2.2.2.2') console.log('PAGE ERROR: the DNS token must chip (Enter) into the row (got ' + JSON.stringify(gNe1.chip) + ') (round 53)');
+    await page.click('[data-netcard="br1"] button.p-button--brand');
+    await wait(900);
+    const gNe = await page.evaluate(() => {
+      const doc = window.__mockCore.network.__netdoc();
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'br1');
+      const t = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Configuration applied');
+      const mem = card ? card.querySelector('.ucm-netcard__rows dd') : null;
+      return {
+        b: doc.network.bridges && doc.network.bridges.br1 || null,
+        toast: !!t,
+        cardGone: !card,
+      };
+    });
+    if (!gNe.b) console.log('PAGE ERROR: the bridge Apply did not write bridges.br1 (round 53)');
+    else {
+        if (JSON.stringify(gNe.b.interfaces) !== JSON.stringify(['eth0']))
+            console.log('PAGE ERROR: the written bridge must carry the checked members (got ' + JSON.stringify(gNe.b.interfaces) + ') (round 53)');
+        if (JSON.stringify(gNe.b.dns && gNe.b.dns.nameservers && gNe.b.dns.nameservers.addresses) !== JSON.stringify(['2.2.2.2']))
+            console.log('PAGE ERROR: the written bridge must carry the DNS servers (got ' + JSON.stringify(gNe.b.dns) + ') (round 53)');
+    }
+    if (!gNe.toast) console.log('PAGE ERROR: the bridge Apply did not toast "Configuration applied" (round 53)');
+    await page.screenshot({ path: path.join(SHOTS, '9f-network-bridge.png') });
+
+    // (f) the UI validation rejects BEFORE the IPC: a bad address shows the
+    //     "/prefix" toast and sends nothing (the puts delta proves it). The
+    //     card re-opens in STATIC mode (the (b) apply) — switch on, fields
+    //     visible, the (b) values prefilled — so no switch click is needed.
+    await page.click('[data-netcard="eth0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNf0 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      const sw = card ? card.querySelector('.ucm-netcard__sw .p-switch__input') : null;
+      const sf = card ? card.querySelector('.ucm-netcard__static') : null;
+      return { sw: sw ? sw.checked : null, hidden: sf ? sf.hidden : null };
+    });
+    if (gNf0.sw !== true || gNf0.hidden !== false)
+      console.log('PAGE ERROR: (f) preflight — the card must re-open in static mode (sw ' + gNf0.sw + ', hidden ' + gNf0.hidden + ') (round 53)');
+    await page.click('[data-netcard=\"eth0\"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', { clickCount: 3 }); // select the prefilled value
+    await page.type('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', '999.1.1.1/24');
+    const netPutsF = await page.evaluate(() => window.__mockCore.network.__netputs());
+    await page.click('[data-netcard="eth0"] button.p-button--brand');
+    await wait(400);
+    let gNf = await page.evaluate(() => {
+      const t = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Operation failed');
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      return {
+        msg: t ? (t.querySelector('.p-notification__message') || {}).textContent || null : null,
+        editing: card ? card.classList.contains('ucm-netcard--editing') : null,
+        puts: window.__mockCore.network.__netputs(),
+      };
+    });
+    if (!gNf.msg || !/prefix/.test(gNf.msg))
+        console.log('PAGE ERROR: the bad address must toast the "/prefix" hint BEFORE the IPC (got ' + JSON.stringify(gNf.msg) + ') (round 53)');
+    if (gNf.puts !== netPutsF) console.log('PAGE ERROR: a UI-rejected apply must send NO netplan PUT (delta ' + (gNf.puts - netPutsF) + ') (round 53)');
+    if (gNf.editing !== true) console.log('PAGE ERROR: the card should stay open after a rejected apply (round 53)');
+    // a good octet count but an impossible octet value (999) — the STRICT
+    // regex must reject it too (a loose \d{1,3} would let it through)
+    await page.click('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', { clickCount: 3 });
+    await page.type('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', '10.0.999.5/24');
+    await page.click('[data-netcard="eth0"] button.p-button--brand');
+    await wait(400);
+    gNf = await page.evaluate(() => {
+      const t = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Operation failed');
+      return { msg: t ? (t.querySelector('.p-notification__message') || {}).textContent || null : null, puts: window.__mockCore.network.__netputs() };
+    });
+    if (!gNf.msg || !/prefix/.test(gNf.msg))
+        console.log('PAGE ERROR: an out-of-range octet (999) must be rejected by the UI regex (got ' + JSON.stringify(gNf.msg) + ') (round 53)');
+    if (gNf.puts !== netPutsF) console.log('PAGE ERROR: the out-of-range octet must send NO netplan PUT (round 53)');
+    // and a bad GATEWAY is rejected the same way. The renderer validates the
+    // address BEFORE the gateway, so restore a VALID address first, then
+    // poison the gateway (the 999 value from the sub-test above is still
+    // in the field).
+    await page.click('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', { clickCount: 3 });
+    await page.type('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', '10.0.0.99/24');
+    await page.click('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(2) input', { clickCount: 3 });
+    await page.type('[data-netcard="eth0"] .ucm-netcard__static .p-form__group:nth-of-type(2) input', 'not-an-ip');
+    await page.click('[data-netcard="eth0"] button.p-button--brand');
+    await wait(400);
+    gNf = await page.evaluate(() => {
+      const t = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Operation failed');
+      return { msg: t ? (t.querySelector('.p-notification__message') || {}).textContent || null : null };
+    });
+    if (!gNf.msg || !/IPv4/.test(gNf.msg))
+        console.log('PAGE ERROR: a bad gateway must toast the IPv4 hint (got ' + JSON.stringify(gNf.msg) + ') (round 53)');
+    // leave the eth0 card in its (valid) static view state for the shots
+    await page.keyboard.press('Escape');
+    await wait(250);
+
+    // (g) pending cancel: "Add bridge" -> Cancel -> the pending card is gone.
+    //     After (e) br1 persists in the doc, so this 2nd add uniquely names
+    //     br2 (netUniqueBridgeName skips br0 + br1).
+    await page.click('#netAddDevice');
+    await wait(250);
+    const gNg0 = await page.evaluate(() => ({
+      br2: !!document.querySelector('[data-netcard="br2"]'),
+      br2Editing: (() => { const c = document.querySelector('[data-netcard="br2"]'); return c ? c.classList.contains('ucm-netcard--editing') : null; })(),
+    }));
+    if (!gNg0.br2 || !gNg0.br2Editing) console.log('PAGE ERROR: the second "Add bridge" should spawn a pending br2 (got ' + JSON.stringify(gNg0) + ') (round 53)');
+    await page.click('[data-netcard="br2"] .ucm-netcard__foot--edit button.p-button--base');
+    await wait(250);
+    const gNg = await page.evaluate(() => ({
+      br2: !!document.querySelector('[data-netcard="br2"]'),
+      cards: Array.from(document.querySelectorAll('[data-netcard]')).map((c) => c.dataset.netcard),
+    }));
+    if (gNg.br2) console.log('PAGE ERROR: cancelling a pending bridge must drop the card (round 53)');
+    if (JSON.stringify(gNg.cards) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0', 'br1']))
+        console.log('PAGE ERROR: after the pending cancel the card list must keep the four real devices + br1 from (e) (got ' + JSON.stringify(gNg.cards) + ') (round 53)');
+
 
 
     // ---- 4. snaps view (search works WITHOUT a store login) ----

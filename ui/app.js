@@ -106,6 +106,11 @@ const RE_SNAP_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 const state = {
     view: 'dashboard',
+    // network devices (round 53): live kernel state merged with the netplan
+    // definitions; netEditing = the one device card currently in edit form
+    // (a pending added bridge carries d.pending until its first Apply).
+    devices: null,
+    netEditing: null,
     // local admin gate (the UI lock screen; offline)
     initialized: false,
     authenticated: false,
@@ -655,10 +660,10 @@ function renderCpuChart() {
 /* ------------------------------- network --------------------------------- */
 
 async function loadNetwork() {
-    // round 49b: the network view is the General card; load its values from
-    // the live core conf. (The old skeleton netplan interface form is gone —
-    // netplan editing moves back in as a proper card later if needed.)
-    await loadGeneral();
+    // The network view = the General card (round 49b) + the Interfaces
+    // section (round 53): one card per device, LIVE values by default, the
+    // netplan definition editable in place.
+    await Promise.all([loadGeneral(), loadNetDevices().catch(() => {})]);
 }
 
 
@@ -996,6 +1001,275 @@ function renderGeneral() {
     rows.append(fwRow);
     body.append(rows);
     } finally { genRendering = false; }
+}
+
+/* ------------------- network devices (round 53) ------------------------
+   One flat card per device in a 2-up grid. The DEFAULT view is the LIVE
+   state (what the kernel is doing right now — the user looks up an SSH
+   address here), read via the network-control interface's standard tools
+   (ip / iw / resolvectl); editing swaps the card's body for a form
+   pre-filled from the NETPLAN definition (the configured truth) and
+   applies ONE device's entry through snapd's netplan external config
+   (which tries the change for 30s and rolls back if it would lose the
+   connection). Physical devices are always shown; virtual ones (bridges,
+   v1: added via "Add bridge") come from the netplan doc.
+   ---------------------------------------------------------------------- */
+const NET_TYPE_NAMES = {
+    ethernet: 'Ethernet', wifi: 'Wi-Fi', bridge: 'Bridge', bond: 'Bond',
+    vlan: 'VLAN', tunnel: 'Tunnel', vrf: 'VRF', dummy: 'Dummy', veth: 'vEthernet',
+    other: 'Network', wired: 'Network',
+};
+const RE_NET_NAME_UI = /^[A-Za-z][A-Za-z0-9._:-]{0,15}$/;
+const RE_NET_CIDR_UI = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\/(3[0-2]|2\d|1\d|[1-9])$/;
+const RE_NET_IPV4_UI = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+let netRendering = false;
+async function loadNetDevices() {
+    const d = await core.network.devices();
+    state.devices = Array.isArray(d) ? d : [];
+    if (state.view === 'network') renderNetDevices();
+}
+function netEditingName() { return String(state.netEditing || '').replace(/^new:/, ''); }
+function netUniqueBridgeName() {
+    const have = new Set((state.devices || []).map((d) => d.name));
+    let i = 0;
+    while (have.has('br' + i)) i += 1;
+    return 'br' + i;
+}
+function renderNetDevices() {
+    if (netRendering) return;
+    netRendering = true;
+    try {
+        const grid = $('#netIfaceGrid');
+        if (!grid || !state.devices) return;
+        const count = $('#netIfaceCount');
+        if (count) count.textContent = state.devices.length + ' device' + (state.devices.length === 1 ? '' : 's');
+        grid.replaceChildren(...state.devices.map((d) => netCard(d)));
+    } finally { netRendering = false; }
+}
+/* a device card: header (name + type + live status pill) + body — the LIVE
+   summary, or the in-place edit form while editing (the card spans the row). */
+function netCard(d) {
+    const card = el('div', { class: 'p-card ucm-netcard' + (state.netEditing === d.name ? ' ucm-netcard--editing' : '') });
+    card.dataset.netcard = d.name;
+    const head = el('div', { class: 'p-card__header ucm-netcard__head' });
+    head.append(
+        el('span', { class: 'ucm-netcard__name ucm-mono', text: d.name }),
+        el('span', { class: 'ucm-netcard__type', text: NET_TYPE_NAMES[d.type] || 'Network' }),
+        el('span', { class: 'p-status-label ' + (d.connected ? 'p-status-label--positive' : 'p-status-label--caution'), text: d.connected ? 'Connected' : 'Not connected' }),
+    );
+    card.append(head);
+    const body = el('div', { class: 'ucm-netcard__body' });
+    body.append(state.netEditing === d.name ? netCardEdit(d) : netCardView(d));
+    card.append(body);
+    return card;
+}
+/* the default (view) body: the LIVE values — addresses (the kernel truth,
+   what SSH connects with), gateway, DNS — plus the configured mode. */
+function netCardView(d) {
+    const rowsDl = el('dl', { class: 'ucm-kv ucm-netcard__rows' });
+    const live = (v) => (v == null || v === '' || (Array.isArray(v) && !v.length)) ? '—' : String(v);
+    const rows = [];
+    rows.push(['Addresses', live(d.addresses && d.addresses.length ? d.addresses.map((a) => a.cidr).join(', ') : null)]);
+    rows.push(['Gateway', live(d.gateway)]);
+    rows.push(['DNS', live(d.dns && d.dns.length ? d.dns.join(', ') : null)]);
+    if (d.type === 'wifi') {
+        const aps = d.netplan && d.netplan['access-points'] ? Object.keys(d.netplan['access-points']) : [];
+        rows.push(['Network', aps.length ? aps[0] : null]);
+    }
+    if (d.type === 'bridge') {
+        const mem = d.netplan && d.netplan.interfaces && d.netplan.interfaces.length ? d.netplan.interfaces : null;
+        rows.push(['Members', mem ? mem.join(', ') : null]);
+    }
+    const staticish = d.configured && d.netplan && Array.isArray(d.netplan.addresses) && d.netplan.addresses.length;
+    rows.push(['Configured', d.configured ? (staticish ? 'Static IP' : 'Automatic (DHCP)') : null]);
+    for (const [k, v] of rows) {
+        const r = el('div', { class: 'ucm-netcard__row' });
+        r.append(el('dt', { text: k }));
+        r.append(el('dd', { class: 'ucm-muted' + (v == null ? '' : ' ucm-netcard__v'), text: v == null ? 'Not configured' : String(v) }));
+        rowsDl.append(r);
+    }
+    const box = el('div', { class: 'ucm-netcard__view' });
+    box.append(rowsDl);
+    box.append(el('div', { class: 'ucm-netcard__foot' },
+        el('button', {
+            type: 'button', class: 'p-button--base ucm-netcard__edit', text: 'Change settings',
+            onclick: () => { state.netEditing = d.name; renderNetDevices(); },
+        })));
+    return box;
+}
+/* the in-place edit body: pre-filled from the netplan definition (the
+   configured truth), applies ONE device entry to the netplan doc. */
+function netCardEdit(d) {
+    const np = (d.configured && d.netplan && typeof d.netplan === 'object') ? d.netplan : {};
+    const ap0 = (np['access-points'] && Object.keys(np['access-points'])[0]) || null;
+    const apDef = ap0 ? np['access-points'][ap0] : {};
+    const staticOn = Array.isArray(np.addresses) && np.addresses.length > 0;
+    const v = {
+        name: d.name,
+        type: d.type === 'bridge' ? 'bridge' : (d.type === 'wifi' ? 'wifi' : 'ethernet'),
+        mode: staticOn ? 'static' : 'dhcp',
+        address: (np.addresses && np.addresses[0]) || '',
+        gateway: np.gateway4 || '',
+        dns: (np.dns && np.dns.nameservers && np.dns.nameservers.addresses) ? np.dns.nameservers.addresses.slice() : [],
+        ssid: ap0 || '',
+        password: apDef.password || '',
+        hidden: apDef.hidden === true,
+        members: np.interfaces && Array.isArray(np.interfaces) ? np.interfaces.slice() : [],
+    };
+    const box = el('div', { class: 'ucm-netcard__edit' });
+    const field = (label, input, cls) => {
+        const g = el('div', { class: 'p-form__group ucm-netcard__fg' + (cls ? ' ' + cls : '') });
+        g.append(el('label', { class: 'p-form__label', text: label }), input);
+        return g;
+    };
+    const nameInp = el('input', { class: 'p-form-validation__input ucm-mono', type: 'text', spellcheck: 'false', placeholder: 'e.g. br0' });
+    nameInp.value = v.name;
+    if (!d.pending) nameInp.disabled = true;
+    box.append(field('Name', nameInp, 'ucm-netcard__namefg'));
+
+    // Address mode: a switch (no pulldown) — off = Automatic (DHCP), on =
+    // static (reveals the address fields, the "hidden until needed" rule).
+    const staticGrp = el('div', { class: 'ucm-netcard__row' });
+    const staticSw = el('input', { class: 'p-switch__input', type: 'checkbox' });
+    staticSw.checked = v.mode === 'static';
+    const staticFields = el('div', { class: 'ucm-netcard__static' });
+    staticFields.hidden = v.mode !== 'static';
+    const addrInp = el('input', { class: 'p-form-validation__input ucm-mono', type: 'text', spellcheck: 'false', placeholder: 'e.g. 192.168.1.50/24' });
+    addrInp.value = v.address;
+    const gwInp = el('input', { class: 'p-form-validation__input ucm-mono', type: 'text', spellcheck: 'false', placeholder: 'e.g. 192.168.1.1' });
+    gwInp.value = v.gateway;
+    staticFields.append(field('IPv4 address', addrInp), field('Gateway', gwInp));
+    staticSw.addEventListener('change', () => { staticFields.hidden = !staticSw.checked; });
+    staticGrp.append(el('label', { class: 'p-switch ucm-netcard__sw' },
+        el('span', { text: 'Static IP' }), staticSw, el('span', { class: 'p-switch__slider' })),
+        el('span', { class: 'ucm-muted', text: 'Automatic (DHCP) when off' }));
+    box.append(staticGrp, staticFields);
+
+    // Wi-Fi: the network + password (WPA-PSK, v1; the password is a masked
+    // field and never shown in the summary).
+    let ssidInp = null, pwInp = null, hidSw = null;
+    if (v.type === 'wifi') {
+        ssidInp = el('input', { class: 'p-form-validation__input', type: 'text', spellcheck: 'false', placeholder: 'Wi-Fi network name' });
+        ssidInp.value = v.ssid;
+        pwInp = el('input', { class: 'p-form-validation__input', type: 'password', spellcheck: 'false', placeholder: 'password' });
+        pwInp.value = v.password;
+        box.append(field('Network', ssidInp), field('Wi-Fi password', pwInp));
+        hidSw = el('input', { class: 'p-switch__input', type: 'checkbox' });
+        hidSw.checked = v.hidden;
+        box.append(el('div', { class: 'ucm-netcard__row' },
+            el('label', { class: 'p-switch ucm-gen__sw' },
+                el('span', { text: 'Hidden network' }), hidSw, el('span', { class: 'p-switch__slider' }))));
+    }
+
+    // Bridge: which physical devices join it (a checklist of switches —
+    // no pulldown). Virtual devices are not valid members in v1.
+    let memberEls = null;
+    if (v.type === 'bridge') {
+        const list = (state.devices || []).filter((x) => (x.type === 'ethernet' || x.type === 'wifi' || x.type === 'wired') && x.name !== v.name && !x.pending);
+        memberEls = new Map();
+        const mwrap = el('div', { class: 'ucm-netcard__members' });
+        mwrap.append(el('span', { class: 'ucm-muted ucm-netcard__memberscap', text: 'Members' }));
+        if (!list.length) mwrap.append(el('span', { class: 'ucm-muted', text: 'no physical devices found' }));
+        for (const x of list) {
+            const sw = el('input', { class: 'p-switch__input', type: 'checkbox' });
+            sw.checked = v.members.includes(x.name);
+            memberEls.set(x.name, sw);
+            mwrap.append(el('label', { class: 'p-switch ucm-gen__sw ucm-netcard__member' },
+                el('span', { class: 'ucm-mono', text: x.name }), sw, el('span', { class: 'p-switch__slider' })));
+        }
+        box.append(mwrap);
+    }
+
+    // DNS: a free-text line that chips itself (Enter/blur commits the
+    // tokens) — no pulldown, no extra field.
+    const dnsState = { vals: v.dns.slice() };
+    const dnsInp = el('input', { class: 'p-form-validation__input ucm-mono', type: 'text', spellcheck: 'false', placeholder: 'e.g. 1.1.1.1, 8.8.8.8' });
+    const dnsRow = el('div', { class: 'ucm-netcard__dnsrow' });
+    const dnsLive = (raw) => String(raw).split(/[, ]+/).map((x) => x.trim()).filter(Boolean);
+    const renderDns = () => {
+        dnsRow.replaceChildren(...dnsState.vals.map((x) =>
+            el('span', { class: 'p-chip ucm-netcard__dnschip ucm-mono' },
+                el('span', { text: x }),
+                el('button', {
+                    type: 'button', class: 'p-chip__dismiss', 'aria-label': 'Remove ' + x,
+                    onclick: () => { dnsState.vals = dnsState.vals.filter((y) => y !== x); renderDns(); },
+                }))),
+            dnsInp);
+    };
+    dnsInp.addEventListener('blur', () => {
+        if (!dnsRow.contains(dnsInp)) return;
+        dnsState.vals = dnsState.vals.concat(dnsLive(dnsInp.value));
+        dnsInp.value = '';
+        renderDns();
+    });
+    dnsInp.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        dnsState.vals = dnsState.vals.concat(dnsLive(dnsInp.value));
+        dnsInp.value = '';
+        renderDns();
+    });
+    renderDns();
+    box.append(el('div', { class: 'p-form__group ucm-netcard__fg' }, el('label', { class: 'p-form__label', text: 'DNS servers' }), dnsRow));
+
+    // footer: Cancel (revert) + Apply (commit through snapd). A rejected
+    // apply (snapd's Config.Try lost the connection and rolled back) leaves
+    // the doc unchanged — the card goes straight back to its LIVE values.
+    const foot = el('div', { class: 'ucm-netcard__foot ucm-netcard__foot--edit' });
+    foot.append(
+        el('button', { type: 'button', class: 'p-button--base', text: 'Cancel', onclick: () => { if (d.pending) state.devices = state.devices.filter((x) => x !== d); state.netEditing = null; renderNetDevices(); } }),
+        (() => { const b = el('button', { type: 'button', class: 'p-button--brand', text: 'Apply' }); return b; })(),
+    );
+    box.append(foot);
+    const applyBtn = foot.querySelector('.p-button--brand');
+
+    applyBtn.addEventListener('click', async () => {
+        if (applyBtn.disabled) return;
+        try {
+            const name = nameInp.value.trim();
+            if (!RE_NET_NAME_UI.test(name)) { toastErr(new Error('device name: letters, digits and - _ . : (max 16)')); return; }
+            const cfg = { name, type: v.type, mode: staticSw.checked ? 'static' : 'dhcp' };
+            if (staticSw.checked) {
+                const a = addrInp.value.trim();
+                if (!RE_NET_CIDR_UI.test(a)) { toastErr(new Error('IPv4 address must carry a /prefix, e.g. 192.168.1.50/24')); return; }
+                const g = gwInp.value.trim();
+                if (g && !RE_NET_IPV4_UI.test(g)) { toastErr(new Error('gateway must be an IPv4 address')); return; }
+                cfg.address = a; cfg.gateway = g;
+            }
+            cfg.dns = dnsState.vals.length ? dnsState.vals.slice() : null;
+            if (v.type === 'wifi') {
+                const s = (ssidInp.value || '').trim();
+                if (!s) { toastErr(new Error('a Wi-Fi network name (SSID) is required')); return; }
+                cfg.ssid = s; cfg.password = pwInp.value || ''; cfg.hidden = hidSw.checked;
+            }
+            if (v.type === 'bridge') {
+                cfg.interfaces = [];
+                for (const [nm, sw] of memberEls) if (sw.checked) cfg.interfaces.push(nm);
+            }
+            applyBtn.disabled = true;
+            const change = await core.network.applyDevice(cfg);
+            if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
+            toast('positive', 'Configuration applied', name + ' is now using the new settings.');
+            state.netEditing = null;
+            await loadNetDevices();
+        } catch (e) {
+            toastErr(e);
+            state.netEditing = null;
+            await loadNetDevices().catch(() => {});
+        } finally {
+            if (applyBtn.isConnected) applyBtn.disabled = false;
+        }
+    });
+    return box;
+}
+/* "Add bridge": a pending card in the edit form; it only joins the netplan
+   doc when the user clicks Apply (a Cancel drops it). */
+function netAddBridge() {
+    if (!state.devices) return;
+    const nm = netUniqueBridgeName();
+    state.devices.push({ name: nm, type: 'bridge', connected: false, addresses: [], gateway: null, dns: [], configured: false, netplan: null, pending: true });
+    state.netEditing = nm;
+    renderNetDevices();
 }
 
 
@@ -2706,6 +2980,9 @@ async function doResetPassword() {
 /* ------------------------------- wiring ---------------------------------- */
 
 function wire() {
+    const netAdd = $('#netAddDevice');
+    if (netAdd) netAdd.addEventListener('click', () => netAddBridge());
+
     // Round 48k: Escape cancels the topmost confirmation dialog — the same as
     // its Cancel button (every confirm's Cancel handler is just box.remove()).
     // Registered here, before any modal can open, so this listener runs before
