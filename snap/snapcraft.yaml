@@ -75,6 +75,8 @@ parts:
            "$SNAP"/app/main.js
       LAUNCHER
       chmod +x "$CRAFT_PART_INSTALL/bin/launcher"
+    stage-packages:
+      - iw 
 
   electron:
     plugin: nil
