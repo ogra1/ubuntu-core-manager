@@ -905,6 +905,18 @@ function clearNetSeedBoilerplate() {
  * (resolvectl has no -o json on older systemd, so a text parser is the
  * canonical path; ip -j is stable JSON.)
  *
+ * DNS SOURCE CAVEAT (round 57, the network-control interface bug): the
+ * plug grants the resolved D-Bus API only to peers labelled unconfined,
+ * and systemd-resolved runs confined on Core — so `resolvectl status`
+ * CANNOT reach per-link data under the interface (the snapd team is
+ * fixing it; flagged). The nameservice abstraction, however, grants
+ * /run/systemd/resolve/resolv.conf rk — the GLOBAL nameserver list.
+ * Per device the app therefore reads: (1) the per-link list from
+ * resolvectl when it works, else (2) the global resolv.conf list
+ * (readResolvConfNameservers) — and a netplan `dns.nameservers` entry
+ * for the device ALWAYS wins (netplan binds DNS to the device; the
+ * resolv.conf list is system-wide) — mergeNetplanDevices pass 3.
+ *
  * Device model (merged per name):
  *   { name, type: 'ethernet'|'wired'|'wifi'|'bridge'|'bond'|'vlan'|'tunnel'|
  *             'vrf'|'dummy'|'veth'|'other',
@@ -912,7 +924,10 @@ function clearNetSeedBoilerplate() {
  *     addresses: [{ family, cidr }],  // live (all families, scope!=link)
  *     members,               // live bridge members (the master field; [] otherwise)
  *     gateway,               // live default-route via (string|null)
- *     dns,                   // live DNS servers (string[])
+ *     dns,                   // live DNS servers (string[] — resolvectl
+ *                            // per-link, else the global resolv.conf;
+ *                            // merge pass 3: netplan dns wins)
+ *     dnsGlobal,             // the global resolv.conf nameservers (string[])
  *     configured,            // has a netplan definition (bool)
  *     netplan, }             // the netplan definition object (or null)
  *
@@ -951,6 +966,34 @@ const LIVE_TOOLS = {
     iw: ['iw', 'dev'],
     dns: ['resolvectl', 'status'],
 };
+
+/* Round 57: the GLOBAL nameserver list from the resolved-managed
+   resolv.conf — the workaround for the network-control interface bug
+   (resolvectl status cannot reach systemd-resolved under the plug: the
+   resolved D-Bus grants target peers labelled unconfined, resolved runs
+   confined on Core; the interface bug is flagged with the snapd team).
+   The nameservice abstraction grants /run/systemd/resolve/resolv.conf
+   rk, and the file lists every uplink nameserver. It is SYSTEM-WIDE
+   (no per-link data), so it is a fallback: the per-link resolvectl list
+   wins when it works, and a netplan dns.nameservers entry for the
+   device wins over both (netplan binds DNS to the device).
+   Pure + total: missing/unreadable file -> [] (never throws). */
+let __resolvConfPath = null;
+function __setResolvConfPath(p) { __resolvConfPath = p; }
+function readResolvConfNameservers() {
+    const p = __resolvConfPath || process.env.UCM_RESOLV_CONF || '/run/systemd/resolve/resolv.conf';
+    let txt;
+    try { txt = fs.readFileSync(p, 'utf8'); } catch { return []; }
+    const out = [];
+    for (const line of txt.split('\n')) {
+        const m = line.match(/^nameserver\s+(\S+)/);
+        if (!m) continue;
+        const a = m[1].trim();
+        if (!a) continue;
+        if (!out.includes(a)) out.push(a);
+    }
+    return out;
+}
 
 function netLinkType(kind, linkType) {
     if (kind === 'bridge') return 'bridge';
@@ -1002,6 +1045,10 @@ async function listNetDevices() {
     for (const l of links) {
         if (l.ifname && l.ifname !== 'lo' && l.master) (membersByMaster[l.master] = membersByMaster[l.master] || []).push(l.ifname);
     }
+    // round 57: the global nameserver list (fallback source for the
+    // per-device dns when resolvectl has no per-link data — see
+    // readResolvConfNameservers).
+    const dnsGlobal = readResolvConfNameservers();
     const devices = [];
     for (const l of links) {
         if (!l.ifname || l.ifname === 'lo') continue; // loopback is not a card
@@ -1018,12 +1065,24 @@ async function listNetDevices() {
             }
         }
         const gw = routes.find((r) => r.dev === l.ifname);
+        const liveDns = dnsBy[l.ifname];
         devices.push({
             name: l.ifname, type, connected: !!up, addresses,
             members: type === 'bridge' ? (membersByMaster[l.ifname] || []) : [],
             mac: (typeof l.address === 'string' && l.address) ? l.address.toLowerCase() : null,
             gateway: (gw && gw.gateway) || null,
-            dns: dnsBy[l.ifname] || [],
+            // round 57: per-link DNS wins when the parse produced a
+            // list for this link (the parser pre-seeds every link header
+            // with [], so an empty list means "no data"). Under the
+            // network-control interface bug, resolvectl CANNOT read per-link
+            // data on Core (resolved runs confined; the plug D-Bus
+            // grants target unconfined peers), so fall back to the
+            // GLOBAL nameserver list from the resolved-managed
+            // resolv.conf (the nameservice grant). A netplan
+            // dns.nameservers entry for the device wins over both
+            // (mergeNetplanDevices pass 3).
+            dns: (liveDns && liveDns.length) ? liveDns : dnsGlobal,
+            dnsGlobal,
             configured: false, netplan: null,
         });
     }
@@ -1121,6 +1180,17 @@ function mergeNetplanDevices(devices, doc) {
             }
             if (d.configured) break;
         }
+    }
+    // pass 3 (round 57) — the netplan DNS overlay: netplan binds DNS to
+    // the DEVICE (there are no system-wide DNS settings), so a named or
+    // catch-all definition carrying dns.nameservers IS this device's
+    // configured resolver and wins over the live fallback (the
+    // resolv.conf global list; when resolvectl works, the per-link list
+    // already mirrors it — resolved applies per-link from netplan).
+    for (const d of devices) {
+        if (!d.netplan) continue;
+        const ns = d.netplan.dns && d.netplan.dns.nameservers && d.netplan.dns.nameservers.addresses;
+        if (Array.isArray(ns) && ns.length) d.dns = ns.map((x) => String(x)).filter(Boolean);
     }
     // type refinement: a netplan wifis entry wins over the kernel guess, and
     // a bridges/bonds/vlans entry sets the type even for a live link.
@@ -1717,6 +1787,7 @@ const api = {
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
     getNetDevices, netApplyDevice, buildNetDeviceDef, mergeNetplanDevices,
     listNetDevices, netLinkType, netGlobMatch, netDefMatches, __setNetLive,
+    readResolvConfNameservers, __setResolvConfPath,
     clearNetSeedBoilerplate, __setNetSeedPath, netSeedBoilerplatePath,
 
     installSnap, snapAction, snapComponent,

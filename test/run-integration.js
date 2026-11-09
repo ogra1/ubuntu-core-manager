@@ -798,6 +798,13 @@ function ok(name, cond, extra = '') {
             iw: async () => ({ ok: false, stdout: '' }),
             dns: async () => ({ ok: true, stdout: RES }),
         });
+        // round 57: hermetic global DNS — the fallback reads the
+        // resolved-managed resolv.conf; pin it to a controlled temp file so
+        // the suite does not depend on the dev machine's actual file
+        // (restored to the default path at the end of this block).
+        const GC = '/tmp/ucm-r57-gc.conf';
+        fs.writeFileSync(GC, 'nameserver 10.0.2.3\nnameserver fd00::1\n');
+        m.__setResolvConfPath(GC);
 
         // listNetDevices(): the merged LIVE per-device shape
         const dev0 = await m.listNetDevices();
@@ -813,7 +820,10 @@ function ok(name, cond, extra = '') {
         ok('eth0 gateway comes from the `gateway` route key', d0('eth0') && d0('eth0').gateway === '192.168.1.1');
         ok('enp3s0 has no default route -> gateway null', d0('enp3s0') && d0('enp3s0').gateway === null);
         ok('the resolvectl text parse gives eth0 its DNS', d0('eth0') && JSON.stringify(d0('eth0').dns) === JSON.stringify(['192.168.1.1']));
-        ok('a "n/a" DNS line is NOT a server (enp3s0 dns empty)', d0('enp3s0') && JSON.stringify(d0('enp3s0').dns) === JSON.stringify([]));
+        ok('a "n/a" DNS line is NOT a server (enp3s0: no per-link data -> the global fallback, never a literal n/a)',
+            d0('enp3s0') && JSON.stringify(d0('enp3s0').dns) === JSON.stringify(['10.0.2.3', 'fd00::1'])
+            && !d0('enp3s0').dns.includes('n/a'),
+            d0('enp3s0') && JSON.stringify(d0('enp3s0').dns));
         ok('the kind=bridge link is typed bridge + not connected (no UP flag)',
             d0('br0') && d0('br0').type === 'bridge' && d0('br0').connected === false);
         ok('an enslaved device (master: br0) is NOT a card (it is a bridge member)',
@@ -822,6 +832,55 @@ function ok(name, cond, extra = '') {
             d0('br0') && JSON.stringify(d0('br0').members) === JSON.stringify(['enp5s0']),
             d0('br0') && JSON.stringify(d0('br0').members));
         ok('an absent iw does not crash and yields no wifi', dev0.every((d) => d.type !== 'wifi'));
+
+        // round 57: the resolv.conf fallback (the network-control
+        // interface bug: resolvctl cannot read per-link DNS under the
+        // plug) — the global list applies only where there is no
+        // per-link data, and netplan dns wins over both (pass 3 below).
+        fs.writeFileSync(GC, '# managed by resolved\n# Do not edit.\nnameserver 10.0.2.3\nsearch home.lan\nnameserver 10.0.2.3\nnameserver fd00::1\n\n');
+        const devA = await m.listNetDevices();
+        const a0 = (n) => devA.find((d) => d.name === n);
+        ok('a device WITH per-link resolvctl DNS keeps it (the global list is not mixed in)',
+            a0('eth0') && JSON.stringify(a0('eth0').dns) === JSON.stringify(['192.168.1.1']),
+            a0('eth0') && JSON.stringify(a0('eth0').dns));
+        ok('a device WITHOUT per-link DNS falls back to the global resolv.conf list (deduped, file order)',
+            a0('enp3s0') && JSON.stringify(a0('enp3s0').dns) === JSON.stringify(['10.0.2.3', 'fd00::1'])
+            && a0('br0') && JSON.stringify(a0('br0').dns) === JSON.stringify(['10.0.2.3', 'fd00::1']),
+            a0('enp3s0') && JSON.stringify(a0('enp3s0').dns));
+        ok('the dnsGlobal field carries the same list (the source is distinguishable from per-link)',
+            a0('eth0') && JSON.stringify(a0('eth0').dnsGlobal) === JSON.stringify(['10.0.2.3', 'fd00::1']));
+        fs.writeFileSync(GC, '');
+        const devB = await m.listNetDevices();
+        const b0 = (n) => devB.find((d) => d.name === n);
+        ok('an EMPTY resolv.conf yields no DNS for the per-link-less devices (the card shows the dash, not garbage)',
+            b0('enp3s0') && JSON.stringify(b0('enp3s0').dns) === JSON.stringify([])
+            && b0('br0') && JSON.stringify(b0('br0').dns) === JSON.stringify([]));
+        fs.writeFileSync(GC, 'nameserver 10.0.2.3\nnameserver fd00::1\n');
+        m.__setNetLive({
+            link: async () => ({ ok: true, stdout: LINK }),
+            addr: async () => ({ ok: true, stdout: ADDR }),
+            route: async () => ({ ok: true, stdout: ROUTE }),
+            iw: async () => ({ ok: false, stdout: '' }),
+            dns: async () => ({ ok: true, stdout: 'Global:\n\tLVS: no\n' }),
+        });
+        const devC = await m.listNetDevices();
+        const c0 = (n) => devC.find((d) => d.name === n);
+        ok('when resolvctl has NO per-link data (the interface bug) EVERY device shows the global list',
+            ['eth0', 'enp3s0', 'br0'].every((n) => c0(n) && JSON.stringify(c0(n).dns) === JSON.stringify(['10.0.2.3', 'fd00::1'])),
+            devC.map((d) => d.name + ':' + JSON.stringify(d.dns)).join(' '));
+        const devAll = await m.getNetDevices();
+        const z0 = (n) => devAll.find((d) => d.name === n);
+        ok('end to end: getNetDevices (the renderer read) carries the fallback list through the netplan merge',
+            z0('eth0') && JSON.stringify(z0('eth0').dns) === JSON.stringify(['10.0.2.3', 'fd00::1']));
+        m.__setNetLive({
+            link: async () => ({ ok: true, stdout: LINK }),
+            addr: async () => ({ ok: true, stdout: ADDR }),
+            route: async () => ({ ok: true, stdout: ROUTE }),
+            iw: async () => ({ ok: false, stdout: '' }),
+            dns: async () => ({ ok: true, stdout: RES }),
+        });
+        fs.unlinkSync(GC);
+        m.__setResolvConfPath(null);
 
         // mergeNetplanDevices(): the configured overlay only — a netplan
         // entry with no live device (incl. a catch-all) creates NO card
@@ -839,6 +898,48 @@ function ok(name, cond, extra = '') {
             mm('enp3s0') && mm('enp3s0').configured === true && mm('enp3s0').netplan.dhcp4 === true,
             mm('enp3s0') && JSON.stringify(mm('enp3s0').netplan));
         ok('the catch-all id itself (en*) still creates no card', !mm('en*'), mm('en*') && mm('en*').name);
+        // round 57: the netplan DNS overlay — netplan binds DNS to the
+        // DEVICE (there are no system-wide DNS settings), so a
+        // configured dns.nameservers wins over the live fallback.
+        // NOTE: the `merged` call above mutates dev0 in place (merge sets
+        // configured/netplan on the passed objects) - re-read the live list
+        // so these asserts see the unmutated devices.
+        const dev0f = await m.listNetDevices();
+        ok('a named netplan dns.nameservers entry replaces the live dns (device-bound DNS wins)',
+            (function () {
+                const o = m.mergeNetplanDevices(
+                    JSON.parse(JSON.stringify(dev0f)),
+                    { network: { version: 2, ethernets: { eth0: { dhcp4: true, dns: { nameservers: { addresses: ['9.9.9.9'] } } } } } });
+                const e = o.find((d) => d.name === 'eth0');
+                return e && JSON.stringify(e.dns) === JSON.stringify(['9.9.9.9']);
+            })());
+        ok('a catch-all dns overlay wins over the live fallback for the covered device',
+            (function () {
+                const o = m.mergeNetplanDevices(
+                    JSON.parse(JSON.stringify(dev0f)),
+                    { network: { version: 2, ethernets: { 'en*': { dhcp4: true, match: { name: 'en*' }, dns: { nameservers: { addresses: ['1.1.1.1', '8.8.8.8'] } } } } } });
+                const e = o.find((d) => d.name === 'enp3s0');
+                return e && e.configured === true && JSON.stringify(e.dns) === JSON.stringify(['1.1.1.1', '8.8.8.8']);
+            })());
+        ok('a netplan entry WITHOUT dns never clobbers the live list (no nameservers -> live dns kept)',
+            (function () {
+                const o = m.mergeNetplanDevices(
+                    JSON.parse(JSON.stringify(dev0f)),
+                    { network: { version: 2, ethernets: { eth0: { dhcp4: true } } } });
+                const e = o.find((d) => d.name === 'eth0');
+                return e && JSON.stringify(e.dns) === JSON.stringify(['192.168.1.1']);
+            })());
+        // the global-list parser (unit): dedupe, order, comments, junk lines
+        fs.writeFileSync('/tmp/ucm-r57-parse.conf', '# comment\n; another\nsearch foo\nnameserver  1.2.3.4\nnameserver 1.2.3.4\nnameserver 5.6.7.8\nnameserver\n');
+        m.__setResolvConfPath('/tmp/ucm-r57-parse.conf');
+        ok('readResolvConfNameservers parses nameserver lines (deduped, order kept, junk skipped)',
+            JSON.stringify(m.readResolvConfNameservers()) === JSON.stringify(['1.2.3.4', '5.6.7.8']),
+            JSON.stringify(m.readResolvConfNameservers()));
+        m.__setResolvConfPath('/tmp/ucm-r57-missing.conf');
+        ok('readResolvConfNameservers is total: a missing file gives [] (never throws)',
+            JSON.stringify(m.readResolvConfNameservers()) === JSON.stringify([]));
+        fs.unlinkSync('/tmp/ucm-r57-parse.conf');
+        m.__setResolvConfPath(null);
         // glob + match semantics (fnmatch parity for the live-visible props)
         ok('netGlobMatch: * is a glob, ? one char, [!..] negation, bare text exact',
             m.netGlobMatch('en*', 'enp0s2') && m.netGlobMatch('en*', 'enp9') && m.netGlobMatch('eth?', 'eth0')

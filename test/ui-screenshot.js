@@ -203,15 +203,29 @@ const NETPLAN = {
     },
 };
 
+/* round 57: the GLOBAL resolver file (the resolved-managed resolv.conf).
+   The mock models it as the file's LINES (main.js reads the real file
+   under the nameservice grant); per-link data lives on the NETDEVICES
+   entries (their `dns` field), and the mock merges them exactly like
+   main.js listNetDevices does: per-link list when it has entries, else
+   the global list from the file. */
+/* the two lines as an ARRAY (inlined into the mock factory as JSON; a
+   newline-joined string would be double-escaped by the template literal
+   and collapse onto one line). */
+const __R57_RESOLV_LINES = ['nameserver 10.0.2.3', 'nameserver fd00::1'];
+
 /* round 53: the LIVE device state the mock's core.network.devices() returns
    (the five tools' output merged, exactly as main.js listNetDevices() does
-   over the network-control interface). */
+   over the network-control interface). round 57: each entry's `dns` field
+   is the PER-LINK resolver source (what resolvctl would give; [] = none) -
+   the mock's merge applies the global resolv.conf fallback exactly like
+   main.js does (see __R57_RESOLV above). */
 const NETDEVICES = [
     { name: 'eth0',   type: 'ethernet', connected: true,  mac: '00:11:22:33:44:50', addresses: [{ family: 'inet',  cidr: '192.168.1.50/24' }, { family: 'inet6', cidr: '2001:db8::50/64' }], gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
-    { name: 'enp3s0', type: 'ethernet', connected: true,  mac: '00:11:22:33:44:60', addresses: [], gateway: null,                                 dns: [] },
-    { name: 'enp5s0', type: 'ethernet', connected: true,  master: 'br0', mac: '00:11:22:33:44:70', addresses: [], gateway: null,                   dns: [] },
-    { name: 'wlp3s0', type: 'wifi',     connected: true,  mac: '00:11:22:33:44:80', addresses: [{ family: 'inet',  cidr: '192.168.1.51/24' }],   gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
-    { name: 'br0',    type: 'bridge',   connected: false, addresses: [], gateway: null,                                 dns: [] },
+    { name: 'enp3s0', type: 'ethernet', connected: true,  mac: '00:11:22:33:44:60', addresses: [], gateway: null },
+    { name: 'enp5s0', type: 'ethernet', connected: true,  master: 'br0', mac: '00:11:22:33:44:70', addresses: [], gateway: null },
+    { name: 'wlp3s0', type: 'wifi',     connected: true,  mac: '00:11:22:33:44:80', addresses: [{ family: 'inet',  cidr: '192.168.1.51/24' }],   gateway: '192.168.1.1' },
+    { name: 'br0',    type: 'bridge',   connected: false, addresses: [], gateway: null },
 ];
 
 // The mock is (re)created inside the page so functions survive
@@ -586,6 +600,23 @@ function mockFactoryJs() {
                 // async id that settles after 250ms. __setNetplan/__puts are
                 // the harness escape hatches for asserting the written doc.
                 const NETDEVICES = ${JSON.stringify(NETDEVICES)};
+                /* round 57: the global resolver file (the workaround for
+                   the network-control interface bug - the per-link source
+                   cannot reach resolved under the plug). Main.js reads
+                   /run/systemd/resolve/resolv.conf (the nameservice
+                   grant); the mock models the file as lines so the
+                   nameserver parse is exercised honestly. */
+                let __resolvLines = ${JSON.stringify(__R57_RESOLV_LINES)};
+                const __resolv = () => {
+                    const out = [];
+                    for (const line of __resolvLines || []) {
+                        const mm = String(line).match(/^nameserver\\s+(\\S+)/);
+                        if (!mm) continue;
+                        const a = mm[1].trim();
+                        if (a && out.indexOf(a) === -1) out.push(a);
+                    }
+                    return out;
+                };
                     const net0 = (doc) => {
                         const net = (doc && doc.network) || {};
                         const out = {};
@@ -629,6 +660,15 @@ function mockFactoryJs() {
                     // entry with no live device creates NO card.
                     return NETDEVICES.filter((d) => !d.master).map((d) => {
                         const n = JSON.parse(JSON.stringify(d));
+                        /* round 57: per-link DNS when the parse produced a
+                           list, else the global resolv.conf list (mirrors
+                           main.js listNetDevices, where the per-link source
+                           is the internal dnsBy; a netplan dns entry wins
+                           in the netplan overlay below). The entry's dns
+                           field IS the per-link source here. */
+                        const __gl = __resolv();
+                        const __pl = (n.dns || []).slice();
+                        n.dns = __pl.length ? __pl : __gl.slice();
                         if (n.type === 'bridge') n.members = NETDEVICES.filter((x) => x.master === n.name).map((x) => x.name);
                         if (flat[n.name]) { n.configured = true; n.netplan = flat[n.name].def; if (flat[n.name].sec === 'wifis') n.type = 'wifi'; }
                         else {
@@ -646,6 +686,11 @@ function mockFactoryJs() {
                                 }
                             }
                         }
+                        /* round 57: netplan binds DNS to the device (no
+                           system-wide setting) - a configured
+                           dns.nameservers wins over the live fallback. */
+                        if (n.netplan && n.netplan.dns && n.netplan.dns.nameservers && Array.isArray(n.netplan.dns.nameservers.addresses) && n.netplan.dns.nameservers.addresses.length)
+                            n.dns = n.netplan.dns.nameservers.addresses.slice();
                         return n;
                     });
                 };
@@ -742,6 +787,8 @@ function mockFactoryJs() {
 
                 __netdoc: () => __netDoc,
                 __setNetplan(o) { __netDoc = o; },
+                __resolvlines: () => (__resolvLines || []).slice(),
+                __setResolvLines(a) { __resolvLines = (a || []).slice(); },
                 __netputs: () => __netPuts,
                 __clearseeds: () => __clearSeeds,
                 };
@@ -1623,7 +1670,10 @@ function mockFactoryJs() {
         if (netRow(cEth, 'Addresses') !== '192.168.1.50/24, 2001:db8::50/64')
             console.log('PAGE ERROR: eth0 Addresses is not the LIVE address (got ' + JSON.stringify(netRow(cEth, 'Addresses')) + ', want "192.168.1.50/24, 2001:db8::50/64") (round 53)');
         if (netRow(cEth, 'Gateway') !== '192.168.1.1') console.log('PAGE ERROR: eth0 Gateway is not the LIVE gateway (got ' + JSON.stringify(netRow(cEth, 'Gateway')) + ') (round 53)');
-        if (netRow(cEth, 'DNS') !== '192.168.1.1') console.log('PAGE ERROR: eth0 DNS is not the LIVE resolver (got ' + JSON.stringify(netRow(cEth, 'DNS')) + ') (round 53)');
+        // round 57: eth0 has per-link data (192.168.1.1) - it must WIN
+        // over the global resolv.conf list (10.0.2.3, fd00::1); a
+        // regression that ignores per-link data shows the global instead.
+        if (netRow(cEth, 'DNS') !== '192.168.1.1') console.log('PAGE ERROR: eth0 DNS must be the per-link resolver, not the global fallback (got ' + JSON.stringify(netRow(cEth, 'DNS')) + ', want "192.168.1.1") (round 57)');
         if (netRow(cEth, 'Configured') !== 'Automatic (DHCP)') console.log('PAGE ERROR: eth0 Configured is not "Automatic (DHCP)" (got ' + JSON.stringify(netRow(cEth, 'Configured')) + ') (round 53)');
     }
     const cEnp = await netCardOf('enp3s0');
@@ -1633,6 +1683,11 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: enp3s0 (no addresses) should show the em-dash (got ' + JSON.stringify(netRow(cEnp, 'Addresses')) + ') (round 53)');
         if (netRow(cEnp, 'Configured') !== 'Automatic (DHCP)')
             console.log('PAGE ERROR: enp3s0 is covered by the en* catch-all and must read "Automatic (DHCP)", not "Not configured" (got ' + JSON.stringify(netRow(cEnp, 'Configured')) + ') (round 54)');
+        // round 57: enp3s0 has NO per-link data and NO netplan DNS - the
+        // card shows the GLOBAL resolver file's list (the workaround for
+        // the network-control interface bug).
+        if (netRow(cEnp, 'DNS') !== '10.0.2.3, fd00::1')
+            console.log('PAGE ERROR: enp3s0 DNS must fall back to the global resolv.conf list (got ' + JSON.stringify(netRow(cEnp, 'DNS')) + ', want "10.0.2.3, fd00::1") (round 57)');
     }
     const cWlp = await netCardOf('wlp3s0');
     if (!cWlp) console.log('PAGE ERROR: no wlp3s0 device card (round 53)');
@@ -2077,6 +2132,73 @@ function mockFactoryJs() {
     if (JSON.stringify(gNh7.doc) !== JSON.stringify({ network: { version: 2, ethernets: { enp3s0: { addresses: ['10.0.2.15/24'], gateway4: '10.0.2.2' } } } }))
         console.log('PAGE ERROR: (h2) editing a named device must STRIP the catch-all boilerplate and keep the named entry (got ' + JSON.stringify(gNh7.doc) + ') (round 55)');
     await page.screenshot({ path: path.join(SHOTS, '9h-network-boilerplate-stripped.png') });
+
+    // (i) round 57 - netplan DNS is DEVICE-BOUND (netplan has no
+    // system-wide DNS): with NO data anywhere the card reads the dash;
+    // once the user sets a nameserver on a device, the netplan entry
+    // wins over the live/global fallback.
+    const r57seed = await page.evaluate(() => window.__mockCore.network.__resolvlines());
+    await page.evaluate(() => { window.__mockCore.network.__setResolvLines([]); });
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(300);
+    await page.click('.ucm-side a[data-view="network"]');
+    await wait(500);
+    const gNi0 = await netCardOf('enp3s0');
+    if (!gNi0) console.log('PAGE ERROR: (i) no enp3s0 card after the resolver-file reset (round 57)');
+    else if (netRow(gNi0, 'DNS') !== '\u2014')
+        console.log('PAGE ERROR: (i) with no per-link AND no global resolver data the card must read the dash (got ' + JSON.stringify(netRow(gNi0, 'DNS')) + ') (round 57)');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNi1 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      if (!card) return null;
+      const sw = card.querySelector('.ucm-netcard__sw .p-switch__input');
+      const chips = card ? Array.from(card.querySelectorAll('.ucm-netcard__dnschip')).map((x) => x.textContent.trim()) : null;
+      return { sw: sw ? sw.checked : null, chips: chips };
+    });
+    if (!gNi1) console.log('PAGE ERROR: (i) no enp3s0 edit state (round 57)');
+    else if (gNi1.sw !== true)
+        console.log('PAGE ERROR: (i) the edit must prefill static from the named entry (got ' + JSON.stringify(gNi1) + ') (round 57)');
+    if (JSON.stringify(gNi1.chips) !== JSON.stringify([]))
+        console.log('PAGE ERROR: (i) the DNS chip row must prefill from NETPLAN only - never the live/global fallback (got ' + JSON.stringify(gNi1.chips) + ') (round 57)');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__dnsrow input');
+    await page.type('[data-netcard="enp3s0"] .ucm-netcard__dnsrow input', '198.51.100.7');
+    await page.keyboard.press('Enter');
+    await wait(250);
+    const gNi2 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      return card ? Array.from(card.querySelectorAll('.ucm-netcard__dnschip')).map((x) => x.textContent.trim()) : null;
+    });
+    if (JSON.stringify(gNi2) !== JSON.stringify(['198.51.100.7']))
+        console.log('PAGE ERROR: (i) the typed DNS must chip (got ' + JSON.stringify(gNi2) + ') (round 57)');
+    await page.click('[data-netcard="enp3s0"] button.p-button--brand');
+    await wait(900);
+    const gNi3 = await page.evaluate(() => ({ doc: window.__mockCore.network.__netdoc() }));
+    if (JSON.stringify(gNi3.doc) !== JSON.stringify({ network: { version: 2, ethernets: { enp3s0: { addresses: ['10.0.2.15/24'], gateway4: '10.0.2.2', dns: { nameservers: { addresses: ['198.51.100.7'] } } } } } }))
+        console.log('PAGE ERROR: (i) the edit must write the device-bound DNS into the netplan doc (got ' + JSON.stringify(gNi3.doc) + ') (round 57)');
+    const gNi4 = await netCardOf('enp3s0');
+    if (!gNi4) console.log('PAGE ERROR: (i) no enp3s0 card after apply (round 57)');
+    else {
+        if (netRow(gNi4, 'DNS') !== '198.51.100.7')
+            console.log('PAGE ERROR: (i) the NETPLAN dns.nameservers entry must win over the live/global fallback (got ' + JSON.stringify(netRow(gNi4, 'DNS')) + ', want "198.51.100.7") (round 57)');
+        if (netRow(gNi4, 'Configured') !== 'Static IP')
+            console.log('PAGE ERROR: (i) the card must read "Static IP" after the edit (got ' + JSON.stringify(netRow(gNi4, 'Configured')) + ') (round 57)');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '9i-network-dns-precedence.png') });
+    // restore: the resolver file back; the device keeps its netplan DNS
+    // (it was never sourced from the global file), and eth0 keeps its
+    // per-link list.
+    await page.evaluate((f) => { window.__mockCore.network.__setResolvLines(f); }, r57seed);
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(300);
+    await page.click('.ucm-side a[data-view="network"]');
+    await wait(500);
+    const gNi5 = await netCardOf('enp3s0');
+    if (gNi5 && netRow(gNi5, 'DNS') !== '198.51.100.7')
+        console.log('PAGE ERROR: (i) restore: enp3s0 must keep its device-bound netplan DNS (got ' + JSON.stringify(netRow(gNi5, 'DNS')) + ') (round 57)');
+    const gNi6 = await netCardOf('eth0');
+    if (gNi6 && netRow(gNi6, 'DNS') !== '192.168.1.1')
+        console.log('PAGE ERROR: (i) restore: eth0 must keep its per-link resolver (got ' + JSON.stringify(netRow(gNi6, 'DNS')) + ') (round 57)');
 
     // ---- 4. snaps view (search works WITHOUT a store login) ----
     await page.click('.ucm-side a[data-view="snaps"]');
