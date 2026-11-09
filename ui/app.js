@@ -1048,9 +1048,11 @@ function renderNetDevices() {
 }
 /* a device card: header (name + type + live status pill + the round-58
    pencil edit icon, top-right) + body — the LIVE summary, or the in-place
-   edit form while editing (the card spans the row). The edit icon is in the
-   head so it is present in BOTH the view and the edit state (clicking it
-   while already editing is a harmless no-op re-set of the same name). */
+   edit form while editing (round 59: the card KEEPS its own grid column and
+   only grows in height — it no longer spans the row; the form's fields are
+   capped and fit the half-width column). The edit icon is in the head so it
+   is present in BOTH the view and the edit state (clicking it while already
+   editing is a harmless no-op re-set of the same name). */
 function netCard(d) {
     const card = el('div', { class: 'p-card ucm-netcard' + (state.netEditing === d.name ? ' ucm-netcard--editing' : '') });
     card.dataset.netcard = d.name;

@@ -1063,7 +1063,10 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    which CLIPPED it. The card holds no long/scrolling content (short
    rows, the in-place form), so overflow is not needed: overflow:visible
    lets the head tooltip paint, the same .ucm-config__card idiom from
-   round 48d.) */
+   round 48d. Round 59: editing a card no longer makes it span both grid
+   columns — the form's fields are capped (inputs max-width 26rem, the
+   longest label ~110px), so they fit a HALF-width column almost exactly;
+   the card keeps its column and only grows in HEIGHT while editing.) */
 #netIfaceSec { margin-top: 1.6rem; }
 .ucm-iface-head {
     display: flex; align-items: center; gap: 1rem;
@@ -1089,7 +1092,12 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    so overflow is not needed: let the head tooltip paint (the same idiom as
    .ucm-config__card, round 48d). */
 .ucm-netcard { margin: 0; overflow: visible; }
-.ucm-netcard--editing { grid-column: 1 / -1; }
+/* round 59: the in-place edit form no longer makes the card span both grid
+   columns — the form's fields are capped (inputs max-width 26rem, the
+   longest label ~110px) and fit a HALF-width column almost exactly, so the
+   card keeps its column and only grows in HEIGHT while editing. The class
+   is kept as the edit-state marker (the harness reads it). */
+.ucm-netcard--editing { }
 .ucm-netcard__head {
     display: flex; align-items: center; gap: .7rem;
     padding-top: .9rem; padding-bottom: .7rem;

@@ -1826,7 +1826,13 @@ function mockFactoryJs() {
       const ni = inpOf('Name');
       return {
         isEditing: card.classList.contains('ucm-netcard--editing'),
-        spansRow: card.getBoundingClientRect().width >= document.querySelector('#netIfaceGrid').getBoundingClientRect().width - 4,
+        // round 59: the editing card KEEPS its own grid column (it no longer
+        // spans the row) and the form must not overflow the narrower column
+        // (the fields are capped at max-width 26rem + a ~110px label).
+        gridW: document.querySelector('#netIfaceGrid').getBoundingClientRect().width,
+        cardW: card.getBoundingClientRect().width,
+        keepsColumn: (card.getBoundingClientRect().width > document.querySelector('#netIfaceGrid').getBoundingClientRect().width * 0.4) && (card.getBoundingClientRect().width < document.querySelector('#netIfaceGrid').getBoundingClientRect().width * 0.55),
+        formOverflow: (() => { const e = card.querySelector('.ucm-netcard__edit'); return e ? (e.scrollWidth > e.clientWidth + 1) : null; })(),
         staticSw: card.querySelector('.ucm-netcard__sw .p-switch__input') ? card.querySelector('.ucm-netcard__sw .p-switch__input').checked : null,
         staticHidden: card.querySelector('.ucm-netcard__static') ? card.querySelector('.ucm-netcard__static').hidden : null,
         namePresent: !!ni, nameDisabled: ni ? ni.disabled : null,
@@ -1841,8 +1847,10 @@ function mockFactoryJs() {
     const seedClears0 = gNa ? gNa.clears : 0;
     if (!gNa) console.log('PAGE ERROR: the eth0 card did not enter the edit state (round 53)');
     else {
-        if (!gNa.isEditing || !gNa.spansRow)
-            console.log('PAGE ERROR: the editing card should span the grid row (editing ' + gNa.isEditing + ', spans ' + gNa.spansRow + ') (round 53)');
+        if (!gNa.isEditing || !gNa.keepsColumn)
+            console.log('PAGE ERROR: the editing card should keep its own grid column, not span the row (editing ' + gNa.isEditing + ', cardW ' + gNa.cardW + ', gridW ' + gNa.gridW + ', want ~half) (round 59)');
+        if (gNa.formOverflow)
+            console.log('PAGE ERROR: the edit form overflows the half-width card (round 59)');
         if (gNa.staticSw !== false) console.log('PAGE ERROR: eth0 (DHCP) should open with the Static IP switch OFF (round 53)');
         if (gNa.staticHidden !== true) console.log('PAGE ERROR: the address fields must be hidden until the Static switch is on (round 53)');
         if (!gNa.dnsRow) console.log('PAGE ERROR: the DNS chip input is missing from the edit form (round 53)');
