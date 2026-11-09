@@ -41,7 +41,7 @@ function ok(name, cond, extra = '') {
             { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },
             { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T10:00:00Z' },
         ],
-        netplanYaml: 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n' };
+        netplan: { network: { version: 2, ethernets: { eth0: { dhcp4: true } } } } };
     await makeServer(SOCK, state);
     console.log('stub snapd up on ' + SOCK);
 
@@ -65,9 +65,13 @@ function ok(name, cond, extra = '') {
     ok('reject channel "a/b/c/d" (>3 segments)', m.validChannel('a/b/c/d') === false);
     ok('reject channel with newline', m.validChannel('latest/stable\n') === false);
 
-    console.log('\n[2] YAML round-trip (netplan document)');
-    const doc = m.fromYaml(state.netplanYaml);
-    ok('parse eth0.dhcp4', doc && doc.network && doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.dhcp4 === true,
+    console.log('\n[2] YAML helpers round-trip (the legacy string-compat path)');
+    // round 54: the netplan option is a JSON OBJECT — the YAML helpers only
+    // survive for a LEGACY string value (a pre-object snapd), so [2] uses a
+    // self-contained literal, not the stub state.
+    const legacyYaml = 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n';
+    const doc = m.fromYaml(legacyYaml);
+    ok('parse eth0.dhcp4 (legacy YAML string)', doc && doc.network && doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.dhcp4 === true,
         JSON.stringify(doc));
     const rebuilt = m.toYaml(doc);
     const reparsed = m.fromYaml(rebuilt);
@@ -203,13 +207,22 @@ function ok(name, cond, extra = '') {
     // (state.confSets) — no settle wait, so this section stays as fast as the
     // round-1 one it replaced (the [7] mosquitto install races the [5]
     // install's 300ms settle; added delay here would 400 it).
+    // round 54: the option is a JSON OBJECT (a YAML string would fail
+    // snapd's option decode) — the RECORDED PUT body must carry the doc as
+    // an object. Seed the default Core boilerplate (catch-alls only): the
+    // FIRST edit replaces it COMPLETELY.
+    state.netplan = { network: { version: 2, ethernets: { 'all-en': { dhcp4: true, match: { name: 'en*' } }, 'all-eth': { dhcp4: true, match: { name: 'eth*' } } } } };
     await m.netApplyDevice({ name: 'eth0', type: 'ethernet', mode: 'static', address: '192.168.1.50/24', gateway: '192.168.1.1', dns: ['1.1.1.1'] });
     const written6 = state.confSets[state.confSets.length - 1];
     ok('conf PUT went to core snap', written6 && written6.name === 'core', JSON.stringify(written6 && written6.name));
-    const yamlSent = written6 && written6.data['system.network.netplan'];
-    ok('netApplyDevice wrote the static entry (addresses + gateway4)', yamlSent && yamlSent.includes('192.168.1.50/24') && yamlSent.includes('gateway4: 192.168.1.1'),
-        String(yamlSent).slice(0, 140));
-    ok('netApplyDevice preserved version: 2 + network:', yamlSent && yamlSent.includes('version: 2') && yamlSent.includes('network:'));
+    const sent6 = written6 && written6.data['system.network.netplan'];
+    ok('the netplan option value is a JSON OBJECT, not a string', sent6 && typeof sent6 === 'object' && !Array.isArray(sent6), String(typeof sent6));
+    ok('the first edit REPLACES the complete boilerplate (all-en + all-eth gone, doc = version + this device)',
+        sent6 && typeof sent6 === 'object' && sent6.network
+        && JSON.stringify(sent6.network.ethernets) === JSON.stringify({ eth0: { addresses: ['192.168.1.50/24'], gateway4: '192.168.1.1', dns: { nameservers: { addresses: ['1.1.1.1'] } } } })
+        && !('all-en' in (sent6.network.ethernets || {})),
+        JSON.stringify(sent6 && sent6.network));
+    ok('the replaced doc keeps version: 2', sent6 && sent6.network && sent6.network.version === 2, JSON.stringify(sent6 && sent6.network));
     let cidrErr = null;
     try { await m.netApplyDevice({ name: 'eth0', type: 'ethernet', mode: 'static', address: '999.1.1.1/24' }); } catch (e) { cidrErr = e; }
     ok('reject malformed CIDR (999.x) before the socket', !!cidrErr && /prefix/.test(cidrErr.message), cidrErr && cidrErr.message);
@@ -798,13 +811,33 @@ function ok(name, cond, extra = '') {
         // mergeNetplanDevices(): the configured overlay only — a netplan
         // entry with no live device (incl. a catch-all) creates NO card
         const merged = m.mergeNetplanDevices(dev0, { network: { version: 2,
-            ethernets: { eth0: { dhcp4: true }, all: { dhcp4: true } },
+            ethernets: { eth0: { dhcp4: true }, all: { dhcp4: true }, 'en*': { dhcp4: true, match: { name: 'en*' } } },
             bridges: { br0: { dhcp4: true, interfaces: ['enp3s0'] } },
             wifis: { wlp3s0: { dhcp4: true } } } });
         const mm = (n) => merged.find((d) => d.name === n);
         ok('a netplan-defined device is flagged configured + carries its def', mm('eth0') && mm('eth0').configured === true && mm('eth0').netplan.dhcp4 === true);
         ok('a netplan-only device (wlp3s0) does NOT create a card', !mm('wlp3s0'), mm('wlp3s0') && mm('wlp3s0').name);
         ok('a netplan-only catch-all (all) does NOT create a card', !mm('all'), mm('all') && mm('all').name);
+        // a catch-all that COVERS a live device configures it (no card for
+        // the catch-all itself; the live device inherits configured + def)
+        ok('a catch-all (en*) covering enp3s0 flags it configured + carries the catch-all def',
+            mm('enp3s0') && mm('enp3s0').configured === true && mm('enp3s0').netplan.dhcp4 === true,
+            mm('enp3s0') && JSON.stringify(mm('enp3s0').netplan));
+        ok('the catch-all id itself (en*) still creates no card', !mm('en*'), mm('en*') && mm('en*').name);
+        // glob + match semantics (fnmatch parity for the live-visible props)
+        ok('netGlobMatch: * is a glob, ? one char, [!..] negation, bare text exact',
+            m.netGlobMatch('en*', 'enp0s2') && m.netGlobMatch('en*', 'enp9') && m.netGlobMatch('eth?', 'eth0')
+            && !m.netGlobMatch('eth?', 'eth00') && !m.netGlobMatch('en*', 'eth0')
+            && m.netGlobMatch('[!e]*', 'wlp0s0') && !m.netGlobMatch('[!e]*', 'eth0')
+            && m.netGlobMatch('eth0', 'eth0') && !m.netGlobMatch('eth0', 'eth1'),
+            '');
+        ok('netDefMatches: no match: never matches; name glob + mac; driver-only unmatchable',
+            !m.netDefMatches({ dhcp4: true }, 'enp0s2', 'aa:bb')
+            && m.netDefMatches({ match: { name: 'en*' } }, 'enp0s2', 'aa:bb')
+            && m.netDefMatches({ match: { name: 'en*', macaddress: 'AA:BB' } }, 'enp0s2', 'aa:bb')
+            && !m.netDefMatches({ match: { name: 'en*', macaddress: 'aa:cc' } }, 'enp0s2', 'aa:bb')
+            && !m.netDefMatches({ match: { driver: 'e1000' } }, 'enp0s2', 'aa:bb'),
+            '');
 
         // buildNetDeviceDef(): the canonical v2 builders + the rejections
         const bd = m.buildNetDeviceDef;
@@ -829,30 +862,51 @@ function ok(name, cond, extra = '') {
         ok('REJECT a wifi password shorter than 8', rej({ name: 'wlp3s0', type: 'wifi', mode: 'dhcp', ssid: 'HomeNet', password: 'short' }, /8-64/));
         ok('REJECT an unknown device type', rej({ name: 'x', type: 'banana', mode: 'dhcp' }, /unknown device type/));
 
-        // netApplyDevice(): the FULL-doc read-modify-write through the stub
+        // netApplyDevice(): the FULL-doc read-modify-write through the stub.
+        // Seed the default Core boilerplate (catch-alls only) so the first
+        // edit is the boilerplate-replace case; wlp3s0 is NOT covered by
+        // en*/eth* — its first edit still wipes the boilerplate (the first
+        // device edit replaces what's there, whatever the device).
+        state.netplan = { network: { version: 2, ethernets: { 'all-en': { dhcp4: true, match: { name: 'en*' } }, 'all-eth': { dhcp4: true, match: { name: 'eth*' } } } } };
         await m.netApplyDevice({ name: 'wlp3s0', type: 'wifi', mode: 'dhcp', ssid: 'HomeNet', password: 'secret123' });
         await new Promise((r) => setTimeout(r, 350));
-        let doc = m.fromYaml(state.netplanYaml);
+        const netOf = () => ((state.netplan || {}).network) || {};
+        let nw = netOf();
         ok('netApplyDevice(wifi) wrote the canonical access-points.password',
-            doc.network.wifis && doc.network.wifis.wlp3s0['access-points'].HomeNet.password === 'secret123',
-            JSON.stringify(doc.network.wifis));
+            nw.wifis && nw.wifis.wlp3s0 && nw.wifis.wlp3s0['access-points'] && nw.wifis.wlp3s0['access-points'].HomeNet
+            && nw.wifis.wlp3s0['access-points'].HomeNet.password === 'secret123',
+            JSON.stringify(nw.wifis));
+        ok('the first edit wiped the ALL catch-all boilerplate (all-en + all-eth gone)',
+            !nw.ethernets, JSON.stringify(nw.ethernets));
+        // a SUBSEQUENT edit is additive (the first edit's entry is kept)
+        await m.netApplyDevice({ name: 'enp3s0', type: 'ethernet', mode: 'dhcp' });
+        await new Promise((r) => setTimeout(r, 350));
+        nw = netOf();
+        ok('a subsequent edit is additive (the first edit\u2019s wifis.wlp3s0 entry survives)',
+            nw.wifis && nw.wifis.wlp3s0 && nw.wifis.wlp3s0['access-points'] && nw.wifis.wlp3s0['access-points'].HomeNet
+            && nw.wifis.wlp3s0['access-points'].HomeNet.password === 'secret123'
+            && nw.ethernets && JSON.stringify(nw.ethernets.enp3s0) === JSON.stringify({ dhcp4: true }),
+            JSON.stringify(nw));
         // a device RE-TYPED leaves its old section (ethernet->wifi)
         await m.netApplyDevice({ name: 'eth0', type: 'wifi', mode: 'dhcp', ssid: 'Net', password: 'password123' });
         await new Promise((r) => setTimeout(r, 350));
-        doc = m.fromYaml(state.netplanYaml);
-        ok('a re-typed device leaves its OLD section (ethernets.eth0 gone)', !doc.network.ethernets || !doc.network.ethernets.eth0, JSON.stringify(doc.network.ethernets));
-        ok('a re-typed device lands in its NEW section (wifis.eth0)', doc.network.wifis && doc.network.wifis.eth0 && doc.network.wifis.eth0['access-points'].Net, JSON.stringify(doc.network.wifis));
-        ok('version: 2 is preserved across the re-write', doc.network.version === 2, String(doc.network.version));
+        nw = netOf();
+        ok('a re-typed device leaves its OLD section (ethernets.eth0 gone)', !nw.ethernets || !nw.ethernets.eth0, JSON.stringify(nw.ethernets));
+        ok('the re-type is additive too (ethernets.enp3s0 from the previous edit survives)',
+            nw.ethernets && nw.ethernets.enp3s0 && nw.ethernets.enp3s0.dhcp4 === true,
+            JSON.stringify(nw.ethernets));
+        ok('a re-typed device lands in its NEW section (wifis.eth0)', nw.wifis && nw.wifis.eth0 && nw.wifis.eth0['access-points'] && nw.wifis.eth0['access-points'].Net, JSON.stringify(nw.wifis));
+        ok('version: 2 is preserved across the re-write', nw.version === 2, String(nw.version));
         // an emptied section is DROPPED (the doc must not carry "ethernets: {}")
-        const ethKeys = doc.network.ethernets && Object.keys(doc.network.ethernets).length;
+        const ethKeys = nw.ethernets && Object.keys(nw.ethernets).length;
         if (ethKeys) {
-            const last = Object.keys(doc.network.ethernets)[0];
+            const last = Object.keys(nw.ethernets)[0];
             await m.netApplyDevice({ name: last, type: 'bridge', mode: 'dhcp', interfaces: ['enp3s0'] });
             await new Promise((r) => setTimeout(r, 350));
-            doc = m.fromYaml(state.netplanYaml);
-            ok('an emptied section is dropped from the doc', !doc.network.ethernets, JSON.stringify(doc.network.ethernets));
+            nw = netOf();
+            ok('an emptied section is dropped from the doc', !nw.ethernets, JSON.stringify(nw.ethernets));
         } else {
-            ok('an emptied section is dropped from the doc (already none)', !doc.network.ethernets);
+            ok('an emptied section is dropped from the doc (already none)', !nw.ethernets);
         }
 
         m.__setNetLive(null);

@@ -69,12 +69,10 @@ const IFC_TOPO = {
 };
 const ifcClone = (o) => JSON.parse(JSON.stringify(o));
 
-const NETPLAN_YAML = `network:
-  version: 2
-  ethernets:
-    eth0:
-      dhcp4: true
-`;
+/* round 54: the netplan option is a JSON OBJECT (snapd stores
+   map[string]any — see configcore/netplan.go), NOT a YAML string — the
+   stub mirrors the live shape. */
+const NETPLAN_DOC = { network: { version: 2, ethernets: { eth0: { dhcp4: true } } } };
 
 function json(res, status, body) {
     const payload = status >= 400
@@ -421,11 +419,11 @@ function makeServer(socketPath, state) {
                             const cdoc = JSON.parse(JSON.stringify(state.conf['core'] || {}));
                             cdoc.system = cdoc.system || {};
                             cdoc.system.network = cdoc.system.network || {};
-                            cdoc.system.network.netplan = state.netplanYaml;
+                            cdoc.system.network.netplan = state.netplan;
                             return json(res, 200, cdoc);
                         }
                         if (keys.startsWith('system.network.netplan')) {
-                            return json(res, 200, { [keys]: state.netplanYaml });
+                            return json(res, 200, { [keys]: state.netplan });
                         }
                     }
                     const doc = state.conf[name] || {};
@@ -454,7 +452,7 @@ function makeServer(socketPath, state) {
                         const st = state.changes.find((c) => c.id === confId);
                         if (st) st.status = 'Done';
                         if (name === 'core' && data['system.network.netplan']) {
-                            state.netplanYaml = data['system.network.netplan'];
+                            state.netplan = JSON.parse(JSON.stringify(data['system.network.netplan']));
                         } else {
                             // round 48f: nested write (null deletes the leaf —
                             // snapd's purgeNulls does NOT prune emptied parents,
@@ -623,7 +621,7 @@ module.exports = { makeServer };
 
 if (require.main === module) {
     const sock = process.argv[2] || '/tmp/stub-snapd.socket';
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {}, netplanYaml: NETPLAN_YAML, changes: [
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {},         netplan: NETPLAN_DOC, changes: [
         // seed changes: live shape (string summary, hyphenated spawn-time).
         // Deliberately NOT in newest-first order — the UI must sort.
         { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },

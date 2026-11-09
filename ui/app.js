@@ -1232,7 +1232,7 @@ function netCardEdit(d) {
         try {
             const name = nameInp.value.trim();
             if (!RE_NET_NAME_UI.test(name)) { toastErr(new Error('device name: letters, digits and - _ . : (max 16)')); return; }
-            const cfg = { name, type: v.type, mode: staticSw.checked ? 'static' : 'dhcp' };
+            const cfg = { name, type: v.type, mode: staticSw.checked ? 'static' : 'dhcp', mac: d.mac || null };
             if (staticSw.checked) {
                 const a = addrInp.value.trim();
                 if (!RE_NET_CIDR_UI.test(a)) { toastErr(new Error('IPv4 address must carry a /prefix, e.g. 192.168.1.50/24')); return; }

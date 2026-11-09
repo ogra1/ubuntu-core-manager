@@ -185,15 +185,11 @@ const NETPLAN = {
         version: 2,
         ethernets: {
             eth0: { dhcp4: true },
-            enp3s0: {
-                dhcp4: false,
-                addresses: ['10.0.0.5/24'],
-                gateway4: '10.0.0.1',
-                dns: { nameservers: { addresses: ['1.1.1.1', '8.8.8.8'] } },
-            },
-            // a catch-all directive (real VM netplans carry these) — it must
-            // NEVER create a card (netplan is a backend document)
-            all: { dhcp4: true },
+            // round 54: the default Core seed style — a CATCH-ALL that covers
+            // enp3s0 (which has NO named entry: the card must still read
+            // "configured"). A catch-all must NEVER create a card (netplan is
+            // a backend document).
+            'en*': { dhcp4: true, match: { name: 'en*' } },
         },
         wifis: {
             wlp3s0: {
@@ -211,10 +207,10 @@ const NETPLAN = {
    (the five tools' output merged, exactly as main.js listNetDevices() does
    over the network-control interface). */
 const NETDEVICES = [
-    { name: 'eth0',   type: 'ethernet', connected: true,  addresses: [{ family: 'inet',  cidr: '192.168.1.50/24' }, { family: 'inet6', cidr: '2001:db8::50/64' }], gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
-    { name: 'enp3s0', type: 'ethernet', connected: true,  addresses: [], gateway: null,                                 dns: [] },
-    { name: 'enp5s0', type: 'ethernet', connected: true,  master: 'br0', addresses: [], gateway: null,                   dns: [] },
-    { name: 'wlp3s0', type: 'wifi',     connected: true,  addresses: [{ family: 'inet',  cidr: '192.168.1.51/24' }],   gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
+    { name: 'eth0',   type: 'ethernet', connected: true,  mac: '00:11:22:33:44:50', addresses: [{ family: 'inet',  cidr: '192.168.1.50/24' }, { family: 'inet6', cidr: '2001:db8::50/64' }], gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
+    { name: 'enp3s0', type: 'ethernet', connected: true,  mac: '00:11:22:33:44:60', addresses: [], gateway: null,                                 dns: [] },
+    { name: 'enp5s0', type: 'ethernet', connected: true,  master: 'br0', mac: '00:11:22:33:44:70', addresses: [], gateway: null,                   dns: [] },
+    { name: 'wlp3s0', type: 'wifi',     connected: true,  mac: '00:11:22:33:44:80', addresses: [{ family: 'inet',  cidr: '192.168.1.51/24' }],   gateway: '192.168.1.1',  dns: ['192.168.1.1'] },
     { name: 'br0',    type: 'bridge',   connected: false, addresses: [], gateway: null,                                 dns: [] },
 ];
 
@@ -602,6 +598,29 @@ function mockFactoryJs() {
                 const RE_NET_IPV4_M = /^(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}$/;
                 let __netPuts = 0;
                 let __netSeq = 0;
+                // name-glob matcher (fnmatch parity for the name property —
+                // the mock seed patterns are simple; main.js netGlobMatch is
+                // the full implementation, integration-locked).
+                const __globRe = (pat) => {
+                    let re = '';
+                    for (let i = 0; i < pat.length; i++) {
+                        const c = pat[i];
+                        if (c === '*') re += '.*';
+                        else if (c === '?') re += '.';
+                        else if (c === '[') {
+                            const end = pat.indexOf(']', i + 1);
+                            if (end > i) {
+                                let inner = pat.slice(i + 1, end);
+                                if (inner.charAt(0) === '!') inner = '^' + inner.slice(1);
+                                re += '[' + inner + ']';
+                                i = end;
+                            } else re += String.fromCharCode(92) + '[';
+                        }
+                        else if (c === String.fromCharCode(92) || '.+^()|{}$'.indexOf(c) !== -1) re += String.fromCharCode(92) + c;
+                        else re += c;
+                    }
+                    return new RegExp('^' + re + '$');
+                };
                 const __netMerge = () => {
                     const flat = net0(__netDoc);
                     // the card list is the kernel truth: enslaved links
@@ -611,6 +630,21 @@ function mockFactoryJs() {
                         const n = JSON.parse(JSON.stringify(d));
                         if (n.type === 'bridge') n.members = NETDEVICES.filter((x) => x.master === n.name).map((x) => x.name);
                         if (flat[n.name]) { n.configured = true; n.netplan = flat[n.name].def; if (flat[n.name].sec === 'wifis') n.type = 'wifi'; }
+                        else {
+                            // catch-all (match:) overlay — a live device a
+                            // match: def covers is netplan-configured even
+                            // without a named entry (mirrors main.js pass 2).
+                            outer: for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
+                                const secm = __netDoc.network[sec] || {};
+                                for (const [k, v] of Object.entries(secm)) {
+                                    if (k === n.name || !v || typeof v.match !== 'object' || v.match.name == null) continue;
+                                    if (!__globRe(String(v.match.name)).test(n.name)) continue;
+                                    n.configured = true; n.netplan = JSON.parse(JSON.stringify(v));
+                                    if (sec === 'wifis') n.type = 'wifi';
+                                    break outer;
+                                }
+                            }
+                        }
                         return n;
                     });
                 };
@@ -649,10 +683,20 @@ function mockFactoryJs() {
                 };
                 const __netApply = (cfg) => {
                     const { section, def } = __netValidate(cfg);
-                    const net = __netDoc.network;
-                    for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
-                        if (net[sec]) { delete net[sec][cfg.name]; if (!Object.keys(net[sec]).length) delete net[sec]; }
-                    }
+                    const SECS = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
+                    const curNet = __netDoc.network;
+                    // FIRST-EDIT RULE: a pure catch-all (boilerplate) doc is
+                    // REPLACED COMPLETELY by the first edit; a doc with a
+                    // named entry is edited additively.
+                    const boilerplate = Object.keys(curNet).length > 0 && SECS.every((sec) => {
+                        const mm2 = curNet[sec];
+                        return !mm2 || Object.values(mm2).every((v) => v && typeof v === 'object' && typeof v.match === 'object');
+                    });
+                    const net = boilerplate ? {} : JSON.parse(JSON.stringify(curNet));
+                    __netDoc.network = net;
+                    if (!net.version) net.version = 2;
+                    const named = SECS.some((sec) => net[sec] && net[sec][cfg.name] !== undefined);
+                    if (named) for (const sec of SECS) if (net[sec]) { delete net[sec][cfg.name]; if (!Object.keys(net[sec]).length) delete net[sec]; }
                     if (!net[section]) net[section] = {};
                     net[section][cfg.name] = def;
                     // snapd/netplan APPLIES the doc: a newly defined bridge
@@ -1526,6 +1570,7 @@ function mockFactoryJs() {
         eth0: by('eth0') || null, enp3: by('enp3s0') || null, wlp3: by('wlp3s0') || null, br0: by('br0') || null,
         noEnp5: by('enp5s0') === undefined,
         noAll: by('all') === undefined,
+        noEnStar: by('en*') === undefined,
       };
     });
     if (!gN.hasSec || gN.title !== 'Interfaces')
@@ -1539,6 +1584,8 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: an enslaved NIC (a bridge member) must not get its own card (round 53b)');
     if (gN.noAll === false)
       console.log('PAGE ERROR: a netplan-only catch-all entry must not create a card (round 53b)');
+    if (gN.noEnStar === false)
+      console.log('PAGE ERROR: a match: catch-all (en*) must not create a card (round 54)');
     // the grid is 2-up at 1440px: the first two cards share a top row (within
     // 2px) with similar widths — measured, not eyeballed.
     if (gN.gridCols !== 2 || !gN.twoUp)
@@ -1568,8 +1615,12 @@ function mockFactoryJs() {
     }
     const cEnp = await netCardOf('enp3s0');
     if (!cEnp) console.log('PAGE ERROR: no enp3s0 device card (round 53)');
-    else if (netRow(cEnp, 'Addresses') !== '\u2014')
-        console.log('PAGE ERROR: enp3s0 (no addresses) should show the em-dash (got ' + JSON.stringify(netRow(cEnp, 'Addresses')) + ') (round 53)');
+    else {
+        if (netRow(cEnp, 'Addresses') !== '\u2014')
+            console.log('PAGE ERROR: enp3s0 (no addresses) should show the em-dash (got ' + JSON.stringify(netRow(cEnp, 'Addresses')) + ') (round 53)');
+        if (netRow(cEnp, 'Configured') !== 'Automatic (DHCP)')
+            console.log('PAGE ERROR: enp3s0 is covered by the en* catch-all and must read "Automatic (DHCP)", not "Not configured" (got ' + JSON.stringify(netRow(cEnp, 'Configured')) + ') (round 54)');
+    }
     const cWlp = await netCardOf('wlp3s0');
     if (!cWlp) console.log('PAGE ERROR: no wlp3s0 device card (round 53)');
     else {
@@ -1869,6 +1920,101 @@ function mockFactoryJs() {
     if (gNg.br2) console.log('PAGE ERROR: cancelling a pending bridge must drop the card (round 53)');
     if (JSON.stringify(gNg.cards) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0', 'br1']))
         console.log('PAGE ERROR: after the pending cancel the card list must keep the four real devices + br1 from (e) (got ' + JSON.stringify(gNg.cards) + ') (round 53)');
+
+    // (h) round 54 — the CATCH-ALL case on a fresh Core box: the netplan doc
+    //     is the default boilerplate (catch-alls only, no named device).
+    //     Model it, re-enter the view so the cards read the new doc, and
+    //     prove: (1) enp3s0's card reads "configured" via the catch-all,
+    //     (2) its FIRST edit replaces the COMPLETE boilerplate,
+    //     (3) a SUBSEQUENT edit is additive (sibling entries survive).
+    await page.evaluate(() => window.__mockCore.network.__setNetplan({ network: { version: 2, ethernets: { 'all-en': { dhcp4: true, match: { name: 'en*' } }, 'all-eth': { dhcp4: true, match: { name: 'eth*' } } } } }));
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(400);
+    await page.click('.ucm-side a[data-view="network"]');
+    await wait(700);
+    const gNh0 = await page.evaluate(() => {
+      const cards = Array.from(document.querySelectorAll('[data-netcard]'));
+      const by = (n) => cards.find((c) => c.dataset.netcard === n);
+      const cEnp = by('enp3s0');
+      const cfg = cEnp ? Array.from(cEnp.querySelectorAll('.ucm-netcard__rows > div')).find((r) => (r.querySelector('dt') || {}).textContent === 'Configured') : null;
+      return {
+        names: cards.map((c) => c.dataset.netcard),
+        noBoilerplateCards: !by('all-en') && !by('all-eth'),
+        enp3Cfg: cfg ? cfg.querySelector('dd').textContent : null,
+      };
+    });
+    if (JSON.stringify(gNh0.names) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0', 'br1']))
+        console.log('PAGE ERROR: (h) the card list is the kernel truth even on a boilerplate doc (got ' + JSON.stringify(gNh0.names) + ') (round 54)');
+    if (!gNh0.noBoilerplateCards)
+        console.log('PAGE ERROR: (h) the catch-all boilerplate entries (all-en/all-eth) must not create cards (round 54)');
+    if (gNh0.enp3Cfg !== 'Automatic (DHCP)')
+        console.log('PAGE ERROR: (h) enp3s0 is covered by the all-en catch-all and must read "Automatic (DHCP)" (got ' + JSON.stringify(gNh0.enp3Cfg) + ') (round 54)');
+    // first edit: Static ON + addr + gw -> Apply replaces the WHOLE doc.
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNh1 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      if (!card) return null;
+      const sw = card.querySelector('.ucm-netcard__sw .p-switch__input');
+      const sf = card.querySelector('.ucm-netcard__static');
+      return { editing: card.classList.contains('ucm-netcard--editing'), sw: sw ? sw.checked : null, hidden: sf ? sf.hidden : null };
+    });
+    if (!gNh1) console.log('PAGE ERROR: (h) the enp3s0 card did not enter the edit state (round 54)');
+    else if (!gNh1.editing || gNh1.sw !== false || gNh1.hidden !== true)
+        console.log('PAGE ERROR: (h) a catch-all DHCP device must open with Static OFF + hidden fields (got ' + JSON.stringify(gNh1) + ') (round 54)');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__sw .p-switch__input');
+    await wait(200);
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input');
+    await page.type('[data-netcard="enp3s0"] .ucm-netcard__static .p-form__group:nth-of-type(1) input', '172.16.5.20/24');
+    await page.type('[data-netcard="enp3s0"] .ucm-netcard__static .p-form__group:nth-of-type(2) input', '172.16.5.1');
+    await page.click('[data-netcard="enp3s0"] button.p-button--brand');
+    await wait(900);
+    const gNh2 = await page.evaluate(() => {
+      const doc = window.__mockCore.network.__netdoc();
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      const cfg = card ? Array.from(card.querySelectorAll('.ucm-netcard__rows > div')).find((r) => (r.querySelector('dt') || {}).textContent === 'Configured') : null;
+      return { doc, cfg: cfg ? cfg.querySelector('dd').textContent : null };
+    });
+    if (JSON.stringify(gNh2.doc) !== JSON.stringify({ network: { version: 2, ethernets: { enp3s0: { addresses: ['172.16.5.20/24'], gateway4: '172.16.5.1' } } } }))
+        console.log('PAGE ERROR: (h) the FIRST edit must REPLACE the complete boilerplate doc (got ' + JSON.stringify(gNh2.doc) + ') (round 54)');
+    if (gNh2.cfg !== 'Static IP')
+        console.log('PAGE ERROR: (h) after the first edit enp3s0 Configured should read "Static IP" (got ' + JSON.stringify(gNh2.cfg) + ') (round 54)');
+    await page.screenshot({ path: path.join(SHOTS, '9g-network-catchall-first-edit.png') });
+    // second edit: the doc now carries named entries -> ADDITIVE. Model the
+    // post-wipe doc + a second named device (eth0), re-enter, flip enp3s0
+    // back to DHCP -> Apply must keep eth0's entry.
+    await page.evaluate(() => window.__mockCore.network.__setNetplan({ network: { version: 2, ethernets: { eth0: { dhcp4: true }, enp3s0: { addresses: ['172.16.5.20/24'], gateway4: '172.16.5.1' } } } }));
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(400);
+    await page.click('.ucm-side a[data-view="network"]');
+    await wait(700);
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNh3 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      if (!card) return null;
+      const sw = card.querySelector('.ucm-netcard__sw .p-switch__input');
+      const sf = card.querySelector('.ucm-netcard__static');
+      return { sw: sw ? sw.checked : null, addr: sf ? (sf.querySelectorAll('input')[0] || {}).value : null };
+    });
+    if (!gNh3) console.log('PAGE ERROR: (h) the enp3s0 card did not re-open (round 54)');
+    else if (gNh3.sw !== true || gNh3.addr !== '172.16.5.20/24')
+        console.log('PAGE ERROR: (h) the re-opened form must prefill the first edit\\u2019s static values (got ' + JSON.stringify(gNh3) + ') (round 54)');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__sw .p-switch__input');
+    await wait(200);
+    await page.click('[data-netcard="enp3s0"] button.p-button--brand');
+    await wait(900);
+    const gNh4 = await page.evaluate(() => {
+      const doc = window.__mockCore.network.__netdoc();
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      const cfg = card ? Array.from(card.querySelectorAll('.ucm-netcard__rows > div')).find((r) => (r.querySelector('dt') || {}).textContent === 'Configured') : null;
+      return { eth: (doc.network && doc.network.ethernets) || null, cfg: cfg ? cfg.querySelector('dd').textContent : null };
+    });
+    if (JSON.stringify(gNh4.eth) !== JSON.stringify({ eth0: { dhcp4: true }, enp3s0: { dhcp4: true } }))
+        console.log('PAGE ERROR: (h) the SECOND edit must be additive — eth0\\u2019s entry survives and enp3s0 becomes plain DHCP (got ' + JSON.stringify(gNh4.eth) + ') (round 54)');
+    if (gNh4.cfg !== 'Automatic (DHCP)')
+        console.log('PAGE ERROR: (h) after the second edit enp3s0 Configured should read "Automatic (DHCP)" (got ' + JSON.stringify(gNh4.cfg) + ') (round 54)');
+    // ---- 4. snaps view (search works WITHOUT a store login) ----
 
 
 

@@ -974,6 +974,7 @@ async function listNetDevices() {
         devices.push({
             name: l.ifname, type, connected: !!up, addresses,
             members: type === 'bridge' ? (membersByMaster[l.ifname] || []) : [],
+            mac: (typeof l.address === 'string' && l.address) ? l.address.toLowerCase() : null,
             gateway: (gw && gw.gateway) || null,
             dns: dnsBy[l.ifname] || [],
             configured: false, netplan: null,
@@ -982,13 +983,64 @@ async function listNetDevices() {
     return devices;
 }
 
+/* netplan `match:` (catch-all directive) semantics — source-verified in
+   libnetplan (netplan_netdef_match_interface): a definition with NO match:
+   matches ONLY its own id; one WITH a match: matches when every specified
+   property fits (name = fnmatch GLOB, macaddress, driver). These helpers
+   replicate that for the physical properties this app can see live
+   (name + mac — the driver needs /sys, which no snap plug grants). */
+function netGlobMatch(pattern, name) {
+    if (typeof pattern !== 'string' || !pattern) return false;
+    if (!/[*?[]/.test(pattern)) return pattern === name; // no glob chars: exact
+    let re = '';
+    for (let i = 0; i < pattern.length; i++) {
+        const c = pattern[i];
+        if (c === '*') re += '.*';
+        else if (c === '?') re += '.';
+        else if (c === '[') {
+            const end = pattern.indexOf(']', i + 1);
+            if (end > i) {
+                let inner = pattern.slice(i + 1, end);
+                if (inner[0] === '!') inner = '^' + inner.slice(1);
+                re += '[' + inner + ']';
+                i = end;
+            } else re += '\\[';
+        }
+        else if (c === '\\' || '.+^()|{}$'.includes(c)) re += '\\' + c;
+        else re += c;
+    }
+    return new RegExp('^' + re + '$').test(name);
+}
+function netDefMatches(def, name, mac) {
+    const m = (def && typeof def.match === 'object' && def.match) ? def.match : null;
+    if (!m) return false; // a named definition matches only its own id (name-keyed)
+    if (m.name != null) {
+        const pats = Array.isArray(m.name) ? m.name : [m.name];
+        if (!pats.some((p) => netGlobMatch(String(p), name))) return false;
+    }
+    if (m.macaddress != null) {
+        if (!mac) return false;
+        const pats = Array.isArray(m.macaddress) ? m.macaddress : [m.macaddress];
+        if (!pats.some((p) => String(p).toLowerCase() === mac)) return false;
+    }
+    // driver: not live-visible (needs /sys) — a match carrying a driver
+    // constraint can never be evaluated here, so it does not match.
+    if (m.driver != null) return false;
+    return true;
+}
+
 /* Merge the netplan document's definitions over the live device list:
-   configured=true + the netplan entry for names the doc defines. A netplan
-   entry with NO live device creates NO card (catch-all directives like
-   "all:", stale entries — netplan is a backend document, the card list is
-   the kernel truth + the user's pending adds). A bridge the user created
-   via "Add bridge" becomes a card when the kernel has it (after snapd
-   applies the netplan), not before. */
+   pass 1 — configured=true + the netplan entry for names the doc defines.
+   A netplan entry with NO live device creates NO card (catch-all
+   directives like "all:", stale entries — netplan is a backend document,
+   the card list is the kernel truth + the user's pending adds). A bridge
+   the user created via "Add bridge" becomes a card when the kernel has it
+   (after snapd applies the netplan), not before.
+   pass 2 — catch-all (match:) overlay: a live device with NO named entry
+   that a match: definition covers is still netplan-CONFIGURED (the default
+   Core seed configures en* NICs via "all-en": {match: {name: en*}}) — the
+   card shows the catch-all's values and the device's first edit starts
+   from them. A named entry always wins (pass 1). */
 function mergeNetplanDevices(devices, doc) {
     const net = (doc && doc.network) || {};
     const sections = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
@@ -1001,6 +1053,26 @@ function mergeNetplanDevices(devices, doc) {
             const d = by.get(name);
             if (d) { d.configured = true; d.netplan = def; }
             // no live device -> no card (see the docstring)
+        }
+    }
+    // pass 2 — the catch-all (match:) overlay.
+    for (const d of devices) {
+        if (Object.prototype.hasOwnProperty.call(d, 'netplan') && d.netplan) continue;
+        for (const sec of sections) {
+            const m = net[sec];
+            if (!m || typeof m !== 'object') continue;
+            for (const [name, def] of Object.entries(m)) {
+                if (name === d.name) continue; // same-id defs are pass 1's job (named win)
+                if (!netDefMatches(def, d.name, d.mac)) continue;
+                d.configured = true;
+                d.netplan = def;
+                if (sec === 'wifis') d.type = 'wifi';
+                else if (sec === 'bridges' && d.type !== 'wifi') d.type = 'bridge';
+                else if (sec === 'bonds' && d.type !== 'wifi') d.type = 'bond';
+                else if (sec === 'vlans') d.type = 'vlan';
+                break;
+            }
+            if (d.configured) break;
         }
     }
     // type refinement: a netplan wifis entry wins over the kernel guess, and
@@ -1090,28 +1162,41 @@ function buildNetDeviceDef(cfg) {
    netplan with Config.Try + 30s rollback + store-reachability guard. */
 async function netApplyDevice(cfg) {
     const { section, def } = buildNetDeviceDef(cfg);
-    // Read via getNetplan() — it unwraps the { 'system.network.netplan': <yaml> }
-    // conf response AND parses the YAML. A raw getSnapConfig returns the WRAPPER
-    // object, so treating it as the doc would double-encode the write (the
-    // round-1 single-interface writer had exactly this latent bug — its test
-    // only asserted substring presence in the SENT yaml, so it never fired).
+    // The netplan option is a JSON OBJECT, not a string (source-verified
+    // snapd configcore/netplan.go: the SET path tr.Get()s the option into a
+    // map[string]any and json.Marshals it to netplan — a YAML string would
+    // fail the option decode; the GET path returns the option as the parsed
+    // object, e.g. {"network":{...}} — exactly `snap get -d core
+    // system.network.netplan.network`). getNetplan() unwraps the conf
+    // response and keeps legacy YAML strings parsed.
     const cur = await getNetplan();
-    const doc = (cur && yamlIsMap(cur)) ? cur : {};
-    if (!yamlIsMap(doc.network)) doc.network = {};
+    const SECS = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
+    const curNet = (cur && yamlIsMap(cur.network)) ? cur.network : {};
+    // FIRST-EDIT RULE (user directive): the default Core seed is "boilerplate"
+    // — every definition is a catch-all (match:) and no device is named. The
+    // first edit onto such a document replaces it COMPLETELY (snapd's own
+    // writer "always starts with a clean config"): the new doc is
+    // {version: 2} + this one device. Any doc that already carries a named
+    // entry is user-managed: the edit is the normal additive read-modify-
+    // write that keeps the rest of the doc intact.
+    const boilerplate = Object.keys(curNet).length > 0 && SECS.every((sec) => {
+        const m = curNet[sec];
+        return !yamlIsMap(m) || Object.values(m).every((d) => d && typeof d === 'object' && typeof d.match === 'object');
+    });
+    const named = SECS.some((sec) => yamlIsMap(curNet[sec]) && Object.prototype.hasOwnProperty.call(curNet[sec], cfg.name));
+    const doc = { network: boilerplate ? {} : JSON.parse(JSON.stringify(curNet)) };
     if (!doc.network.version) doc.network.version = 2;
-    // this device leaves the other sections (it may have moved type)
-    for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
-        if (yamlIsMap(doc.network[sec])) delete doc.network[sec][cfg.name];
-        else if (doc.network[sec] == null) { /* nothing */ }
-    }
+    // a named device leaves its old sections (it may have moved type)
+    if (named) for (const sec of SECS) if (yamlIsMap(doc.network[sec])) delete doc.network[sec][cfg.name];
     if (!yamlIsMap(doc.network[section])) doc.network[section] = {};
     doc.network[section][cfg.name] = def;
     // drop sections that ended up empty (keeps the doc tidy, netplan-valid)
-    for (const sec of ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans']) {
+    for (const sec of SECS) {
         if (yamlIsMap(doc.network[sec]) && Object.keys(doc.network[sec]).length === 0) delete doc.network[sec];
     }
-    const yaml = toYaml(doc);
-    return setSnapConfig('core', { 'system.network.netplan': yaml });
+    // A plain object body — NOT setSnapConfig (that bridge scalar-encodes
+    // values and cannot carry a nested document) and NOT a YAML string.
+    return snapdRequest('PUT', '/v2/snaps/core/conf', { body: { 'system.network.netplan': doc }, auth: A() });
 }
 
 /* Read the live device list merged with the netplan definitions. */
@@ -1577,7 +1662,7 @@ const api = {
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
     getNetDevices, netApplyDevice, buildNetDeviceDef, mergeNetplanDevices,
-    listNetDevices, netLinkType, __setNetLive,
+    listNetDevices, netLinkType, netGlobMatch, netDefMatches, __setNetLive,
 
     installSnap, snapAction, snapComponent,
     setSnapConfig,
