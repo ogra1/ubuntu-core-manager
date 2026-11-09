@@ -1046,16 +1046,29 @@ function renderNetDevices() {
         grid.replaceChildren(...state.devices.map((d) => netCard(d)));
     } finally { netRendering = false; }
 }
-/* a device card: header (name + type + live status pill) + body — the LIVE
-   summary, or the in-place edit form while editing (the card spans the row). */
+/* a device card: header (name + type + live status pill + the round-58
+   pencil edit icon, top-right) + body — the LIVE summary, or the in-place
+   edit form while editing (the card spans the row). The edit icon is in the
+   head so it is present in BOTH the view and the edit state (clicking it
+   while already editing is a harmless no-op re-set of the same name). */
 function netCard(d) {
     const card = el('div', { class: 'p-card ucm-netcard' + (state.netEditing === d.name ? ' ucm-netcard--editing' : '') });
     card.dataset.netcard = d.name;
     const head = el('div', { class: 'p-card__header ucm-netcard__head' });
+    const statusLabel = el('span', { class: 'p-status-label ' + (d.connected ? 'p-status-label--positive' : 'p-status-label--caution'), text: d.connected ? 'Connected' : 'Not connected' });
     head.append(
         el('span', { class: 'ucm-netcard__name ucm-mono', text: d.name }),
         el('span', { class: 'ucm-netcard__type', text: NET_TYPE_NAMES[d.type] || 'Network' }),
-        el('span', { class: 'p-status-label ' + (d.connected ? 'p-status-label--positive' : 'p-status-label--caution'), text: d.connected ? 'Connected' : 'Not connected' }),
+        statusLabel,
+        /* round 58: the edit affordance is the suru pencil in the head,
+           top-right after the status label (the label's margin-left:auto
+           pushes both to the right edge). The old big "Change settings"
+           foot button is gone. rowBtn = the app's icon-button idiom
+           (tooltip + aria). Clicking while editing re-sets the same name
+           (a no-op) — no branch needed. */
+        rowBtn('Change settings', 'p-icon--edit',
+            (btn) => { state.netEditing = d.name; renderNetDevices(); },
+            { tooltip: 'Change settings', ariaLabel: 'Change settings on ' + d.name }),
     );
     card.append(head);
     const body = el('div', { class: 'ucm-netcard__body' });
@@ -1092,14 +1105,10 @@ function netCardView(d) {
         r.append(el('dd', { class: 'ucm-muted' + (v == null ? '' : ' ucm-netcard__v'), text: v == null ? 'Not configured' : String(v) }));
         rowsDl.append(r);
     }
-    const box = el('div', { class: 'ucm-netcard__view' });
-    box.append(rowsDl);
-    box.append(el('div', { class: 'ucm-netcard__foot' },
-        el('button', {
-            type: 'button', class: 'p-button--base ucm-netcard__edit', text: 'Change settings',
-            onclick: () => { state.netEditing = d.name; renderNetDevices(); },
-        })));
-    return box;
+    // round 58: the "Change settings" foot button is gone — the edit
+    // affordance is the pencil in the card head (netCard above), so the
+    // view body is just the live rows.
+    return rowsDl;
 }
 /* the in-place edit body: pre-filled from the netplan definition (the
    configured truth), applies ONE device entry to the netplan doc. */
@@ -1276,8 +1285,10 @@ function netCardEdit(d) {
     });
     return box;
 }
-/* "Add bridge": a pending card in the edit form; it only joins the netplan
-   doc when the user clicks Apply (a Cancel drops it). */
+/* "Add": a pending card in the edit form (bridge-only per v1 scope — the
+   button label is deliberately type-agnostic so later device types can
+   reuse it); it only joins the netplan doc when the user clicks Apply (a
+   Cancel drops it). */
 function netAddBridge() {
     if (!state.devices) return;
     const nm = netUniqueBridgeName();

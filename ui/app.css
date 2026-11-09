@@ -1021,6 +1021,19 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     background-position: center;
     background-image: url("../build/images/suru-close.svg");
 }
+
+/* Round 58: the network device card's EDIT affordance is the suru pencil in
+   the card HEAD (top-right, after the status label) instead of the big
+   "Change settings" button in the card foot (the foot is gone). Same
+   suru-file / 1rem idiom as the .p-icon--add rule above. */
+.p-icon--edit{
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-size: contain;
+    height: 1rem; width: 1rem;
+    background-position: center;
+    background-image: url("../build/images/suru-edit.svg");
+}
 /* Round-39b: the connected/unconnected sections were almost touching
    (the divider collapsed to a 6px sliver, gapAbove/gapBelow 0 — the
    hairline sat flush against the last connected row, so the two
@@ -1034,13 +1047,17 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     height: 0;
 }
 
-/* ---- network view: Interfaces section (round 53) --------------------------
+/* ---- network view: Interfaces section (round 53; head icon round 58) ------
    A 2-up responsive grid of flat device cards under the General card. Each
    card shows the LIVE state (the kernel truth — what SSH connects with) in
-   the dashboard's .ucm-kv row idiom; "Change settings" swaps the card body
-   for the in-place netplan edit form (Static-IP switch, address fields
-   hidden until needed, DNS chips, Wi-Fi SSID/password, bridge members) and
-   the card spans the row while editing. */
+   the dashboard's .ucm-kv row idiom. The card HEAD (name + type + status
+   label + the round-58 suru pencil edit icon, top-right) carries the edit
+   affordance: clicking it swaps the card body for the in-place netplan edit
+   form (Static-IP switch, address fields hidden until needed, DNS chips,
+   Wi-Fi SSID/password, bridge members) and the card spans the row while
+   editing. (Round 58 replaced the old big "Change settings" foot button
+   with the pencil in the head; the section head's add button is a plain
+   "+ Add" reusing the suru add icon.) */
 #netIfaceSec { margin-top: 1.6rem; }
 .ucm-iface-head {
     display: flex; align-items: center; gap: 1rem;
@@ -1052,6 +1069,9 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-iface-add {
     color: var(--ucm-orange); font-weight: 500;
     padding: 0 .6rem; height: 1.7rem; margin: 0;
+    /* round 58: the label now carries an inline + icon — keep it on one
+       text line with the 1rem glyph (measured in the harness, not by eye). */
+    display: inline-flex; align-items: center; gap: .35rem;
 }
 .ucm-iface-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 @media (max-width: 900px) { .ucm-iface-grid { grid-template-columns: 1fr; } }

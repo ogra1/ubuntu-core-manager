@@ -1593,7 +1593,7 @@ function mockFactoryJs() {
     // ---- 4n. network view, INTERFACES section (round 53) ----
     // One card per device: the DEFAULT body shows the LIVE values (the
     // kernel truth — the address SSH connects with), read via the
-    // network-control tools; "Change settings" swaps in the in-place
+    // network-control tools; the card-head pencil icon swaps in the in-place
     // netplan edit form. Backed by the mock core.network.devices() /
     // .applyDevice() (a private netplan-doc closure the drives assert).
     await page.click('.ucm-side a[data-view="network"]');
@@ -1624,6 +1624,8 @@ function mockFactoryJs() {
         count: sec ? (sec.querySelector('#netIfaceCount') || {}).textContent || null : null,
         addBtn: !!document.querySelector('#netAddDevice'),
         addLabel: (() => { const b = document.querySelector('#netAddDevice'); return b ? b.textContent.trim() : null; })(),
+        addIcon: (() => { const b = document.querySelector('#netAddDevice'); const i = b ? b.querySelector('i') : null; return i ? (i.className || '') : null; })(),
+        addIconBg: (() => { const b = document.querySelector('#netAddDevice'); const i = b ? b.querySelector('i') : null; return i ? getComputedStyle(i).backgroundImage : null; })(),
         names: cards.map((c) => c.dataset.netcard),
         gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : null,
         twoUp: cards.length >= 2 && sameRow(rects[0], rects[1]) && widthsOk(rects[0], rects[1]),
@@ -1636,8 +1638,12 @@ function mockFactoryJs() {
     if (!gN.hasSec || gN.title !== 'Interfaces')
       console.log('PAGE ERROR: the Interfaces section header is missing or not "Interfaces" (got ' + JSON.stringify(gN.title) + ') (round 53)');
     if (gN.count !== '4 devices') console.log('PAGE ERROR: the Interfaces count is not "4 devices" (got ' + JSON.stringify(gN.count) + ') (round 53)');
-    if (!gN.addBtn || gN.addLabel !== 'Add bridge')
-      console.log('PAGE ERROR: the "Add bridge" ghost button is missing (got ' + JSON.stringify(gN.addLabel) + ') (round 53)');
+    if (!gN.addBtn || gN.addLabel !== 'Add')
+      console.log('PAGE ERROR: the Interfaces "+ Add" button is missing or mislabelled (got ' + JSON.stringify(gN.addLabel) + ', want "Add") (round 58)');
+    if (!gN.addIcon || gN.addIcon.indexOf('p-icon--add') === -1)
+      console.log('PAGE ERROR: the Add button does not carry the + icon (class ' + JSON.stringify(gN.addIcon) + ') (round 58)');
+    if (!gN.addIconBg || gN.addIconBg.indexOf('suru-add.svg') === -1)
+      console.log('PAGE ERROR: the Add button + icon does not paint suru-add.svg (got ' + JSON.stringify(gN.addIconBg) + ') (round 58)');
     if (JSON.stringify(gN.names) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0']))
       console.log('PAGE ERROR: the device cards are wrong (got ' + JSON.stringify(gN.names) + ', want eth0/enp3s0/wlp3s0/br0) (round 53)');
     if (gN.noEnp5 === false)
@@ -1706,18 +1712,49 @@ function mockFactoryJs() {
         if (netRow(cBr0, 'Configured') !== 'Automatic (DHCP)') console.log('PAGE ERROR: br0 Configured is not "Automatic (DHCP)" (got ' + JSON.stringify(netRow(cBr0, 'Configured')) + ') (round 53)');
     }
     // the view state carries NO inputs (inputs are hidden until needed)
+    // round 58: the edit affordance is the suru pencil in the card HEAD
+    // (top-right, after the status label) — the old "Change settings" foot
+    // button is gone. Verify the head button + its pencil asset + no foot +
+    // the icon on the head line, rightmost.
     const gNview = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
-      return { inputs: card ? card.querySelectorAll('input').length : null, editBtn: card ? !!Array.from(card.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Change settings') : null };
+      if (!card) return null;
+      const head = card.querySelector('.ucm-netcard__head');
+      const editBtn = head ? Array.from(head.querySelectorAll('button')).find((b) => { const i = b.querySelector('i'); return i && (i.className || '').indexOf('p-icon--edit') !== -1; }) || null : null;
+      const editI = editBtn ? editBtn.querySelector('i') : null;
+      const label = head ? head.querySelector('.p-status-label') : null;
+      const r = (e) => { const b = e.getBoundingClientRect(); return { top: b.top, left: b.left, right: b.right, bottom: b.bottom }; };
+      return {
+        inputs: card.querySelectorAll('input').length,
+        headEdit: !!editBtn,
+        editIconBg: editI ? getComputedStyle(editI).backgroundImage : null,
+        noFoot: !card.querySelector('.ucm-netcard__foot'),
+        editIsLastHeadChild: editBtn && head ? (head.lastElementChild === editBtn) : null,
+        sameLineDelta: (editBtn && label) ? Math.abs((r(editBtn).top + r(editBtn).bottom) / 2 - (r(label).top + r(label).bottom) / 2) : null,
+        editRightOfLabel: (editBtn && label) ? (r(editBtn).left > r(label).left) : null,
+      };
     });
-    if (gNview.inputs !== 0) console.log('PAGE ERROR: the eth0 view state must carry no inputs (got ' + gNview.inputs + ') (round 53)');
-    if (!gNview.editBtn) console.log('PAGE ERROR: the eth0 card has no "Change settings" affordance (round 53)');
+    if (!gNview) console.log('PAGE ERROR: no eth0 card to inspect its head (round 58)');
+    else {
+      if (gNview.inputs !== 0) console.log('PAGE ERROR: the eth0 view state must carry no inputs (got ' + gNview.inputs + ') (round 53)');
+      if (!gNview.headEdit) console.log('PAGE ERROR: the eth0 card head has no edit icon button (round 58)');
+      if (!gNview.editIconBg || gNview.editIconBg.indexOf('suru-edit.svg') === -1)
+        console.log('PAGE ERROR: the head edit icon does not paint the suru pencil (got ' + JSON.stringify(gNview.editIconBg) + ') (round 58)');
+      if (gNview.noFoot === false) console.log('PAGE ERROR: the eth0 card still carries the old "Change settings" foot (round 58)');
+      if (gNview.editIsLastHeadChild === false) console.log('PAGE ERROR: the edit icon is not the LAST (rightmost) child of the card head (round 58)');
+      if (gNview.sameLineDelta != null && gNview.sameLineDelta > 2)
+        console.log('PAGE ERROR: the edit icon is not on the head line with the status label (centre delta ' + gNview.sameLineDelta + 'px, want <=2) (round 58)');
+      if (gNview.editRightOfLabel === false) console.log('PAGE ERROR: the edit icon is not to the right of the status label (round 58)');
+    }
     await page.screenshot({ path: path.join(SHOTS, '9c-network-interfaces.png') });
+    // isolated crop of the eth0 card head (the pencil, top-right) for the VLM
+    const headEl = await page.$('[data-netcard="eth0"] .ucm-netcard__head');
+    if (headEl) await headEl.screenshot({ path: path.join(SHOTS, '9i-netcard-edit-icon.png'), scale: 2 });
 
     // (a) open the eth0 edit form: DHCP by default, the address fields
     //     hidden until the Static switch is on, no SSID field, the name
     //     locked for an existing device.
-    await page.click('[data-netcard="eth0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="eth0"] .ucm-netcard__head button');
     await wait(250);
     const gNa = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
@@ -1798,7 +1835,7 @@ function mockFactoryJs() {
 
     // (c) re-open: the form is PRE-FILLED from the netplan (the static
     //     switch on, the address filled) -> Cancel leaves the doc as-is.
-    await page.click('[data-netcard="eth0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="eth0"] .ucm-netcard__head button');
     await wait(250);
     const gNc = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
@@ -1824,7 +1861,7 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: Cancel should leave the card in its view state (round 53)');
 
     // (d) the Wi-Fi form prefills the netplan SSID + password (masked).
-    await page.click('[data-netcard="wlp3s0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="wlp3s0"] .ucm-netcard__head button');
     await wait(250);
     const gNd = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'wlp3s0');
@@ -1849,7 +1886,7 @@ function mockFactoryJs() {
     await wait(250);
     await page.screenshot({ path: path.join(SHOTS, '9e-network-wifi-edit.png') });
 
-    // (e) "Add bridge" -> a pending card (name editable + prefilled, the
+    // (e) "Add" -> a pending card (name editable + prefilled, the
     //     member checklist excludes the virtual br0) -> Apply writes it.
     await page.click('#netAddDevice');
     await wait(250);
@@ -1866,7 +1903,7 @@ function mockFactoryJs() {
         hasBridge: !!document.querySelector('[data-netcard="br0"]'),
       };
     });
-    if (!gNe0) console.log('PAGE ERROR: "Add bridge" did not spawn the pending br1 card (round 53)');
+    if (!gNe0) console.log('PAGE ERROR: "Add" did not spawn the pending br1 card (round 53)');
     else {
         if (!gNe0.editing) console.log('PAGE ERROR: the new bridge card should open in the edit state (round 53)');
         if (gNe0.nameVal !== 'br1' || gNe0.nameDisabled !== false)
@@ -1916,7 +1953,7 @@ function mockFactoryJs() {
     //     "/prefix" toast and sends nothing (the puts delta proves it). The
     //     card re-opens in STATIC mode (the (b) apply) — switch on, fields
     //     visible, the (b) values prefilled — so no switch click is needed.
-    await page.click('[data-netcard="eth0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="eth0"] .ucm-netcard__head button');
     await wait(250);
     const gNf0 = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
@@ -1980,7 +2017,7 @@ function mockFactoryJs() {
     await page.keyboard.press('Escape');
     await wait(250);
 
-    // (g) pending cancel: "Add bridge" -> Cancel -> the pending card is gone.
+    // (g) pending cancel: "Add" -> Cancel -> the pending card is gone.
     //     After (e) br1 persists in the doc, so this 2nd add uniquely names
     //     br2 (netUniqueBridgeName skips br0 + br1).
     await page.click('#netAddDevice');
@@ -1989,7 +2026,7 @@ function mockFactoryJs() {
       br2: !!document.querySelector('[data-netcard="br2"]'),
       br2Editing: (() => { const c = document.querySelector('[data-netcard="br2"]'); return c ? c.classList.contains('ucm-netcard--editing') : null; })(),
     }));
-    if (!gNg0.br2 || !gNg0.br2Editing) console.log('PAGE ERROR: the second "Add bridge" should spawn a pending br2 (got ' + JSON.stringify(gNg0) + ') (round 53)');
+    if (!gNg0.br2 || !gNg0.br2Editing) console.log('PAGE ERROR: the second "Add" should spawn a pending br2 (got ' + JSON.stringify(gNg0) + ') (round 53)');
     await page.click('[data-netcard="br2"] .ucm-netcard__foot--edit button.p-button--base');
     await wait(250);
     const gNg = await page.evaluate(() => ({
@@ -2029,7 +2066,7 @@ function mockFactoryJs() {
     if (gNh0.enp3Cfg !== 'Automatic (DHCP)')
         console.log('PAGE ERROR: (h) enp3s0 is covered by the all-en catch-all and must read "Automatic (DHCP)" (got ' + JSON.stringify(gNh0.enp3Cfg) + ') (round 54)');
     // first edit: Static ON + addr + gw -> Apply replaces the WHOLE doc.
-    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__head button');
     await wait(250);
     const gNh1 = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
@@ -2067,7 +2104,7 @@ function mockFactoryJs() {
     await wait(400);
     await page.click('.ucm-side a[data-view="network"]');
     await wait(700);
-    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__head button');
     await wait(250);
     const gNh3 = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
@@ -2115,7 +2152,7 @@ function mockFactoryJs() {
     if (!gNh5) console.log('PAGE ERROR: (h2) no enp3s0 card (round 55)');
     else if (gNh5.cfg !== 'Static IP')
         console.log('PAGE ERROR: (h2) a NAMED entry must show its own values ("Static IP") — the catch-all must not shadow it (got ' + JSON.stringify(gNh5.cfg) + ') (round 55)');
-    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__head button');
     await wait(250);
     const gNh6 = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
@@ -2147,7 +2184,7 @@ function mockFactoryJs() {
     if (!gNi0) console.log('PAGE ERROR: (i) no enp3s0 card after the resolver-file reset (round 57)');
     else if (netRow(gNi0, 'DNS') !== '\u2014')
         console.log('PAGE ERROR: (i) with no per-link AND no global resolver data the card must read the dash (got ' + JSON.stringify(netRow(gNi0, 'DNS')) + ') (round 57)');
-    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__head button');
     await wait(250);
     const gNi1 = await page.evaluate(() => {
       const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
