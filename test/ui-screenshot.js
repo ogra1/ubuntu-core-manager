@@ -1750,6 +1750,68 @@ function mockFactoryJs() {
     // isolated crop of the eth0 card head (the pencil, top-right) for the VLM
     const headEl = await page.$('[data-netcard="eth0"] .ucm-netcard__head');
     if (headEl) await headEl.screenshot({ path: path.join(SHOTS, '9i-netcard-edit-icon.png'), scale: 2 });
+    // round 58b: the pencil's p-tooltip--top-right message renders ABOVE the
+    // button — past the card's top border. The bundle .p-card is
+    // overflow:auto, so without overflow:visible the tooltip was clipped
+    // (the reported "vanishes behind the card border"). Guard: it is painted
+    // (display block, non-zero box), no ancestor clips it, the tooltip's top
+    // may sit above the card top, AND elementFromPoint at the tooltip centre
+    // is the tooltip itself (on top, not occluded).
+    await page.hover('[data-netcard="eth0"] .ucm-netcard__head button');
+    await wait(250);
+    const gNtip = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      if (!card) return null;
+      const btn = card.querySelector('.ucm-netcard__head button');
+      const tip = btn ? btn.querySelector('.p-tooltip__message') : null;
+      if (!tip) return { hasTip: false };
+      const tr = tip.getBoundingClientRect();
+      const cr = card.getBoundingClientRect();
+      const clip = () => {
+        for (let a = tip.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+          const ov = getComputedStyle(a).overflow;
+          if (ov && ov !== 'visible') {
+            const b = a.getBoundingClientRect();
+            // an overflow!=visible box only CLIPS a descendant that crosses its
+            // border-box — ucm-main/body (also auto/hidden) do NOT clip a
+            // mid-page tooltip that stays inside them (the round-40 idiom).
+            const crosses = tr.left < b.left - 0.5 || tr.right > b.right + 0.5 || tr.top < b.top - 0.5 || tr.bottom > b.bottom + 0.5;
+            if (crosses) {
+              return a.tagName.toLowerCase() + '.' + String(a.className).split(/\s+/).filter(Boolean).slice(0, 3).join('.') + ' (' + ov + ')';
+            }
+          }
+        }
+        return null;
+      };
+      const cx = (tr.left + tr.right) / 2, cy = (tr.top + tr.bottom) / 2;
+      const el = document.elementFromPoint(cx, cy);
+      return {
+        hasTip: true,
+        display: getComputedStyle(tip).display,
+        w: tr.width, h: tr.height,
+        cardOverflow: getComputedStyle(card).overflow,
+        clipper: clip(),
+        tipTopAboveCardTop: tr.top - cr.top,
+        onTop: el === tip || (el && tip.contains(el)),
+      };
+    });
+    if (!gNtip || !gNtip.hasTip)
+      console.log('PAGE ERROR: the pencil edit button carries no p-tooltip message (round 58b)');
+    else {
+      if (gNtip.display !== 'block' || gNtip.w <= 0 || gNtip.h <= 0)
+        console.log('PAGE ERROR: the head edit tooltip is not painted on hover (got ' + JSON.stringify(gNtip) + ') (round 58b)');
+      if (gNtip.clipper)
+        console.log('PAGE ERROR: an ancestor still clips the head edit tooltip (overflow != visible on ' + gNtip.clipper + ') (round 58b)');
+      if (gNtip.cardOverflow !== 'visible')
+        console.log('PAGE ERROR: the device card must not clip its head tooltip (overflow ' + gNtip.cardOverflow + ', want visible) (round 58b)');
+      if (gNtip.tipTopAboveCardTop >= 0)
+        console.log('PAGE ERROR: the head tooltip was expected to extend above the card top (top delta ' + gNtip.tipTopAboveCardTop + 'px) — the geometry the clipper broke (round 58b)');
+      if (!gNtip.onTop)
+        console.log('PAGE ERROR: the head tooltip is covered at its centre (elementFromPoint ' + JSON.stringify(gNtip) + ') (round 58b)');
+    }
+    // unarm the tooltip (leave the head clean for the shots below)
+    await page.mouse.move(5, 5);
+    await wait(150);
 
     // (a) open the eth0 edit form: DHCP by default, the address fields
     //     hidden until the Static switch is on, no SSID field, the name

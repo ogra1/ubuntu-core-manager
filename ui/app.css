@@ -1057,7 +1057,13 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    Wi-Fi SSID/password, bridge members) and the card spans the row while
    editing. (Round 58 replaced the old big "Change settings" foot button
    with the pencil in the head; the section head's add button is a plain
-   "+ Add" reusing the suru add icon.) */
+   "+ Add" reusing the suru add icon. (Round 58b: the pencil's
+   p-tooltip--top-right message renders ABOVE the button, i.e. past the
+   card's top border, and the bundle's .p-card carries overflow:auto —
+   which CLIPPED it. The card holds no long/scrolling content (short
+   rows, the in-place form), so overflow is not needed: overflow:visible
+   lets the head tooltip paint, the same .ucm-config__card idiom from
+   round 48d.) */
 #netIfaceSec { margin-top: 1.6rem; }
 .ucm-iface-head {
     display: flex; align-items: center; gap: 1rem;
@@ -1075,7 +1081,14 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 }
 .ucm-iface-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 @media (max-width: 900px) { .ucm-iface-grid { grid-template-columns: 1fr; } }
-.ucm-netcard { margin: 0; }
+/* round 58b: the bundle .p-card is overflow:auto (verified in the
+   offline vanilla-framework.css), and the head's edit-pencil tooltip
+   (p-tooltip--top-right) renders above the card's top border — overflow:auto
+   clipped it (measured: ~17.6px of the 36px tooltip above the card edge).
+   The card holds no long/scrolling content (short rows, the in-place form),
+   so overflow is not needed: let the head tooltip paint (the same idiom as
+   .ucm-config__card, round 48d). */
+.ucm-netcard { margin: 0; overflow: visible; }
 .ucm-netcard--editing { grid-column: 1 / -1; }
 .ucm-netcard__head {
     display: flex; align-items: center; gap: .7rem;
