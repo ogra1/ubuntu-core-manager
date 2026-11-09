@@ -837,6 +837,53 @@ async function getNetplan() {
 }
 
 /* ------------------------------------------------------------------ *
+ * 7a. Network SEED boilerplate (the network-setup-control snap interface)
+ *
+ * Ubuntu Core ships a netplan seed so an unconfigured box has connectivity at
+ * first boot: /etc/netplan/00-snapd-config.yaml (snapd writes it with the
+ * "00" origin hint), a set of catch-all (match:) rules, e.g.:
+ *   ethernets:
+ *     all-en:  { dhcp4: true, match: { name: "en*" } }
+ *     all-eth: { dhcp4: true, match: { name: "eth*" } }
+ *
+ * The app writes network config through snapd's netplan external config, which
+ * lands in a SEPARATE origin file (90-snapd-config.yaml on a seeded system —
+ * snapd configcore/netplan.go: originHint = "90-snapd-config" if seeded else
+ * "00-snapd-config"). But snapd's netplan D-Bus Config() snapshot copies ALL
+ * of /etc/netplan at apply time, so the 00 seed is re-merged on top of the
+ * app's 90 config on every Apply — the catch-alls survive and keep DHCPing
+ * every NIC they cover, including ones the user never touched.
+ *
+ * The fix: after a device edit APPLIES successfully, DELETE the 00 seed file
+ * (it is only there for first-boot connectivity; any other interface the user
+ * wants DHCP on can then be set up explicitly). network-setup-control grants
+ * /etc/netplan rw. The delete is guarded to catch-all (match:) content so a
+ * hand-authored 00 file with real named config is never destroyed, and it
+ * happens only on a successful apply (a failed/rolled-back Config.Try must
+ * leave the box in its original state). The path is injectable so the
+ * integration test runs against a temp file (the dev container must not touch
+ * the real /etc/netplan).
+ * ------------------------------------------------------------------ */
+let __netSeedPath = null;
+function __setNetSeedPath(p) { __netSeedPath = p; }
+function netSeedBoilerplatePath() {
+    return __netSeedPath || process.env.UCM_NETPLAN_SEED || '/etc/netplan/00-snapd-config.yaml';
+}
+/* Remove the seed boilerplate file if (and only if) it is present AND carries
+   catch-all (match:) definitions. Synchronous + total (never throws): a
+   missing file is a no-op (already cleared, or a box with no netplan dir).
+   Returns 'removed' | 'kept' | 'absent'. */
+function clearNetSeedBoilerplate() {
+    const p = netSeedBoilerplatePath();
+    let txt = '';
+    try { txt = fs.readFileSync(p, 'utf8'); }
+    catch (e) { return 'absent'; }
+    // the catch-all signature — a user's own named entry never carries match:
+    if (!/match:/.test(txt)) return 'kept';
+    try { fs.unlinkSync(p); } catch (e) { return 'kept'; }
+    return 'removed';
+}
+/* ------------------------------------------------------------------ *
  * 7b. Network DEVICES (the network-control snap interface)
  *
  * The Network page's Interfaces section shows every network device with
@@ -1172,22 +1219,29 @@ async function netApplyDevice(cfg) {
     const cur = await getNetplan();
     const SECS = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
     const curNet = (cur && yamlIsMap(cur.network)) ? cur.network : {};
-    // FIRST-EDIT RULE (user directive): the default Core seed is "boilerplate"
-    // — every definition is a catch-all (match:) and no device is named. The
-    // first edit onto such a document replaces it COMPLETELY (snapd's own
-    // writer "always starts with a clean config"): the new doc is
-    // {version: 2} + this one device. Any doc that already carries a named
-    // entry is user-managed: the edit is the normal additive read-modify-
-    // write that keeps the rest of the doc intact.
-    const boilerplate = Object.keys(curNet).length > 0 && SECS.every((sec) => {
-        const m = curNet[sec];
-        return !yamlIsMap(m) || Object.values(m).every((d) => d && typeof d === 'object' && typeof d.match === 'object');
-    });
-    const named = SECS.some((sec) => yamlIsMap(curNet[sec]) && Object.prototype.hasOwnProperty.call(curNet[sec], cfg.name));
-    const doc = { network: boilerplate ? {} : JSON.parse(JSON.stringify(curNet)) };
+    // BOILERPLATE RULE (user directive, round 55): a catch-all (match:)
+    // definition is snapd/console-conf SEED boilerplate ("any en*/eth* NIC ->
+    // DHCP"), NOT user configuration — and it silently configures EVERY NIC
+    // it covers. So no catch-all ever survives an edit: strip all match:
+    // definitions, keep only the NAMED (user's own) entries, then apply this
+    // device. Consequences: a pure seed doc is thereby replaced COMPLETELY
+    // by the first edit (snapd's own writer "always starts with a clean
+    // config" — the new doc is {version: 2} + this device), and a doc that
+    // already names devices keeps those entries while the seed catch-alls
+    // go. The rule does not depend on how the doc was read (object vs legacy
+    // string) — it is shape-agnostic.
+    const doc = { network: JSON.parse(JSON.stringify(curNet)) };
+    for (const sec of SECS) {
+        const m = doc.network[sec];
+        if (!yamlIsMap(m)) continue;
+        for (const [id, d] of Object.entries(m)) {
+            if (d && typeof d === 'object' && typeof d.match === 'object') delete m[id];
+        }
+        if (Object.keys(m).length === 0) delete doc.network[sec];
+    }
     if (!doc.network.version) doc.network.version = 2;
-    // a named device leaves its old sections (it may have moved type)
-    if (named) for (const sec of SECS) if (yamlIsMap(doc.network[sec])) delete doc.network[sec][cfg.name];
+    // this device leaves its other sections (it may have moved type)
+    for (const sec of SECS) if (yamlIsMap(doc.network[sec])) delete doc.network[sec][cfg.name];
     if (!yamlIsMap(doc.network[section])) doc.network[section] = {};
     doc.network[section][cfg.name] = def;
     // drop sections that ended up empty (keeps the doc tidy, netplan-valid)
@@ -1663,6 +1717,7 @@ const api = {
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
     getNetDevices, netApplyDevice, buildNetDeviceDef, mergeNetplanDevices,
     listNetDevices, netLinkType, netGlobMatch, netDefMatches, __setNetLive,
+    clearNetSeedBoilerplate, __setNetSeedPath, netSeedBoilerplatePath,
 
     installSnap, snapAction, snapComponent,
     setSnapConfig,
@@ -1941,6 +1996,7 @@ function initElectron() {
     // netplan apply (console-privileged, like the other network changes)
     ipcMain.handle('net:devices', guard(() => getNetDevices()));
     ipcMain.handle('net:apply-device', guard((cfg) => { requireAuth(); return netApplyDevice(cfg); }));
+    ipcMain.handle('net:clear-seed', guard(() => { requireAuth(); return clearNetSeedBoilerplate(); }));
     ipcMain.handle('net:forwarding-status', guard(() => ipfwdStatus()));
     ipcMain.handle('net:forwarding-set', guard((b) => { requireAuth(); return ipfwdSet(b); }));
     ipcMain.handle('ifaces:list', guard(() => listInterfaces()));

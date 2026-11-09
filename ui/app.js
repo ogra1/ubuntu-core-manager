@@ -1252,8 +1252,18 @@ function netCardEdit(d) {
             }
             applyBtn.disabled = true;
             const change = await core.network.applyDevice(cfg);
-            if (change && typeof change === 'object' && change.id != null) await waitChangeSettled(change);
-            toast('positive', 'Configuration applied', name + ' is now using the new settings.');
+            const done = (change && typeof change === 'object' && change.id != null) ? await waitChangeSettled(change) : null;
+            const ok = !done || !isChangeTerminal(done.status) || done.status.toLowerCase() === 'done';
+            if (!ok) toast('negative', 'Configuration not applied', name + ': ' + (done.err || done.status) + ' — the previous settings are still in effect.');
+            else {
+                toast('positive', 'Configuration applied', name + ' is now using the new settings.');
+                // The 00-snapd-config.yaml first-boot seed (catch-all
+                // boilerplate) is re-merged by snapd on every netplan apply,
+                // so the app's config would not be the whole truth. Delete it
+                // only once this edit has APPLIED (a failed/rolled-back change
+                // must leave the box in its original state).
+                if (core.network.clearSeed) await core.network.clearSeed().catch(() => {});
+            }
             state.netEditing = null;
             await loadNetDevices();
         } catch (e) {

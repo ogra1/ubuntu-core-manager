@@ -207,22 +207,37 @@ function ok(name, cond, extra = '') {
     // (state.confSets) — no settle wait, so this section stays as fast as the
     // round-1 one it replaced (the [7] mosquitto install races the [5]
     // install's 300ms settle; added delay here would 400 it).
-    // round 54: the option is a JSON OBJECT (a YAML string would fail
+    // round 54/55: the option is a JSON OBJECT (a YAML string would fail
     // snapd's option decode) — the RECORDED PUT body must carry the doc as
-    // an object. Seed the default Core boilerplate (catch-alls only): the
-    // FIRST edit replaces it COMPLETELY.
+    // an object. Seed the default Core boilerplate (catch-alls only): an
+    // edit onto a pure seed REPLACES it completely (the round-54 case).
     state.netplan = { network: { version: 2, ethernets: { 'all-en': { dhcp4: true, match: { name: 'en*' } }, 'all-eth': { dhcp4: true, match: { name: 'eth*' } } } } };
     await m.netApplyDevice({ name: 'eth0', type: 'ethernet', mode: 'static', address: '192.168.1.50/24', gateway: '192.168.1.1', dns: ['1.1.1.1'] });
     const written6 = state.confSets[state.confSets.length - 1];
     ok('conf PUT went to core snap', written6 && written6.name === 'core', JSON.stringify(written6 && written6.name));
     const sent6 = written6 && written6.data['system.network.netplan'];
     ok('the netplan option value is a JSON OBJECT, not a string', sent6 && typeof sent6 === 'object' && !Array.isArray(sent6), String(typeof sent6));
-    ok('the first edit REPLACES the complete boilerplate (all-en + all-eth gone, doc = version + this device)',
+    ok('an edit onto a pure seed REPLACES it completely (all-en + all-eth gone, doc = version + this device)',
         sent6 && typeof sent6 === 'object' && sent6.network
         && JSON.stringify(sent6.network.ethernets) === JSON.stringify({ eth0: { addresses: ['192.168.1.50/24'], gateway4: '192.168.1.1', dns: { nameservers: { addresses: ['1.1.1.1'] } } } })
         && !('all-en' in (sent6.network.ethernets || {})),
         JSON.stringify(sent6 && sent6.network));
     ok('the replaced doc keeps version: 2', sent6 && sent6.network && sent6.network.version === 2, JSON.stringify(sent6 && sent6.network));
+    // round 55 — the seed catch-alls must ALSO be stripped when the doc
+    // already carries a NAMED entry (they would silently DHCP-configure NICs
+    // the user never touched). The named entry survives, the boilerplate goes.
+    state.netplan = { network: { version: 2, ethernets: {
+        'all-en': { dhcp4: true, match: { name: 'en*' } },
+        'all-eth': { dhcp4: true, match: { name: 'eth*' } },
+        enp0s2: { addresses: ['10.0.2.15/24'], gateway4: '10.0.2.2' },
+    } } };
+    await m.netApplyDevice({ name: 'enp0s2', type: 'ethernet', mode: 'static', address: '192.168.9.10/24', gateway: '192.168.9.1' });
+    const sentMix = state.confSets[state.confSets.length - 1].data['system.network.netplan'];
+    ok('a named + catch-all doc: the edit keeps the named entry and STRIPS the catch-all boilerplate',
+        sentMix && typeof sentMix === 'object' && sentMix.network
+        && JSON.stringify(sentMix.network.ethernets) === JSON.stringify({ enp0s2: { addresses: ['192.168.9.10/24'], gateway4: '192.168.9.1' } }),
+        JSON.stringify(sentMix && sentMix.network));
+    ok('the named + catch-all edit keeps version: 2', sentMix && sentMix.network && sentMix.network.version === 2, JSON.stringify(sentMix && sentMix.network));
     let cidrErr = null;
     try { await m.netApplyDevice({ name: 'eth0', type: 'ethernet', mode: 'static', address: '999.1.1.1/24' }); } catch (e) { cidrErr = e; }
     ok('reject malformed CIDR (999.x) before the socket', !!cidrErr && /prefix/.test(cidrErr.message), cidrErr && cidrErr.message);
@@ -887,15 +902,24 @@ function ok(name, cond, extra = '') {
             && nw.wifis.wlp3s0['access-points'].HomeNet.password === 'secret123'
             && nw.ethernets && JSON.stringify(nw.ethernets.enp3s0) === JSON.stringify({ dhcp4: true }),
             JSON.stringify(nw));
-        // a device RE-TYPED leaves its old section (ethernet->wifi)
-        await m.netApplyDevice({ name: 'eth0', type: 'wifi', mode: 'dhcp', ssid: 'Net', password: 'password123' });
+        // round 55 e2e: the MIXED doc (named + catch-all) — the named entry
+        // is kept/updated, the boilerplate is stripped
+        state.netplan = { network: { version: 2, ethernets: {
+            'all-en': { dhcp4: true, match: { name: 'en*' } },
+            enp9: { dhcp4: true },
+        } } };
+        await m.netApplyDevice({ name: 'enp9', type: 'ethernet', mode: 'static', address: '10.9.9.9/24' });
         await new Promise((r) => setTimeout(r, 350));
         nw = netOf();
-        ok('a re-typed device leaves its OLD section (ethernets.eth0 gone)', !nw.ethernets || !nw.ethernets.eth0, JSON.stringify(nw.ethernets));
-        ok('the re-type is additive too (ethernets.enp3s0 from the previous edit survives)',
-            nw.ethernets && nw.ethernets.enp3s0 && nw.ethernets.enp3s0.dhcp4 === true,
+        ok('mixed doc (e2e): the named entry is updated, the catch-all boilerplate is stripped',
+            JSON.stringify(nw.ethernets) === JSON.stringify({ enp9: { addresses: ['10.9.9.9/24'] } }),
             JSON.stringify(nw.ethernets));
-        ok('a re-typed device lands in its NEW section (wifis.eth0)', nw.wifis && nw.wifis.eth0 && nw.wifis.eth0['access-points'] && nw.wifis.eth0['access-points'].Net, JSON.stringify(nw.wifis));
+        // a device RE-TYPED leaves its old section (ethernet->wifi)
+        await m.netApplyDevice({ name: 'enp9', type: 'wifi', mode: 'dhcp', ssid: 'Net', password: 'password123' });
+        await new Promise((r) => setTimeout(r, 350));
+        nw = netOf();
+        ok('a re-typed device leaves its OLD section (ethernets.enp9 gone)', !nw.ethernets, JSON.stringify(nw.ethernets));
+        ok('a re-typed device lands in its NEW section (wifis.enp9)', nw.wifis && nw.wifis.enp9 && nw.wifis.enp9['access-points'] && nw.wifis.enp9['access-points'].Net, JSON.stringify(nw.wifis));
         ok('version: 2 is preserved across the re-write', nw.version === 2, String(nw.version));
         // an emptied section is DROPPED (the doc must not carry "ethernets: {}")
         const ethKeys = nw.ethernets && Object.keys(nw.ethernets).length;
@@ -983,6 +1007,79 @@ function ok(name, cond, extra = '') {
     // blank. Guard the class, not just the one file.
     const svgs = fs.readdirSync(path.join(__dirname, '..', 'build', 'images')).filter((f) => f.endsWith('.svg'));
     ok('shipped SVG assets exist', svgs.length >= 10, svgs.join(', '));
+
+    console.log('\n[15] netplan seed boilerplate clearing (network-setup-control, the 00-snapd-config.yaml delete)');
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-netseed-'));
+        const seed = (n) => path.join(dir, n);
+        // a catch-all seed (the default Core 00 file) IS removed
+        fs.writeFileSync(seed('00-snapd-config.yaml'),
+            'network:\n  version: 2\n  ethernets:\n    all-en:\n      dhcp4: true\n      match:\n        name: en*\n    all-eth:\n      dhcp4: true\n      match:\n        name: eth*\n');
+        m.__setNetSeedPath(seed('00-snapd-config.yaml'));
+        ok('clearNetSeedBoilerplate removes a catch-all (match:) seed file',
+            m.clearNetSeedBoilerplate() === 'removed' && !fs.existsSync(seed('00-snapd-config.yaml')),
+            '');
+        // an absent file is a no-op (never throws)
+        m.__setNetSeedPath(seed('does-not-exist.yaml'));
+        ok('clearNetSeedBoilerplate is a no-op on a missing file', m.clearNetSeedBoilerplate() === 'absent', '');
+        // a hand-authored 00 file with only NAMED entries (no match:) is KEPT
+        fs.writeFileSync(seed('00-custom.yaml'),
+            'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n      addresses:\n        - 10.0.0.5/24\n');
+        m.__setNetSeedPath(seed('00-custom.yaml'));
+        ok('clearNetSeedBoilerplate KEEPS a 00 file with no catch-all (named-only) config',
+            m.clearNetSeedBoilerplate() === 'kept' && fs.existsSync(seed('00-custom.yaml')),
+            '');
+        // the snap declares the network-setup-control plug (the /etc/netplan
+        // rw that the delete needs)
+        const sc = fs.readFileSync(path.join(__dirname, '..', 'snap', 'snapcraft.yaml'), 'utf8');
+        ok('the snap declares the network-setup-control plug as a plug-list entry (the /etc/netplan rw)',
+            /\s+-\s+network-setup-control\s*($|\n)/m.test(sc), '');
+        // the delete is exposed on the authed bridge AND called by the UI only
+        // after the apply change has reached Done (the 48a idiom) — a failed /
+        // rolled-back apply must leave the first-boot seed in place.
+        const appSrc = fs.readFileSync(path.join(__dirname, '..', 'ui', 'app.js'), 'utf8');
+        const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+        ok('the net:clear-seed bridge handler is registered (authed)',
+            mainSrc.includes("ipcMain.handle('net:clear-seed'") && mainSrc.includes('requireAuth(); return clearNetSeedBoilerplate()'),
+            '');
+        // the clear must sit in the SUCCESS branch (the else after the status
+        // gate), not the failure branch — extract the else-block text and look
+        // there, so a clear-on-failure mutation is caught.
+        const elseIdx = appSrc.indexOf("if (!ok) toast('negative'");
+        const elseBranch = elseIdx !== -1 ? appSrc.slice(elseIdx, elseIdx + 1200) : '';
+        const elseBlock = elseBranch.slice(elseBranch.indexOf('else {'));
+        ok('the UI clears the seed ONLY in the success (else) branch, gated on the change status',
+            elseIdx !== -1 && elseBlock.includes("core.network.clearSeed")
+            && elseBranch.slice(0, elseBranch.indexOf('else {')).indexOf('clearSeed') === -1,
+            '');
+        // e2e: a device edit PUTs the doc; the (renderer-gated) clear then
+        // removes the seed — together they leave the box with the user's
+        // config and no catch-alls.
+        fs.writeFileSync(seed('00-snapd-config.yaml'),
+            'network:\n  version: 2\n  ethernets:\n    all-en:\n      dhcp4: true\n      match:\n        name: en*\n');
+        m.__setNetSeedPath(seed('00-snapd-config.yaml'));
+        state.netplan = { network: { version: 2, ethernets: { 'all-en': { dhcp4: true, match: { name: 'en*' } } } } };
+        await m.netApplyDevice({ name: 'enp7', type: 'ethernet', mode: 'dhcp' });
+        // the stub settles the async 202 ~350ms later (same wait as [6]/[13.5])
+        await new Promise((r) => setTimeout(r, 350));
+        // round 55 keeps the app-side strip, so the SENT doc already has no
+        // catch-all; the file delete (round 56) is what removes it from the
+        // on-disk 00 file that snapd would otherwise re-merge.
+        ok('the device edit itself is intact (the 90-side doc carries the device, no catch-alls)',
+            state.netplan && state.netplan.network && state.netplan.network.ethernets
+            && JSON.stringify(state.netplan.network.ethernets) === JSON.stringify({ enp7: { dhcp4: true } }),
+            JSON.stringify(state.netplan));
+        // the renderer now observes the change as Done and clears the seed
+        const chg = state.changes[state.changes.length - 1];
+        ok('the apply change reached Done in the stub (the UI would proceed to clear)',
+            chg && chg.status === 'Done', JSON.stringify(chg));
+        ok('the successful clear removes the 00 seed file (e2e)',
+            m.clearNetSeedBoilerplate() === 'removed' && !fs.existsSync(seed('00-snapd-config.yaml')),
+            '');
+        m.__setNetSeedPath(null);
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+
     const svgErr = (txt) => {
         const declared = (txt.match(/xmlns:(\w+)=/g) || []).map((x) => x.slice(6, -1));
         for (const pref of ['inkscape', 'sodipodi']) {

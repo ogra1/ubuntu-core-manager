@@ -598,6 +598,7 @@ function mockFactoryJs() {
                 const RE_NET_IPV4_M = /^(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}$/;
                 let __netPuts = 0;
                 let __netSeq = 0;
+                let __clearSeeds = 0; // round 56: 00-snapd-config.yaml clear calls
                 // name-glob matcher (fnmatch parity for the name property —
                 // the mock seed patterns are simple; main.js netGlobMatch is
                 // the full implementation, integration-locked).
@@ -684,19 +685,24 @@ function mockFactoryJs() {
                 const __netApply = (cfg) => {
                     const { section, def } = __netValidate(cfg);
                     const SECS = ['ethernets', 'wifis', 'bridges', 'bonds', 'vlans'];
-                    const curNet = __netDoc.network;
-                    // FIRST-EDIT RULE: a pure catch-all (boilerplate) doc is
-                    // REPLACED COMPLETELY by the first edit; a doc with a
-                    // named entry is edited additively.
-                    const boilerplate = Object.keys(curNet).length > 0 && SECS.every((sec) => {
-                        const mm2 = curNet[sec];
-                        return !mm2 || Object.values(mm2).every((v) => v && typeof v === 'object' && typeof v.match === 'object');
-                    });
-                    const net = boilerplate ? {} : JSON.parse(JSON.stringify(curNet));
+                    // mirror main.js (round 55): a catch-all (match:) def is
+                    // seed BOILERPLATE — it is stripped on EVERY edit. Named
+                    // (user) entries survive. A pure seed doc is thereby
+                    // replaced completely by the first edit; a mixed doc
+                    // keeps its named entries and loses the catch-alls.
+                    const net = JSON.parse(JSON.stringify(__netDoc.network));
+                    for (const sec of SECS) {
+                        const m = net[sec];
+                        if (!m) continue;
+                        for (const k of Object.keys(m)) {
+                            const v = m[k];
+                            if (v && typeof v === 'object' && typeof v.match === 'object') delete m[k];
+                        }
+                        if (!Object.keys(m).length) delete net[sec];
+                    }
                     __netDoc.network = net;
                     if (!net.version) net.version = 2;
-                    const named = SECS.some((sec) => net[sec] && net[sec][cfg.name] !== undefined);
-                    if (named) for (const sec of SECS) if (net[sec]) { delete net[sec][cfg.name]; if (!Object.keys(net[sec]).length) delete net[sec]; }
+                    for (const sec of SECS) if (net[sec]) { delete net[sec][cfg.name]; if (!Object.keys(net[sec]).length) delete net[sec]; }
                     if (!net[section]) net[section] = {};
                     net[section][cfg.name] = def;
                     // snapd/netplan APPLIES the doc: a newly defined bridge
@@ -728,9 +734,16 @@ function mockFactoryJs() {
                 })(),
                 async devices() { return __netMerge(); },
                 async applyDevice(cfg) { return __netApply(cfg); },
+                // round 56: the renderer deletes the 00-snapd-config.yaml
+                // boilerplate ONLY after a successful apply (main.js clears
+                // the real file under network-setup-control; the mock counts
+                // calls so the UI gating is observable).
+                async clearSeed() { __clearSeeds += 1; return 'removed'; },
+
                 __netdoc: () => __netDoc,
                 __setNetplan(o) { __netDoc = o; },
                 __netputs: () => __netPuts,
+                __clearseeds: () => __clearSeeds,
                 };
             })(),
             // round 49f: timesync / NTP — the real app talks to the
@@ -1668,8 +1681,10 @@ function mockFactoryJs() {
         hasSsid: !!fieldOf('Network'),
         cancel: !!Array.from(card.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Cancel'),
         apply: !!Array.from(card.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Apply'),
+        clears: window.__mockCore.network.__clearseeds(),
       };
     });
+    const seedClears0 = gNa ? gNa.clears : 0;
     if (!gNa) console.log('PAGE ERROR: the eth0 card did not enter the edit state (round 53)');
     else {
         if (!gNa.isEditing || !gNa.spansRow)
@@ -1711,8 +1726,11 @@ function mockFactoryJs() {
         gw: doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.gateway4 || null,
         dhcp: doc.network.ethernets && doc.network.ethernets.eth0 && doc.network.ethernets.eth0.dhcp4 || null,
         toast: !!t, viewRows: rows, cfg: cfg ? cfg.querySelector('dd').textContent : null,
+        clears: window.__mockCore.network.__clearseeds(),
       };
     });
+    if (gNb.clears !== seedClears0 + 1)
+      console.log('PAGE ERROR: a successful apply must clear the 00 seed exactly once (got delta ' + (gNb.clears - seedClears0) + ') (round 56)');
     if (JSON.stringify(gNb.addr) !== JSON.stringify(['192.168.1.99/24']))
         console.log('PAGE ERROR: the Apply did not write eth0 static into the netplan doc (got ' + JSON.stringify(gNb.addr) + ') (round 53)');
     if (gNb.gw !== '192.168.1.1') console.log('PAGE ERROR: the Apply did not write the gateway4 (got ' + JSON.stringify(gNb.gw) + ') (round 53)');
@@ -1824,6 +1842,7 @@ function mockFactoryJs() {
         b: doc.network.bridges && doc.network.bridges.br1 || null,
         toast: !!t,
         cardGone: !card,
+        clears: window.__mockCore.network.__clearseeds(),
       };
     });
     if (!gNe.b) console.log('PAGE ERROR: the bridge Apply did not write bridges.br1 (round 53)');
@@ -1834,6 +1853,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the written bridge must carry the DNS servers (got ' + JSON.stringify(gNe.b.dns) + ') (round 53)');
     }
     if (!gNe.toast) console.log('PAGE ERROR: the bridge Apply did not toast "Configuration applied" (round 53)');
+    if (gNe.clears !== seedClears0 + 2)
+      console.log('PAGE ERROR: the bridge apply (a 2nd successful edit) must clear the seed again (got ' + gNe.clears + ', want ' + (seedClears0 + 2) + ') (round 56)');
     await page.screenshot({ path: path.join(SHOTS, '9f-network-bridge.png') });
 
     // (f) the UI validation rejects BEFORE the IPC: a bad address shows the
@@ -1862,8 +1883,11 @@ function mockFactoryJs() {
         msg: t ? (t.querySelector('.p-notification__message') || {}).textContent || null : null,
         editing: card ? card.classList.contains('ucm-netcard--editing') : null,
         puts: window.__mockCore.network.__netputs(),
+        clears: window.__mockCore.network.__clearseeds(),
       };
     });
+    if (gNf.clears !== seedClears0 + 2)
+      console.log('PAGE ERROR: a UI-rejected apply (before the IPC) must NOT clear the seed (got ' + gNf.clears + ', want ' + (seedClears0 + 2) + ') (round 56)');
     if (!gNf.msg || !/prefix/.test(gNf.msg))
         console.log('PAGE ERROR: the bad address must toast the "/prefix" hint BEFORE the IPC (got ' + JSON.stringify(gNf.msg) + ') (round 53)');
     if (gNf.puts !== netPutsF) console.log('PAGE ERROR: a UI-rejected apply must send NO netplan PUT (delta ' + (gNf.puts - netPutsF) + ') (round 53)');
@@ -2014,9 +2038,45 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: (h) the SECOND edit must be additive — eth0\\u2019s entry survives and enp3s0 becomes plain DHCP (got ' + JSON.stringify(gNh4.eth) + ') (round 54)');
     if (gNh4.cfg !== 'Automatic (DHCP)')
         console.log('PAGE ERROR: (h) after the second edit enp3s0 Configured should read "Automatic (DHCP)" (got ' + JSON.stringify(gNh4.cfg) + ') (round 54)');
-    // ---- 4. snaps view (search works WITHOUT a store login) ----
 
-
+    // (h2) round 55 — the USER'S VM shape: the seed catch-alls sit ALONGSIDE
+    //      a named entry (the NIC is named in the doc + the catch-alls still
+    //      cover every other en*/eth* NIC). Editing the named device must
+    //      keep/update the entry AND strip the catch-all boilerplate — the
+    //      round-54 pure-boilerplate detection missed exactly this doc, and
+    //      leaving the seed behind would silently DHCP-configure NICs the
+    //      user never touched.
+    await page.evaluate(() => window.__mockCore.network.__setNetplan({ network: { version: 2, ethernets: { 'all-en': { dhcp4: true, match: { name: 'en*' } }, 'all-eth': { dhcp4: true, match: { name: 'eth*' } }, enp3s0: { addresses: ['10.0.2.15/24'], gateway4: '10.0.2.2' } } } }));
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(400);
+    await page.click('.ucm-side a[data-view="network"]');
+    await wait(700);
+    const gNh5 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      if (!card) return null;
+      const cfg = Array.from(card.querySelectorAll('.ucm-netcard__rows > div')).find((r) => (r.querySelector('dt') || {}).textContent === 'Configured');
+      return { cfg: cfg ? cfg.querySelector('dd').textContent : null };
+    });
+    if (!gNh5) console.log('PAGE ERROR: (h2) no enp3s0 card (round 55)');
+    else if (gNh5.cfg !== 'Static IP')
+        console.log('PAGE ERROR: (h2) a NAMED entry must show its own values ("Static IP") — the catch-all must not shadow it (got ' + JSON.stringify(gNh5.cfg) + ') (round 55)');
+    await page.click('[data-netcard="enp3s0"] .ucm-netcard__edit');
+    await wait(250);
+    const gNh6 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'enp3s0');
+      if (!card) return null;
+      const sf = card.querySelector('.ucm-netcard__static');
+      return { sw: card.querySelector('.ucm-netcard__sw .p-switch__input') ? card.querySelector('.ucm-netcard__sw .p-switch__input').checked : null, addr: sf ? (sf.querySelectorAll('input')[0] || {}).value : null };
+    });
+    if (!gNh6) console.log('PAGE ERROR: (h2) the enp3s0 card did not enter the edit state (round 55)');
+    else if (gNh6.sw !== true || gNh6.addr !== '10.0.2.15/24')
+        console.log('PAGE ERROR: (h2) the named entry must prefill the form (got ' + JSON.stringify(gNh6) + ') (round 55)');
+    await page.click('[data-netcard="enp3s0"] button.p-button--brand');
+    await wait(900);
+    const gNh7 = await page.evaluate(() => ({ doc: window.__mockCore.network.__netdoc() }));
+    if (JSON.stringify(gNh7.doc) !== JSON.stringify({ network: { version: 2, ethernets: { enp3s0: { addresses: ['10.0.2.15/24'], gateway4: '10.0.2.2' } } } }))
+        console.log('PAGE ERROR: (h2) editing a named device must STRIP the catch-all boilerplate and keep the named entry (got ' + JSON.stringify(gNh7.doc) + ') (round 55)');
+    await page.screenshot({ path: path.join(SHOTS, '9h-network-boilerplate-stripped.png') });
 
     // ---- 4. snaps view (search works WITHOUT a store login) ----
     await page.click('.ucm-side a[data-view="snaps"]');

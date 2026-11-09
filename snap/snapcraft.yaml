@@ -14,9 +14,12 @@ description: |
   (/run/snapd.socket, exposed by the connected `snapd-control` interface).
   Live network state is read with the standard tools the `network-control`
   interface is built around (ip, iw, resolvectl); network config is written
-  through snapd's netplan external config. No direct /etc writes; every
-  renderer payload is validated
-  by regex allow-lists in the main process before it reaches the socket.
+  through snapd's netplan external config (the 90 origin). A successful device
+  edit also deletes the first-boot seed file /etc/netplan/00-snapd-config.yaml
+  (catch-all boilerplate) via the `network-setup-control` interface, so snapd's
+  netplan Apply does not re-merge it on top of the app's config. Every renderer
+  payload is validated by regex allow-lists in the main process before it
+  reaches the socket.
 
 confinement: strict
 grade: stable
@@ -35,6 +38,7 @@ apps:
       - mount-observe
       - timeserver-control
       - network-control
+      - network-setup-control
 
 parts:
   app:

@@ -128,6 +128,7 @@ const api = Object.freeze({
         // live state (ip/iw/resolvectl) merged with the netplan definitions
         devices: invoke('net:devices'),               // => [ { name, type, connected, addresses[], gateway, dns[], configured, netplan } ]
         applyDevice: invoke('net:apply-device'),      // (cfg) — one device's netplan entry, full-doc PUT
+        clearSeed: invoke('net:clear-seed'),          // () -> 'removed'|'kept'|'absent' — delete the 00-snapd-config.yaml boilerplate
         // ---- ip forwarding (network-control interface, round 51) -------
         forwarding: Object.freeze({
             status: invoke('net:forwarding-status'), // => { v4, v6, on, pref } (null = unreadable)
