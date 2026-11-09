@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><!-- Suru edit/pencil icon (actions category) from the suru icon theme
+     (snwh/suru-icon-theme; Debian suru-icon-theme package:
+     /usr/share/icons/suru/actions/scalable/edit.svg).
+     License as the package: GPL-3.0+ / CC-BY-SA (see its COPYING).
+     Cleaned: Inkscape editor metadata, namedview and grid/guides
+     stripped; the fill:none guide rect and two font-scaled rendering
+     crumbs (sub-pixel, invisible) dropped; the g-transform chain kept
+     verbatim (the glyph paths are positioned ONLY by it); glyph fill
+     set to #000000 - the original #808080 is too faint at 16px.
+     Shipped for the network device cards' edit affordance (round 58). -->
+  <g id="layer1" transform="translate(67.857146,-78.50504)">
+    <g transform="matrix(0,-1,-1,0,373.50506,516.50504)" id="g4845" style="display:inline">
+      <g transform="matrix(-0.9996045,0,0,1,575.94296,-611.00001)" id="g4778">
+        <g transform="matrix(-1,0,0,1,575.99999,611)" id="g4780" style="display:inline">
+          <path style="color:#000000;display:inline;overflow:visible;visibility:visible;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:7.49851656;marker:none;enable-background:accumulate" d="M 73.474609 8.0058594 L 18.333984 63.923828 L 18.248047 64.064453 C 18.005787 64.45113 16.664719 66.691559 14.792969 70.496094 C 12.921219 74.300638 10.617605 79.508457 8.765625 85.347656 L 7.890625 88.103516 L 10.648438 87.232422 C 16.492718 85.380035 21.703733 83.074485 25.507812 81.203125 C 29.311892 79.331775 31.549084 77.990865 31.933594 77.75 L 32.074219 77.666016 L 87.994141 22.529297 L 74.542969 9.0722656 L 73.474609 8.0058594 z M 68 60 L 68 64 L 88 64 L 88 60 L 68 60 z M 20.619141 65.958984 L 30.039062 75.380859 C 29.741627 75.558259 27.613295 76.823574 24.181641 78.511719 C 22.53428 79.322111 20.557327 80.203146 18.400391 81.091797 L 14.90625 77.597656 C 15.793924 75.442282 16.674151 73.467187 17.484375 71.820312 C 19.172169 68.389683 20.439857 66.259428 20.619141 65.958984 z " transform="matrix(0,-1,-1.0003957,0,438.00245,441.36222)" id="rect3972-1" />
+          <rect style="color:#000000;display:inline;overflow:visible;visibility:visible;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:7.5;marker:none;enable-background:accumulate" id="rect3974-0" width="32.000008" height="4.0015807" x="-385.36221" y="-365.97397" transform="matrix(0,-1,-1,0,0,0)" />
+          <rect style="color:#000000;display:inline;overflow:visible;visibility:visible;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none;stroke-width:7.5;marker:none;enable-background:accumulate" id="rect3976-5" width="43.999897" height="4.0014324" x="-397.36221" y="-353.96921" transform="matrix(0,-1,-1,0,0,0)" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>
