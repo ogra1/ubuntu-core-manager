@@ -1082,7 +1082,13 @@ button.is-disabled { pointer-events: none; opacity: .6; }
        text line with the 1rem glyph (measured in the harness, not by eye). */
     display: inline-flex; align-items: center; gap: .35rem;
 }
-.ucm-iface-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+/* round 62: align-items:start — cards keep their OWN height. The grid
+   default (stretch) padded every card in a row out to the TALLEST card in
+   that row (a ~300px live card next to a ~420px edit form gained ~80px of
+   dead space under it). With start each item tops-aligns to its content
+   height; .ucm-netcard--editing keeps its own align-self:start (belt and
+   braces, identical effect). */
+.ucm-iface-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .ucm-iface-grid { grid-template-columns: 1fr; } }
 /* round 58b: the bundle .p-card is overflow:auto (verified in the
    offline vanilla-framework.css), and the head's edit-pencil tooltip

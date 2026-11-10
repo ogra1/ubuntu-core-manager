@@ -1995,9 +1995,15 @@ function mockFactoryJs() {
       const fieldOf = (label) => Array.from(card.querySelectorAll('.ucm-netcard__fg label')).find((l) => l.textContent.trim() === label);
       const inpOf = (label) => { const f = fieldOf(label); return f && f.parentElement ? f.parentElement.querySelector('input') : null; };
       const s = inpOf('Network'), p = inpOf('Wi-Fi password');
+      // round 62: the NON-editing row-mate (br0) must NOT be padded out to
+      // the taller wifi edit form's height — cards keep their own height.
+      // Measured against br0's content-hugging height (temp align-self:start).
+      const b0 = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'br0');
+      const br0Stretch = b0 ? (() => { const prev = b0.style.alignSelf; b0.style.alignSelf = 'start'; const nat = b0.getBoundingClientRect().height; b0.style.alignSelf = prev; return b0.getBoundingClientRect().height - nat; })() : null;
       return {
         ssid: s ? s.value : null, pw: p ? p.value : null, pwType: p ? p.type : null,
         hasHidden: !!Array.from(card.querySelectorAll('.p-switch')).find((l) => l.textContent.trim() === 'Hidden network'), hasMembers: !!card.querySelector('.ucm-netcard__members'),
+        br0Stretch,
       };
     });
     if (!gNd) console.log('PAGE ERROR: the wlp3s0 card did not enter the edit state (round 53)');
@@ -2007,6 +2013,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the Wi-Fi password must prefill masked (got ' + JSON.stringify(gNd.pw) + ' type ' + gNd.pwType + ') (round 53)');
         if (!gNd.hasHidden) console.log('PAGE ERROR: the Wi-Fi form is missing the Hidden-network switch (round 53)');
         if (gNd.hasMembers) console.log('PAGE ERROR: a Wi-Fi card must not carry the bridge member list (round 53)');
+        if (gNd.br0Stretch != null && gNd.br0Stretch > 2)
+            console.log('PAGE ERROR: the grid stretches the non-editing row-mate (br0) to the edit form\u2019s height (+' + gNd.br0Stretch + 'px) — cards must keep their own height (round 62)');
     }
     await page.click('[data-netcard="wlp3s0"] .ucm-netcard__foot--edit button.p-button--base');
     await wait(250);
