@@ -1051,8 +1051,24 @@ function renderNetDevices() {
    edit form while editing (round 59: the card KEEPS its own grid column and
    only grows in height — it no longer spans the row; the form's fields are
    capped and fit the half-width column). The edit icon is in the head so it
-   is present in BOTH the view and the edit state (clicking it while already
-   editing is a harmless no-op re-set of the same name). */
+   is present in BOTH the view and the edit state; while the card IS being
+   edited the icon is disabled (inactive) — clicking it then is a no-op, and
+   ESC / Cancel reverts the edit (round 60). */
+/* round 60: the single in-place netcard edit form's Escape handler, kept at
+   module scope (a slot the current form re-points on each render) so switching
+   which card is being edited never leaves a stale document listener firing for
+   the previously-edited card. Scoped to the network view, so the 48k confirm /
+   modal Esc layering is untouched (a netcard edit is inline in the Network
+   page, not inside a modal or a confirm). */
+let netEditEscHandler = null;
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && netEditEscHandler && state.view === 'network') {
+        e.stopPropagation();
+        const h = netEditEscHandler;
+        netEditEscHandler = null;
+        h();
+    }
+});
 function netCard(d) {
     const card = el('div', { class: 'p-card ucm-netcard' + (state.netEditing === d.name ? ' ucm-netcard--editing' : '') });
     card.dataset.netcard = d.name;
@@ -1070,7 +1086,7 @@ function netCard(d) {
            (a no-op) — no branch needed. */
         rowBtn('Change settings', 'p-icon--edit',
             (btn) => { state.netEditing = d.name; renderNetDevices(); },
-            { tooltip: 'Change settings', ariaLabel: 'Change settings on ' + d.name }),
+            { tooltip: 'Change settings', ariaLabel: 'Change settings on ' + d.name, disabled: state.netEditing === d.name }),
     );
     card.append(head);
     const body = el('div', { class: 'ucm-netcard__body' });
@@ -1137,10 +1153,15 @@ function netCardEdit(d) {
         g.append(el('label', { class: 'p-form__label', text: label }), input);
         return g;
     };
-    const nameInp = el('input', { class: 'p-form-validation__input ucm-mono', type: 'text', spellcheck: 'false', placeholder: 'e.g. br0' });
-    nameInp.value = v.name;
-    if (!d.pending) nameInp.disabled = true;
-    box.append(field('Name', nameInp, 'ucm-netcard__namefg'));
+    // round 60: the Name field is only for NEW (pending, "Add") cards, where
+    // it names the new device. For an existing device it was a DISABLED,
+    // redundant repeat of the name in the card head — removed.
+    let nameInp = null;
+    if (d.pending) {
+        nameInp = el('input', { class: 'p-form-validation__input ucm-mono', type: 'text', spellcheck: 'false', placeholder: 'e.g. br0' });
+        nameInp.value = v.name;
+        box.append(field('Name', nameInp, 'ucm-netcard__namefg'));
+    }
 
     // Address mode: a switch (no pulldown) — off = Automatic (DHCP), on =
     // static (reveals the address fields, the "hidden until needed" rule).
@@ -1238,10 +1259,15 @@ function netCardEdit(d) {
     box.append(foot);
     const applyBtn = foot.querySelector('.p-button--brand');
 
+    // round 60: ESC reverts this edit (the app-wide form idiom). The handler
+    // is re-pointed on every render, so it always matches the card that is
+    // currently being edited.
+    netEditEscHandler = () => { if (d.pending) state.devices = state.devices.filter((x) => x !== d); state.netEditing = null; renderNetDevices(); };
+
     applyBtn.addEventListener('click', async () => {
         if (applyBtn.disabled) return;
         try {
-            const name = nameInp.value.trim();
+            const name = nameInp ? nameInp.value.trim() : d.name;
             if (!RE_NET_NAME_UI.test(name)) { toastErr(new Error('device name: letters, digits and - _ . : (max 16)')); return; }
             const cfg = { name, type: v.type, mode: staticSw.checked ? 'static' : 'dhcp', mac: d.mac || null };
             if (staticSw.checked) {

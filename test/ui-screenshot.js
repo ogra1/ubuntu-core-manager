@@ -1732,6 +1732,7 @@ function mockFactoryJs() {
         editIsLastHeadChild: editBtn && head ? (head.lastElementChild === editBtn) : null,
         sameLineDelta: (editBtn && label) ? Math.abs((r(editBtn).top + r(editBtn).bottom) / 2 - (r(label).top + r(label).bottom) / 2) : null,
         editRightOfLabel: (editBtn && label) ? (r(editBtn).left > r(label).left) : null,
+        editBtnDisabled: editBtn ? (editBtn.closest('button') || {}).disabled === true : null,
       };
     });
     if (!gNview) console.log('PAGE ERROR: no eth0 card to inspect its head (round 58)');
@@ -1855,8 +1856,8 @@ function mockFactoryJs() {
         if (gNa.staticHidden !== true) console.log('PAGE ERROR: the address fields must be hidden until the Static switch is on (round 53)');
         if (!gNa.dnsRow) console.log('PAGE ERROR: the DNS chip input is missing from the edit form (round 53)');
         if (gNa.hasSsid) console.log('PAGE ERROR: an ethernet card must not carry a Wi-Fi SSID field (round 53)');
-        if (!gNa.namePresent || gNa.nameDisabled !== true)
-            console.log('PAGE ERROR: the name must be DISABLED for an existing device (round 53)');
+        if (gNa.namePresent)
+            console.log('PAGE ERROR: an existing device must NOT carry a Name field in the edit form — it repeats the card head (round 60)');
         if (!gNa.cancel || !gNa.apply) console.log('PAGE ERROR: the edit form is missing Cancel/Apply (round 53)');
     }
     // (b) flip the Static switch (a REAL click) -> the fields are revealed;
@@ -1902,6 +1903,51 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the eth0 card should be back in its LIVE view state (rows ' + JSON.stringify(gNb.viewRows) + ') (round 53)');
     if (gNb.cfg !== 'Static IP') console.log('PAGE ERROR: eth0 Configured should now read "Static IP" (got ' + JSON.stringify(gNb.cfg) + ') (round 53)');
     await page.screenshot({ path: path.join(SHOTS, '9d-network-eth0-static.png') });
+
+    // (b-esc) round 60 — ESC reverts the netcard edit form (the app-wide
+    //      form idiom). An existing device: Esc -> back to its LIVE view,
+    //      the netplan doc is unchanged, and NO config PUT was sent. The head
+    //      edit pencil must also be DISABLED while the card is editing.
+    await page.click('[data-netcard="eth0"] .ucm-netcard__head button');
+    await wait(250);
+    const gNesc0 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      const ebtn = card ? card.querySelector('.ucm-netcard__head .p-icon--edit') : null;
+      return {
+        editing: card ? card.classList.contains('ucm-netcard--editing') : null,
+        headEditBtnDisabled: ebtn ? (ebtn.closest('button') || {}).disabled === true : null,
+        puts: window.__mockCore.network.__netputs(),
+        doc: window.__mockCore.network.__netdoc(),
+      };
+    });
+    if (!gNesc0.headEditBtnDisabled)
+        console.log('PAGE ERROR: the head edit pencil must be DISABLED while the card is being edited (round 60)');
+    await page.keyboard.press('Escape');
+    await wait(300);
+    const gNesc1 = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('[data-netcard]')).find((c) => c.dataset.netcard === 'eth0');
+      return {
+        editing: card ? card.classList.contains('ucm-netcard--editing') : null,
+        puts: window.__mockCore.network.__netputs(),
+        staticAddr: (window.__mockCore.network.__netdoc().network.ethernets || {}).eth0 ? ((window.__mockCore.network.__netdoc().network.ethernets.eth0.addresses || []).length) : null,
+      };
+    });
+    if (gNesc1.editing !== false)
+        console.log('PAGE ERROR: ESC must revert an existing device to its LIVE view state (still editing: ' + gNesc1.editing + ') (round 60)');
+    if (gNesc1.puts !== gNesc0.puts)
+        console.log('PAGE ERROR: ESC must NOT send a netplan config PUT (puts ' + gNesc0.puts + ' -> ' + gNesc1.puts + ') (round 60)');
+    if (gNesc1.staticAddr !== 1)
+        console.log('PAGE ERROR: ESC must leave the applied static value in the netplan doc (eth0 addresses ' + JSON.stringify(gNesc1.staticAddr) + ', want the (b) static value) (round 60)');
+    // and for a PENDING (Add) card, Esc removes it from the list entirely.
+    await page.click('#netAddDevice');
+    await wait(250);
+    const gNesc2 = await page.evaluate(() => ({ br: !!document.querySelector('[data-netcard="br1"]') }));
+    if (!gNesc2.br) console.log('PAGE ERROR: the "Add" card must spawn a pending br1 before the ESC test (round 60)');
+    await page.keyboard.press('Escape');
+    await wait(300);
+    const gNesc3 = await page.evaluate(() => ({ br: !!document.querySelector('[data-netcard="br1"]'), editing: (window.__mockCore && document.querySelector('[data-netcard="br1"]')) ? document.querySelector('[data-netcard="br1"]').classList.contains('ucm-netcard--editing') : false }));
+    if (gNesc3.br)
+        console.log('PAGE ERROR: ESC must remove a PENDING (Add) card from the list (br1 still present) (round 60)');
 
     // (c) re-open: the form is PRE-FILLED from the netplan (the static
     //     switch on, the address filled) -> Cancel leaves the doc as-is.
