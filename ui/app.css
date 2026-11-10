@@ -1095,9 +1095,14 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* round 59: the in-place edit form no longer makes the card span both grid
    columns — the form's fields are capped (inputs max-width 26rem, the
    longest label ~110px) and fit a HALF-width column almost exactly, so the
-   card keeps its column and only grows in HEIGHT while editing. The class
-   is kept as the edit-state marker (the harness reads it). */
-.ucm-netcard--editing { }
+   card keeps its column and only grows in HEIGHT while editing. Round 61:
+   align-self:start makes the editing card hug its content instead of
+   stretching to the (often taller) sibling view card's height — that
+   stretch left dead space under the Cancel/Apply buttons; the price is a
+   slightly ragged row bottom while one card is editing (transient — the
+   next row still packs after the tallest card). The class is kept as the
+   edit-state marker (the harness reads it). */
+.ucm-netcard--editing { align-self: start; }
 .ucm-netcard__head {
     display: flex; align-items: center; gap: .7rem;
     padding-top: .9rem; padding-bottom: .7rem;
@@ -1111,7 +1116,18 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-netcard__rows dd { font-size: .9rem; word-break: break-word; }
 .ucm-netcard__v { font-family: "Ubuntu Mono variable", monospace; font-size: .85rem; }
 .ucm-netcard__foot { display: flex; align-items: center; gap: .9rem; padding: .15rem 0 .2rem; }
-.ucm-netcard__edit { display: flex; flex-direction: column; gap: .55rem; padding: .2rem 0 .5rem; }
+/* round 61: two sources of the "quite some" space under the Cancel/Apply
+   buttons. (a) The bundle .p-button carries an 18.88px margin-bottom
+   phantom (the round-7 class) — zero it, same as the other footers.
+   (b) Grid cards default to stretch, so the editing card was padded out to
+   its (often taller) SIBLING view card's height — dead space under the
+   buttons; the .ucm-netcard--editing rule below gives the editing card
+   align-self:start so it hugs its content instead. Net: the buttons sit
+   ~19px above the card bottom (under the view state's ~26px). */
+.ucm-netcard__foot button { margin: 0; }
+.ucm-netcard__foot--edit { padding-bottom: 0; }
+.ucm-netcard__edit { display: flex; flex-direction: column; gap: .55rem; padding: .2rem 0 .25rem; }
+
 .ucm-netcard__fg { margin: 0; }
 .ucm-netcard__fg .p-form-validation__input { margin-bottom: 0; max-width: 26rem; }
 .ucm-netcard__row { display: flex; align-items: center; gap: 1rem; }

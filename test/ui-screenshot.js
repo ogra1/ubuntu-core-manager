@@ -1834,6 +1834,12 @@ function mockFactoryJs() {
         cardW: card.getBoundingClientRect().width,
         keepsColumn: (card.getBoundingClientRect().width > document.querySelector('#netIfaceGrid').getBoundingClientRect().width * 0.4) && (card.getBoundingClientRect().width < document.querySelector('#netIfaceGrid').getBoundingClientRect().width * 0.55),
         formOverflow: (() => { const e = card.querySelector('.ucm-netcard__edit'); return e ? (e.scrollWidth > e.clientWidth + 1) : null; })(),
+        // round 61: the footer buttons must not carry the bundle .p-button
+        // margin-bottom phantom, and the space under them must be tight
+        // (~20px) — the round-61 trim (phantom zero + the editing card hugging
+        // its content instead of stretching to the taller sibling).
+        footMb: (() => { const f = card.querySelector('.ucm-netcard__foot--edit'); const b = f ? f.querySelector('button') : null; return b ? getComputedStyle(b).marginBottom : null; })(),
+        btnGap: (() => { const f = card.querySelector('.ucm-netcard__foot--edit'); const b = f ? f.querySelector('button') : null; return b ? (card.getBoundingClientRect().bottom - b.getBoundingClientRect().bottom) : null; })(),
         staticSw: card.querySelector('.ucm-netcard__sw .p-switch__input') ? card.querySelector('.ucm-netcard__sw .p-switch__input').checked : null,
         staticHidden: card.querySelector('.ucm-netcard__static') ? card.querySelector('.ucm-netcard__static').hidden : null,
         namePresent: !!ni, nameDisabled: ni ? ni.disabled : null,
@@ -1852,6 +1858,10 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the editing card should keep its own grid column, not span the row (editing ' + gNa.isEditing + ', cardW ' + gNa.cardW + ', gridW ' + gNa.gridW + ', want ~half) (round 59)');
         if (gNa.formOverflow)
             console.log('PAGE ERROR: the edit form overflows the half-width card (round 59)');
+        if (gNa.footMb !== '0px')
+            console.log('PAGE ERROR: the edit footer buttons still carry the bundle margin-bottom phantom (' + gNa.footMb + ', want 0px) (round 61)');
+        if (gNa.btnGap != null && (gNa.btnGap > 26 || gNa.btnGap < 14))
+            console.log('PAGE ERROR: the space under Cancel/Apply is wrong (got ' + gNa.btnGap + 'px, want ~20 — the round-61 trim) (round 61)');
         if (gNa.staticSw !== false) console.log('PAGE ERROR: eth0 (DHCP) should open with the Static IP switch OFF (round 53)');
         if (gNa.staticHidden !== true) console.log('PAGE ERROR: the address fields must be hidden until the Static switch is on (round 53)');
         if (!gNa.dnsRow) console.log('PAGE ERROR: the DNS chip input is missing from the edit form (round 53)');
