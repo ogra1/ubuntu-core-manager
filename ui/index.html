@@ -87,8 +87,8 @@
             <button class="p-button--brand" type="submit" id="loginBtn">Unlock console</button>
         </form>
         <div class="ucm-login__foot">
-            Verified offline on this device. Sessions lock after 15 minutes
-            of inactivity. Store access is optional and configured separately.
+            Verified offline on this device. <span id="lockNote">Sessions lock after 15 minutes
+            of inactivity.</span> Store access is optional and configured separately.
         </div>
     </div>
 </section>
@@ -389,8 +389,24 @@
                     <div class="p-card" style="margin-top:1.2rem;">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Session</p></div>
                         <dl class="ucm-kv">
-                            <div><dt>Gate</dt><dd>local administrator (offline)</dd></div>
-                            <div><dt>Inactivity lock</dt><dd>15 minutes</dd></div>
+                            <!-- round 66: the inactivity lock is configurable
+                                 (5/10/15/30 min, 1 hour, or off). The old
+                                 "Gate" row is gone — it just restated that the
+                                 console is password-gated, which is obvious. -->
+                            <div>
+                                <dt>Inactivity lock</dt>
+                                <dd>
+                                    <select id="lockTimeout" class="ucm-kv--select"
+                                            title="How long the console stays unlocked after the last activity before it locks itself">
+                                        <option value="5">5 minutes</option>
+                                        <option value="10">10 minutes</option>
+                                        <option value="15">15 minutes</option>
+                                        <option value="30">30 minutes</option>
+                                        <option value="60">1 hour</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </dd>
+                            </div>
                         </dl>
                     </div>
                 </div>

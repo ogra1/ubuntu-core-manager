@@ -252,11 +252,16 @@ function mockFactoryJs() {
         let netCalls = 0;
         let __netDoc = JSON.parse(JSON.stringify(NETPLAN));
         const __SUBS = [];
+        /* round 66: the configurable inactivity lock timeout (mock of
+           main.js setLockTimeout + the pref). Default '15' = the shipped
+           15 min; 'off' = no auto-lock (timeoutMs null, no expiresAt). */
+        let __lockTimeout = '15';
+        let __lockCalls = 0;
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
-            expiresAt: localAuthed ? Date.now() + 900000 : null,
-            timeoutMs: 900000,
+            expiresAt: (localAuthed && __lockTimeout !== 'off') ? Date.now() + Number(__lockTimeout) * 60000 : null,
+            timeoutMs: (__lockTimeout === 'off') ? null : Number(__lockTimeout) * 60000,
             storeAuthenticated: false,
             storeUsername: null,
         });
@@ -284,6 +289,26 @@ function mockFactoryJs() {
                     return status();
                 },
                 async status() { return status(); },
+                // round 66: mock of main.js setLockTimeout (auth:set-lock-timeout).
+                async setLockTimeout(v) {
+                    const allowed = ['5', '10', '15', '30', '60', 'off'];
+                    if (!allowed.includes(v)) throw new Error('invalid lock timeout: ' + v);
+                    __lockCalls += 1;
+                    __lockTimeout = v;
+                    // mock of main.js's pushAuthStatus after setLockTimeout:
+                    // the fresh payload (new expiresAt + timeoutMs) is what
+                    // restarts the UI countdown / "active" chrome.
+                    __SUBS.forEach((f) => { try { f(status()); } catch (e) {} });
+                    return { value: v, ms: (v === 'off') ? null : Number(v) * 60000, allowed: allowed.slice(), default: '15' };
+                },
+                __locktimeout: () => ({ value: __lockTimeout, calls: __lockCalls }),
+                // model a PERSISTED lock-timeout pref (no set call, no push) —
+                // e.g. the user set "off", closed, and reopened the console.
+                __setlocktimeout: (v) => { __lockTimeout = v; },
+                // push the CURRENT status to subscribers only (no state
+                // change, no call count) — models main's boot / re-push, so
+                // the renderer's applyAuthPayload path is exercised directly.
+                __pushstatus: () => { const p = status(); __SUBS.forEach((f) => { try { f(p); } catch (e) {} }); return p; },
                 /* round 48f: capture status-push subscribers so the harness can
                    drive the SAME payload path main pushes on inactivity. */
                 __subs: [],
@@ -1219,9 +1244,11 @@ function mockFactoryJs() {
         const i = g.querySelector('.p-form-validation__input').getBoundingClientRect();
         return Math.round(((l.top + l.height / 2) - (i.top + i.height / 2)) * 100) / 100;
       };
+      const warnEl = card.querySelector('.ucm-reset__warn');
       return {
         title: card.querySelector('.p-card__header .p-heading--5').textContent.trim(),
         subtitleGone: !Array.from(card.querySelectorAll('.p-card__header ~ p, .p-card__header + p')).some((p) => /gates this console/i.test(p.textContent)),
+        warnGap: Math.round((document.querySelector('#resetCurrentGroup').getBoundingClientRect().top - warnEl.getBoundingClientRect().bottom) * 100) / 100,
         warn: card.querySelector('.ucm-reset__warn').textContent.replace(/\s+/g, ' ').trim(),
         curLabel: curL.textContent.trim(),
         repLabel: repL.textContent.trim(),
@@ -1247,6 +1274,11 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the reset inputs are not the fixed 13rem column (got ' + gR.curW + '/' + gR.repW + 'px) (round 65)');
     if (gR.sameX > 1)
         console.log('PAGE ERROR: the reset inputs are not side-by-side at the same x (spread ' + gR.sameX + 'px) (round 65)');
+    // round 66: the warning and the first field must not touch — the
+    // .ucm-reset__warn margin-bottom (1.2rem) survived the round-65 error-slot
+    // rule (which once matched the warning too and zeroed it -> 0px gap).
+    if (!(gR.warnGap >= 14 && gR.warnGap <= 24))
+        console.log('PAGE ERROR: the warning touches the first field (gap ' + gR.warnGap + 'px, want ~19 = 1.2rem) (round 66)');
     if (!(gR.col1 >= 110 && gR.col1 <= 114))
         console.log('PAGE ERROR: the reset form grid label column is not 7rem (got ' + gR.col1 + 'px) (round 65)');
     if (!(gR.col2 >= 206 && gR.col2 <= 210))
@@ -1257,6 +1289,125 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: a reset input is not on its grid column (off by ' + gR.curColErr + '/' + gR.repColErr + 'px) (round 65)');
     if (Math.abs(gR.curCenter) > 1 || Math.abs(gR.repCenter) > 1)
         console.log('PAGE ERROR: a reset caption is not centred on its input (delta ' + gR.curCenter + '/' + gR.repCenter + 'px) (round 65)');
+
+    // ---- 2b. round 66: the inactivity lock is CONFIGURABLE (ask 2) + the
+    //      Session card lost its "Gate" row (ask 3). The select applies LIVE.
+    // (i) an off-at-LOAD: the user set "off", closed, reopened the console.
+    //     Main pushes a fresh status (timeoutMs null) on boot -> the renderer's
+    //     applyAuthPayload MUST keep "off" (a `|| 900000` / `!= null` fallback
+    //     would turn it into a 15-min default and the countdown reappears).
+    //     Model the persisted pref + the boot push; assert the chip + note.
+    await page.evaluate(() => { window.__mockCore.auth.__setlocktimeout('off'); window.__mockCore.auth.__pushstatus(); });
+    await wait(300);
+    const sOff0 = await page.evaluate(() => ({
+        chipText: document.querySelector('#sessionChipText').textContent.trim(),
+        note: document.querySelector('#lockNote').textContent.trim(),
+    }));
+    if (sOff0.chipText !== 'active')
+        console.log('PAGE ERROR: a pushed "off" status must make the chip read "active" (no countdown) — got ' + JSON.stringify(sOff0.chipText) + ' (the null timeoutMs was dropped for a default) (round 66)');
+    if (sOff0.note !== 'Auto-lock is off — the console stays unlocked until you lock it manually.')
+        console.log('PAGE ERROR: a pushed "off" status must make the gate note say auto-lock is off (got ' + JSON.stringify(sOff0.note) + ') (round 66)');
+    // and re-entering the settings view must read "off" into the SELECT.
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(200);
+    await page.click('.ucm-side a[data-view="settings"]');
+    await wait(300);
+    const sOffSel = await page.evaluate(() => document.querySelector('#lockTimeout').value);
+    if (sOffSel !== 'off')
+        console.log('PAGE ERROR: a persisted "off" pref must show in the select on load (got ' + JSON.stringify(sOffSel) + ') (round 66)');
+    // (ii) restore the shipped default (15) for the interactive tests below.
+    await page.evaluate(() => { window.__mockCore.auth.__setlocktimeout('15'); window.__mockCore.auth.__pushstatus(); });
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(200);
+    await page.click('.ucm-side a[data-view="settings"]');
+    await wait(300);
+    const sCard = await page.evaluate(() => {
+      const dl = document.querySelector('#lockTimeout').closest('dl');
+      const card = dl.closest('.p-card');
+      const sel = document.querySelector('#lockTimeout');
+      const opts = Array.from(sel.options).map((o) => o.value);
+      return {
+        cardTitle: card.querySelector('.p-card__header .p-heading--5').textContent.trim(),
+        rows: Array.from(dl.querySelectorAll('dt')).map((d) => d.textContent.trim()),
+        gateRowGone: !Array.from(dl.querySelectorAll('dt')).some((d) => d.textContent.trim() === 'Gate'),
+        selValue: sel.value,
+        opts,
+        selW: Math.round(sel.getBoundingClientRect().width * 10) / 10,
+        chipTitle: document.querySelector('#sessionChip').title,
+        chipText: document.querySelector('#sessionChipText').textContent.trim(),
+        note: document.querySelector('#lockNote').textContent.trim(),
+      };
+    });
+    if (sCard.cardTitle !== 'Session')
+        console.log('PAGE ERROR: the Session card title is wrong (got ' + JSON.stringify(sCard.cardTitle) + ') (round 66)');
+    if (JSON.stringify(sCard.rows) !== JSON.stringify(['Inactivity lock']))
+        console.log('PAGE ERROR: the Session card must show ONLY the Inactivity lock row (the Gate row is gone) — got ' + JSON.stringify(sCard.rows) + ' (round 66)');
+    if (!sCard.gateRowGone)
+        console.log('PAGE ERROR: the Session card still carries the "Gate" row (round 66)');
+    if (JSON.stringify(sCard.opts) !== JSON.stringify(['5', '10', '15', '30', '60', 'off']))
+        console.log('PAGE ERROR: the lock timeout options are wrong (got ' + JSON.stringify(sCard.opts) + ', want 5/10/15/30/60/off) (round 66)');
+    if (sCard.selValue !== '15')
+        console.log('PAGE ERROR: the lock timeout select must default to the pref (15 min) — got ' + JSON.stringify(sCard.selValue) + ' (round 66)');
+    if (sCard.selW < 100 || sCard.selW > 215)
+        console.log('PAGE ERROR: the lock timeout select is not compact (width ' + sCard.selW + 'px) (round 66)');
+    if (sCard.chipTitle !== 'Console locks after 15 minutes without activity')
+        console.log('PAGE ERROR: the header chip tooltip does not reflect the 15-min default (got ' + JSON.stringify(sCard.chipTitle) + ') (round 66)');
+    if (sCard.note !== 'Sessions lock after 15 minutes of inactivity.')
+        console.log('PAGE ERROR: the gate note does not reflect the 15-min default (got ' + JSON.stringify(sCard.note) + ') (round 66)');
+
+    // CHANGE the timeout (a real select interaction): 15 -> 30. It must apply
+    // LIVE — the mock pref, the chip tooltip + note, and the countdown all
+    // reflect 30 — and send exactly one set call.
+    await page.select('#lockTimeout', '30');
+    await wait(300);
+    const sChg = await page.evaluate(() => ({
+        mock: window.__mockCore.auth.__locktimeout(),
+        chipTitle: document.querySelector('#sessionChip').title,
+        note: document.querySelector('#lockNote').textContent.trim(),
+        chipText: document.querySelector('#sessionChipText').textContent.trim(),
+    }));
+    if (sChg.mock.value !== '30' || sChg.mock.calls !== 1)
+        console.log('PAGE ERROR: changing the lock timeout did not send exactly one set call to the mock (got ' + JSON.stringify(sChg.mock) + ') (round 66)');
+    if (sChg.chipTitle !== 'Console locks after 30 minutes without activity')
+        console.log('PAGE ERROR: the chip tooltip did not update to 30 min (got ' + JSON.stringify(sChg.chipTitle) + ') (round 66)');
+    if (sChg.note !== 'Sessions lock after 30 minutes of inactivity.')
+        console.log('PAGE ERROR: the gate note did not update to 30 min (got ' + JSON.stringify(sChg.note) + ') (round 66)');
+    if (!/^locks in \d{1,2}:\d{2}$/.test(sChg.chipText))
+        console.log('PAGE ERROR: the chip must show a live countdown for a 30-min timeout (got ' + JSON.stringify(sChg.chipText) + ') (round 66)');
+
+    // "off": no auto-lock -> the countdown becomes "active" (the chip) and the
+    // copy says so; the select shows "Off".
+    await page.select('#lockTimeout', 'off');
+    await wait(300);
+    const sOff = await page.evaluate(() => ({
+        mock: window.__mockCore.auth.__locktimeout(),
+        chipTitle: document.querySelector('#sessionChip').title,
+        note: document.querySelector('#lockNote').textContent.trim(),
+        chipText: document.querySelector('#sessionChipText').textContent.trim(),
+        selValue: document.querySelector('#lockTimeout').value,
+    }));
+    if (sOff.mock.value !== 'off' || sOff.mock.calls !== 2)
+        console.log('PAGE ERROR: setting the lock timeout to "off" did not reach the mock (got ' + JSON.stringify(sOff.mock) + ') (round 66)');
+    if (sOff.chipTitle !== 'Auto-lock is off — the console stays unlocked until you lock it')
+        console.log('PAGE ERROR: the chip tooltip does not say auto-lock is off (got ' + JSON.stringify(sOff.chipTitle) + ') (round 66)');
+    if (sOff.note !== 'Auto-lock is off — the console stays unlocked until you lock it manually.')
+        console.log('PAGE ERROR: the gate note does not say auto-lock is off (got ' + JSON.stringify(sOff.note) + ') (round 66)');
+    if (sOff.chipText !== 'active')
+        console.log('PAGE ERROR: with the lock "off" the chip must read "active" (no countdown) — got ' + JSON.stringify(sOff.chipText) + ' (round 66)');
+    if (sOff.selValue !== 'off')
+        console.log('PAGE ERROR: the select must show "Off" (got ' + JSON.stringify(sOff.selValue) + ') (round 66)');
+    await page.screenshot({ path: path.join(SHOTS, '4b-settings-lock-timeout.png'), fullPage: true });
+
+    // REVERT to 15 so the rest of the run (and the shot above) reflect the
+    // shipped default.
+    await page.select('#lockTimeout', '15');
+    await wait(300);
+    const sBack = await page.evaluate(() => ({
+        mock: window.__mockCore.auth.__locktimeout().value,
+        chipTitle: document.querySelector('#sessionChip').title,
+    }));
+    if (sBack.mock !== '15' || sBack.chipTitle !== 'Console locks after 15 minutes without activity')
+        console.log('PAGE ERROR: reverting the lock timeout to 15 did not restore the chrome (got ' + JSON.stringify(sBack) + ') (round 66)');
 
     // wrong current password -> validation error (session kept)
     await page.type('#resetCurrent', 'wrong-pass');

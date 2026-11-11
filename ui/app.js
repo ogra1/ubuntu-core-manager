@@ -115,6 +115,9 @@ const state = {
     initialized: false,
     authenticated: false,
     expiresAt: null,
+    // round 66: the CONFIGURABLE inactivity lock timeout (ms; null = "off" —
+    // no auto-lock). The default 15 min only seeds the FIRST paint before
+    // core.auth.status() lands the real pref.
     timeoutMs: 900000,
     // optional store auth
     storeAuthenticated: false,
@@ -187,7 +190,7 @@ function switchView(name) {
         network: loadNetwork,
         snaps: loadSnaps,
         interfaces: loadInterfaces,
-        settings: () => {},
+        settings: loadSettings,
     })[name]();
 }
 
@@ -235,6 +238,14 @@ function startSessionTick() {
     const text = $('#sessionChipText');
     const render = () => {
         if (!state.authenticated) { text.textContent = 'active'; return; }
+        if (!state.timeoutMs) {
+            // round 66: "off" — no auto-lock, so no countdown. The chip reads
+            // "active" (the same word the locked-out state uses; the tooltip
+            // from updateLockChrome makes "no auto-lock" explicit).
+            text.textContent = 'active';
+            chip.classList.remove('is-warning');
+            return;
+        }
         const remain = state.expiresAt - Date.now();
         if (remain <= 0) return; // main will push auth-status-changed -> lock
         const m = Math.floor(remain / 60000);
@@ -247,6 +258,25 @@ function startSessionTick() {
 }
 function stopSessionTick() {
     if (state.sessionTick) { clearInterval(state.sessionTick); state.sessionTick = null; }
+}
+
+/* round 66: the chrome that depends on the lock timeout — the header chip's
+   tooltip and the login/setup gate's footnote both reflect the CURRENT
+   timeout (or "off"), so they stay honest when the user changes it. */
+function lockTimeoutLabel() {
+    if (!state.timeoutMs) return 'off';
+    const min = state.timeoutMs / 60000;
+    return min === 60 ? '1 hour' : min + ' minutes';
+}
+function updateLockChrome() {
+    const chip = $('#sessionChip');
+    if (chip) chip.title = state.timeoutMs
+        ? 'Console locks after ' + lockTimeoutLabel() + ' without activity'
+        : 'Auto-lock is off — the console stays unlocked until you lock it';
+    const note = $('#lockNote');
+    if (note) note.textContent = state.timeoutMs
+        ? 'Sessions lock after ' + lockTimeoutLabel() + ' of inactivity.'
+        : 'Auto-lock is off — the console stays unlocked until you lock it manually.';
 }
 
 /* ----------------------------- auth (local) ------------------------------ */
@@ -312,9 +342,14 @@ function applyAuthPayload(p) {
     state.initialized = !!p.initialized;
     state.authenticated = !!p.authenticated;
     state.expiresAt = p.expiresAt || null;
-    state.timeoutMs = p.timeoutMs || 900000;
+    // round 66: timeoutMs is null when the lock is "off". An explicit null
+    // MUST stick (off) — only a payload with NO timeoutMs field at all
+    // (undefined) falls back to the current value. (`!= null` was wrong: it
+    // kept the stale default and hid a persisted "off" on load.)
+    state.timeoutMs = p.timeoutMs !== undefined ? p.timeoutMs : state.timeoutMs;
     state.storeAuthenticated = !!p.storeAuthenticated;
     state.storeUsername = p.storeUsername || null;
+    updateLockChrome();
 
     if (state.authenticated) {
         if (!wasAuth) enterApp();
@@ -3039,6 +3074,45 @@ async function doResetPassword() {
     }
 }
 
+/* --------------------------- settings (local) ---------------------------- *
+ * round 66: the Session card's "Inactivity lock" is a select. It is NOT
+ * form-gated — changing it sends the preference immediately and it applies
+ * LIVE (main re-arms the active session's watchdog and pushes the new
+ * timeoutMs to the chip). */
+async function loadSettings() {
+    const sel = $('#lockTimeout');
+    if (!sel) return;
+    try {
+        const p = await core.auth.status();
+        // an explicit null (off) must stick; only a missing field falls back.
+        const t = (p && p.timeoutMs !== undefined) ? p.timeoutMs : state.timeoutMs;
+        state.timeoutMs = t;
+        sel.value = state.timeoutMs ? String(state.timeoutMs / 60000) : 'off';
+        updateLockChrome();
+        startSessionTick(); // sync the header chip to the pref (a persisted
+                            // "off" must show "active", not a stale countdown)
+    } catch { /* keep the current value on read failure */ }
+}
+async function setLockTimeout(value) {
+    const sel = $('#lockTimeout');
+    if (!sel) return;
+    // (a change event only fires for a REAL change — the select's value is
+    // already `value` here — so no same-value guard is needed)
+    sel.disabled = true;
+    try {
+        const p = await core.auth.setLockTimeout(value);
+        // the returned payload (ms) is the truth; sync the select too.
+        state.timeoutMs = p && p.ms != null ? p.ms : (value === 'off' ? null : Number(value) * 60000);
+        sel.value = value;
+        updateLockChrome();
+        startSessionTick(); // the countdown (or "active") reflects the new timeout
+    } catch (e) {
+        toastErr(e);
+    } finally {
+        sel.disabled = false;
+    }
+}
+
 /* ------------------------------- wiring ---------------------------------- */
 
 function wire() {
@@ -3085,6 +3159,9 @@ function wire() {
         e.preventDefault();
         doResetPassword();
     });
+
+    // settings: the inactivity lock timeout (round 66) — applies live
+    $('#lockTimeout').addEventListener('change', (e) => setLockTimeout(e.target.value));
 
     // dashboard
 

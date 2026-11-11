@@ -78,6 +78,10 @@ const api = Object.freeze({
         // first-boot setup again. (UI is currently hidden behind the
         // Settings view; the handler stays available for that path.)
         reset: invoke('auth:reset'),             // (password) => status
+        // round 66: set the inactivity lock timeout ('5' | '10' | '15' |
+        // '30' | '60' minutes, or 'off' = no auto-lock). Console-privileged.
+        // Returns the lock-timeout payload { value, ms, allowed, default }.
+        setLockTimeout: invoke('auth:set-lock-timeout'),  // (value) => {value,ms,allowed,default}
         // Subscribe to 'auth-status-changed' pushed by main on create,
         // login, logout, or 15-min inactivity lock. Callback receives the
         // status payload above only — never any credential material.

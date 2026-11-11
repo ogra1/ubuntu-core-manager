@@ -515,6 +515,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['net:forwarding-status'] && !!handlers['net:forwarding-set']);
             ok('net devices handlers registered (list open, apply auth-gated) + the dead net:apply is gone',
                 !!handlers['net:devices'] && !!handlers['net:apply-device'] && !handlers['net:apply']);
+            ok('lock-timeout handler registered (round 66, auth-gated)',
+                !!handlers['auth:set-lock-timeout']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -546,6 +548,35 @@ function ok(name, cond, extra = '') {
                         JSON.stringify(lastPush && lastPush.p));
                 }
             }
+                // round 66: the configurable inactivity lock timeout (console-
+                // privileged like the reset). A change is LIVE: it re-arms the
+                // active session's watchdog, so authStatus().timeoutMs and the
+                // pushed payload reflect the new value immediately.
+                if (handlers['auth:set-lock-timeout']) {
+                    const rT = await new Promise((res) => handlers['auth:set-lock-timeout'](null, '30').then(res));
+                    ok('auth:set-lock-timeout("30") returns the timeout payload',
+                        rT.ok === true && rT.result.value === '30' && rT.result.ms === 30 * 60000, JSON.stringify(rT));
+                    const stT = mw.authStatus();
+                    ok('the change is LIVE: authStatus().timeoutMs is now 30 min',
+                        stT.timeoutMs === 30 * 60000, JSON.stringify(stT));
+                    const rBadT = await new Promise((res) => handlers['auth:set-lock-timeout'](null, '7').then(res));
+                    ok('auth:set-lock-timeout rejects an unknown value (7 min is not offered)',
+                        rBadT.ok === false && /invalid lock timeout/.test(rBadT.error), JSON.stringify(rBadT));
+                    const stT2 = mw.authStatus();
+                    ok('a rejected set does NOT change the timeout (still 30 min)',
+                        stT2.timeoutMs === 30 * 60000, JSON.stringify(stT2));
+                    const rOff = await new Promise((res) => handlers['auth:set-lock-timeout'](null, 'off').then(res));
+                    ok('auth:set-lock-timeout("off") returns ms:null (no auto-lock)',
+                        rOff.ok === true && rOff.result.value === 'off' && rOff.result.ms === null, JSON.stringify(rOff));
+                    ok('with "off" the status carries no auto-lock (timeoutMs null, expiresAt 0)',
+                        mw.authStatus().timeoutMs === null && mw.authStatus().expiresAt === 0, JSON.stringify(mw.authStatus()));
+                    // revert to the shipped default so later sections see 15 min
+                    await new Promise((res) => handlers['auth:set-lock-timeout'](null, '15').then(res));
+                    ok('the timeout reverts to the 15-min default',
+                        mw.authStatus().timeoutMs === 15 * 60000, JSON.stringify(mw.authStatus()));
+                } else {
+                    ok('auth:set-lock-timeout handler registered', false);
+                }
                 // Guarded local-admin reset: console-privileged (active session),
                 // re-confirms the CURRENT password, wipes $SNAP_COMMON/admin.cred
                 // -> next launch is first-boot setup again.
@@ -1178,6 +1209,43 @@ function ok(name, cond, extra = '') {
             m.clearNetSeedBoilerplate() === 'removed' && !fs.existsSync(seed('00-snapd-config.yaml')),
             '');
         m.__setNetSeedPath(null);
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    console.log('\n[16] inactivity lock timeout (configurable, round 66)');
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-locktimeout-'));
+        const PREF = path.join(dir, 'lock-timeout.pref');
+        process.env.UCM_LOCK_TIMEOUT_PREF = PREF;
+        // read the pref defensively — a no-write regression must FAIL cleanly,
+        // not crash on a missing file (the round-51 null-safe-read rule).
+        const readPref = () => { try { return fs.readFileSync(PREF, 'utf8'); } catch { return null; } };
+        // getLockTimeout reflects the pref file (missing -> the shipped default).
+        let gt = m.getLockTimeout();
+        ok('no pref file -> the shipped default (15 min)',
+            gt.value === '15' && gt.ms === 15 * 60000, JSON.stringify(gt));
+        ok('the allowed set is 5/10/15/30/60/off (the user\'s exact options)',
+            JSON.stringify(m.LOCK_TIMEOUTS) === JSON.stringify(['5', '10', '15', '30', '60', 'off'])
+            && m.DEFAULT_LOCK_TIMEOUT === '15', JSON.stringify(m.LOCK_TIMEOUTS));
+        // each offered value -> the right ms
+        for (const [v, min] of [['5', 5], ['10', 10], ['15', 15], ['30', 30], ['60', 60]]) {
+            const r = m.setLockTimeout(v);
+            ok('setLockTimeout(' + JSON.stringify(v) + ') -> ' + min + ' min',
+                r.value === v && r.ms === min * 60000 && readPref() === v, JSON.stringify(r));
+        }
+        // 'off' -> ms null (no auto-lock)
+        const rOff = m.setLockTimeout('off');
+        ok('setLockTimeout("off") -> ms null + the pref persists',
+            rOff.ms === null && readPref() === 'off', JSON.stringify(rOff));
+        // get reflects the stored pref
+        ok('getLockTimeout reads the stored pref (off)', m.getLockTimeout().value === 'off', '');
+        // invalid values throw and leave the pref untouched
+        for (const bad of ['7', '', 'off ', 'OFF', 30, '30.5']) {
+            let threw = false;
+            try { m.setLockTimeout(bad); } catch (e) { threw = /invalid lock timeout/.test(e.message); }
+            ok('setLockTimeout rejects ' + JSON.stringify(bad), threw && m.getLockTimeout().value === 'off');
+        }
+        delete process.env.UCM_LOCK_TIMEOUT_PREF;
         fs.rmSync(dir, { recursive: true, force: true });
     }
 

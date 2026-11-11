@@ -396,7 +396,9 @@ function statusPayload() {
         initialized: session.localInitialized,
         authenticated: session.localAuthenticated,
         expiresAt: session.localAuthenticated ? session.localExpiresAt : null,
-        timeoutMs: SESSION_TIMEOUT_MS,
+        // round 66: the CONFIGURABLE lock timeout (null = "off" — no auto-lock,
+        // the UI chip then shows "active" instead of a countdown).
+        timeoutMs: lockTimeoutMs(lockTimeoutPref),
         // store (optional)
         storeAuthenticated: session.storeAuthenticated,
         storeUsername: session.storeAuthenticated ? session.storeUsername : null,
@@ -406,7 +408,9 @@ function statusPayload() {
 function beginLocalSession() {
     session.localAuthenticated = true;
     session.localInitialized = readCred() !== null;
-    session.localExpiresAt = Date.now() + SESSION_TIMEOUT_MS;
+    // round 66: 'off' -> no auto-lock (no expiry); else the pref's minutes.
+    const ms = lockTimeoutMs(lockTimeoutPref);
+    session.localExpiresAt = ms ? Date.now() + ms : 0;
     session.localWarned = false;
     return statusPayload();
 }
@@ -1510,6 +1514,64 @@ async function ipfwdApplyPref() {
 }
 
 /* ------------------------------------------------------------------ *
+ * 8c. Session inactivity lock timeout (configurable, round 66)
+ * ------------------------------------------------------------------
+ * The console locks after N minutes of inactivity. N is a user PREFERENCE
+ * persisted in the state dir (the round-51 ipfwd pref idiom): one of
+ * 5/10/15/30/60 minutes or 'off' (no auto-lock). 15 is the shipped default
+ * (the round-1 constant) — a box with no pref file behaves EXACTLY as
+ * before. getLockTimeout/setLockTimeout run in the plain-node path (the
+ * integration unit-tests them); setLockTimeout ALSO re-arms the active
+ * session's REAL watchdog (armLockWatchdog is bound to initElectron's
+ * armInactivity), so a change is live, not just at next login.
+ */
+const LOCK_TIMEOUTS = ['5', '10', '15', '30', '60', 'off'];
+const DEFAULT_LOCK_TIMEOUT = '15';
+let armLockWatchdog = null; // bound in initElectron (armInactivity)
+
+function lockTimeoutPrefPath() {
+    return process.env.UCM_LOCK_TIMEOUT_PREF || (stateDir() ? path.join(stateDir(), 'lock-timeout.pref') : null);
+}
+function lockTimeoutPrefRead() {
+    const p = lockTimeoutPrefPath();
+    if (!p) return DEFAULT_LOCK_TIMEOUT;
+    try {
+        const v = fs.readFileSync(p, 'utf8').trim();
+        return LOCK_TIMEOUTS.includes(v) ? v : DEFAULT_LOCK_TIMEOUT;
+    } catch { return DEFAULT_LOCK_TIMEOUT; }
+}
+function lockTimeoutPrefWrite(v) {
+    const p = lockTimeoutPrefPath();
+    if (!p) return; // dev mode (no state dir) — nothing durable
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, v, { mode: 0o600 });
+}
+// ms for a timeout value ('off' -> null = no auto-lock).
+function lockTimeoutMs(v) {
+    return v === 'off' ? null : Number(v) * 60 * 1000;
+}
+// the CURRENT pref — read once at module load (before any session).
+let lockTimeoutPref = lockTimeoutPrefRead();
+function getLockTimeout() {
+    return { value: lockTimeoutPref, ms: lockTimeoutMs(lockTimeoutPref), allowed: LOCK_TIMEOUTS.slice(), default: DEFAULT_LOCK_TIMEOUT };
+}
+/**
+ * Set the inactivity lock timeout ('off' | '5' | '10' | '15' | '30' | '60').
+ * Throws on an unknown value (nothing is written). Persists the pref and —
+ * when a session is active — re-arms the REAL watchdog immediately, so the
+ * new timeout (or "off") applies to the current session, not just the next.
+ */
+function setLockTimeout(v) {
+    if (typeof v !== 'string' || !LOCK_TIMEOUTS.includes(v)) {
+        throw new Error('invalid lock timeout: ' + JSON.stringify(v) + ' (allowed: ' + LOCK_TIMEOUTS.join(', ') + ')');
+    }
+    lockTimeoutPref = v;
+    lockTimeoutPrefWrite(v);
+    if (session.localAuthenticated && armLockWatchdog) armLockWatchdog();
+    return getLockTimeout();
+}
+
+/* ------------------------------------------------------------------ *
  * 9. Interfaces (plug/slot control)
  * ------------------------------------------------------------------ */
 
@@ -1773,6 +1835,8 @@ const api = {
 
     // local admin gate (the UI lock screen; offline)
     createLocalPassword, loginLocal, logoutLocal, resetLocalPassword, authStatus, detectInitialized,
+    // round 66: the configurable inactivity lock timeout
+    getLockTimeout, setLockTimeout, LOCK_TIMEOUTS, DEFAULT_LOCK_TIMEOUT,
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
@@ -1848,21 +1912,32 @@ function initElectron() {
         if (inactivityTimer) clearTimeout(inactivityTimer);
         if (warnTimer) clearTimeout(warnTimer);
         if (!session.localAuthenticated) return;
-        session.localExpiresAt = Date.now() + SESSION_TIMEOUT_MS;
+        const ms = lockTimeoutMs(lockTimeoutPref);
+        if (!ms) {
+            // round 66: "off" — no auto-lock. No watchdog, no expiry; the
+            // status payload's timeoutMs is null so the UI chip shows
+            // "active" (not a countdown) and the console never locks itself.
+            session.localExpiresAt = 0;
+            session.localWarned = false;
+            return;
+        }
+        session.localExpiresAt = Date.now() + ms;
         session.localWarned = false;
         inactivityTimer = setTimeout(() => {
             session.localAuthenticated = false;
             session.localExpiresAt = 0;
             clearStoreSession('inactivity-lock');
             pushAuthStatus();
-        }, SESSION_TIMEOUT_MS);
+        }, ms);
         warnTimer = setTimeout(() => {
             if (session.localAuthenticated) {
                 session.localWarned = true;
                 pushAuthStatus(); // payload.expiresAt drives the UI countdown chip
             }
-        }, SESSION_TIMEOUT_MS - SESSION_WARN_MS);
+        }, ms - SESSION_WARN_MS);
     }
+    // round 66: setLockTimeout re-arms the live session through this.
+    armLockWatchdog = armInactivity;
 
     // ---- kiosk window -------------------------------------------------
     function createKioskWindow() {
@@ -2011,6 +2086,11 @@ function initElectron() {
     // compromised renderer cannot wipe the gate without it), then deletes
     // admin.cred -> next launch is first-boot setup again.
     ipcMain.handle('auth:reset', guard((password) => { const p = resetLocalPassword(password); pushAuthStatus(); return p; }));
+    // round 66: the inactivity lock timeout. Console-privileged (requireAuth)
+    // like the reset — it is a security setting. The change is live:
+    // setLockTimeout re-arms the active session's watchdog, and the new
+    // payload (timeoutMs) flows through pushAuthStatus to the UI chip.
+    ipcMain.handle('auth:set-lock-timeout', guard((value) => { requireAuth(); const p = setLockTimeout(value); pushAuthStatus(); return p; }));
     // Activity beacon (mouse/keyboard/wheel from the UI): re-arm resets the real
     // lock clock to a full 15 minutes. Crucially we ALSO push the fresh expiresAt
     // to the renderer — the header pill is a local countdown from the last received
