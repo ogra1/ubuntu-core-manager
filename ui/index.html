@@ -362,27 +362,21 @@
             <div class="row">
                 <div class="col-8">
                     <div class="p-card">
-                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Console administrator</p></div>
-                        <p class="p-form-help-text" style="margin:0 0 1rem;">
-                            The local administrator password gates this console and is verified
-                            entirely on this device. It can be changed or wiped only from an
-                            active session — there is no remote or offline reset path.
-                        </p>
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Reset password</p></div>
                         <form id="resetForm" class="ucm-reset" novalidate>
                             <p class="p-form-validation__message ucm-reset__warn">
                                 <i class="p-icon--warning"></i>
-                                Wiping the password erases the local credential file. The next
-                                launch of this application returns to the first-boot setup
-                                screen, where a new password must be created.
+                                Wiping the password will log you out and take you back to the
+                                initial password setup
                             </p>
                             <div class="p-form__group" id="resetCurrentGroup">
-                                <label class="p-form__label" for="resetCurrent">Current administrator password</label>
+                                <label class="p-form__label" for="resetCurrent">Current password</label>
                                 <input class="p-form-validation__input" type="password" id="resetCurrent"
                                        name="current-password" autocomplete="current-password" required spellcheck="false">
                                 <p class="p-form-validation__message" id="resetCurrentMsg"></p>
                             </div>
                             <div class="p-form__group" id="resetConfirmGroup">
-                                <label class="p-form__label" for="resetConfirm">Type your current password again</label>
+                                <label class="p-form__label" for="resetConfirm">Repeat password</label>
                                 <input class="p-form-validation__input" type="password" id="resetConfirm"
                                        name="confirm-password" autocomplete="current-password" required spellcheck="false">
                                 <p class="p-form-validation__message" id="resetConfirmMsg"></p>

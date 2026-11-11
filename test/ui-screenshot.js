@@ -1197,6 +1197,67 @@ function mockFactoryJs() {
     await wait(500);
     await page.screenshot({ path: path.join(SHOTS, '4-settings-reset.png'), fullPage: true });
 
+    // round 65 — the reset card de-wording + the round-64 grid idiom:
+    //   caption "Reset password", no subtitle, the ONE-sentence warning,
+    //   and [caption | input] rows with both inputs at the SAME x.
+    const gR = await page.evaluate(() => {
+      const card = document.querySelector('#resetForm').closest('.p-card');
+      const cur = document.querySelector('#resetCurrent');
+      const rep = document.querySelector('#resetConfirm');
+      const curL = cur.closest('.p-form__group').querySelector('.p-form__label');
+      const repL = rep.closest('.p-form__group').querySelector('.p-form__label');
+      const cs = getComputedStyle(cur.closest('.p-form__group'));
+      const cols = cs.gridTemplateColumns.split(' ').map((x) => parseFloat(x));
+      const colGapPx = parseFloat(cs.columnGap);
+      const colErr = (g) => {
+        const l = g.querySelector('.p-form__label').getBoundingClientRect();
+        const i = g.querySelector('.p-form-validation__input').getBoundingClientRect();
+        return Math.abs(i.left - (l.left + cols[0] + colGapPx));
+      };
+      const centerDelta = (g) => {
+        const l = g.querySelector('.p-form__label').getBoundingClientRect();
+        const i = g.querySelector('.p-form-validation__input').getBoundingClientRect();
+        return Math.round(((l.top + l.height / 2) - (i.top + i.height / 2)) * 100) / 100;
+      };
+      return {
+        title: card.querySelector('.p-card__header .p-heading--5').textContent.trim(),
+        subtitleGone: !Array.from(card.querySelectorAll('.p-card__header ~ p, .p-card__header + p')).some((p) => /gates this console/i.test(p.textContent)),
+        warn: card.querySelector('.ucm-reset__warn').textContent.replace(/\s+/g, ' ').trim(),
+        curLabel: curL.textContent.trim(),
+        repLabel: repL.textContent.trim(),
+        curW: Math.round(cur.getBoundingClientRect().width * 10) / 10,
+        repW: Math.round(rep.getBoundingClientRect().width * 10) / 10,
+        sameX: Math.round(Math.abs(cur.getBoundingClientRect().left - rep.getBoundingClientRect().left) * 100) / 100,
+        col1: cols[0], col2: cols[1], colGapPx,
+        curColErr: colErr(cur.closest('.p-form__group')),
+        repColErr: colErr(rep.closest('.p-form__group')),
+        curCenter: centerDelta(cur.closest('.p-form__group')),
+        repCenter: centerDelta(rep.closest('.p-form__group')),
+      };
+    });
+    if (gR.title !== 'Reset password')
+        console.log('PAGE ERROR: the reset card caption is not "Reset password" (got ' + JSON.stringify(gR.title) + ') (round 65)');
+    if (!gR.subtitleGone)
+        console.log('PAGE ERROR: the reset card still carries the old subtitle (round 65)');
+    if (gR.warn !== 'Wiping the password will log you out and take you back to the initial password setup')
+        console.log('PAGE ERROR: the reset warning is not the one-sentence copy (got ' + JSON.stringify(gR.warn) + ') (round 65)');
+    if (gR.curLabel !== 'Current password' || gR.repLabel !== 'Repeat password')
+        console.log('PAGE ERROR: the reset field captions are wrong (got ' + JSON.stringify([gR.curLabel, gR.repLabel]) + ', want Current password / Repeat password) (round 65)');
+    if (!(gR.curW >= 206 && gR.curW <= 210) || !(gR.repW >= 206 && gR.repW <= 210))
+        console.log('PAGE ERROR: the reset inputs are not the fixed 13rem column (got ' + gR.curW + '/' + gR.repW + 'px) (round 65)');
+    if (gR.sameX > 1)
+        console.log('PAGE ERROR: the reset inputs are not side-by-side at the same x (spread ' + gR.sameX + 'px) (round 65)');
+    if (!(gR.col1 >= 110 && gR.col1 <= 114))
+        console.log('PAGE ERROR: the reset form grid label column is not 7rem (got ' + gR.col1 + 'px) (round 65)');
+    if (!(gR.col2 >= 206 && gR.col2 <= 210))
+        console.log('PAGE ERROR: the reset form grid input column is not 13rem (got ' + gR.col2 + 'px) (round 65)');
+    if (!(gR.colGapPx >= 11 && gR.colGapPx <= 13))
+        console.log('PAGE ERROR: the reset form grid column-gap is not .75rem (got ' + gR.colGapPx + 'px) (round 65)');
+    if (gR.curColErr > 1 || gR.repColErr > 1)
+        console.log('PAGE ERROR: a reset input is not on its grid column (off by ' + gR.curColErr + '/' + gR.repColErr + 'px) (round 65)');
+    if (Math.abs(gR.curCenter) > 1 || Math.abs(gR.repCenter) > 1)
+        console.log('PAGE ERROR: a reset caption is not centred on its input (delta ' + gR.curCenter + '/' + gR.repCenter + 'px) (round 65)');
+
     // wrong current password -> validation error (session kept)
     await page.type('#resetCurrent', 'wrong-pass');
     await page.type('#resetConfirm', 'wrong-pass');

@@ -734,8 +734,34 @@ html, body {
     border-radius: .25rem;
     padding: .8rem 1rem; margin: 0 0 1.2rem;
 }
-.ucm-reset__warn .p-icon { flex: 0 0 auto; margin-top: .15rem; }
-.ucm-reset .p-form__group { margin-bottom: 1.1rem; max-width: 24rem; }
+.ucm-reset__warn .p-icon {
+    /* the warning is the app's ONE sentence now — let it read on its
+       natural line(s) (icon pinned to the first line). */
+    flex: 0 0 auto; margin-top: .15rem;
+}
+.ucm-reset .p-form__group {
+    /* round 65: the round-64 grid idiom — every field row is [caption |
+       input]: the caption in its own column, the input in a fixed 13rem
+       (208px) column, a .75rem gap between. 7rem is the longest caption
+       ("Current password" ~108px measured) so both inputs share one x.
+       The bundle label phantoms (padding-top 6.56px + margin-bottom
+       9.44px, the round-40/50 class) are zeroed so align-items:center
+       truly centres the caption on the input. */
+    display: grid; grid-template-columns: 7rem 13rem;
+    column-gap: .75rem; align-items: center;
+    margin: 0 0 1.1rem;
+}
+.ucm-reset .p-form__label { grid-column: 1; padding: 0; margin: 0; }
+.ucm-reset .p-form-validation__input {
+    /* round 65: the bundle input's 18.88px margin-bottom phantom (the
+       round-7 class — 4th instance) inflates the input's margin box, so
+       align-items:center pushed the caption 9.44px below the input's
+       centre. Zero it (the round-64 netcard rule carries the same zero). */
+    grid-column: 2; width: 100%; margin-bottom: 0;
+}
+/* the inline validation messages sit in their own grid row (spanning both
+   columns) so an error never squeezes the caption/input line. */
+.ucm-reset .p-form-validation__message { grid-column: 1 / -1; margin: 0; }
 .ucm-reset .p-button--negative { margin-top: .4rem; }
 
 /* ---- per-snap config modal --------------------------------------------- */
