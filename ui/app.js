@@ -1044,6 +1044,10 @@ function renderNetDevices() {
         const count = $('#netIfaceCount');
         if (count) count.textContent = state.devices.length + ' device' + (state.devices.length === 1 ? '' : 's');
         grid.replaceChildren(...state.devices.map((d) => netCard(d)));
+        // round 63: the "+ Add" button is disabled while a pending (Add) card
+        // is open — it re-enables on Apply/Cancel (both end in this render).
+        const addBtn = $('#netAddDevice');
+        if (addBtn) addBtn.disabled = state.devices.some((x) => x.pending);
     } finally { netRendering = false; }
 }
 /* a device card: header (name + type + live status pill + the round-58
@@ -1319,6 +1323,11 @@ function netCardEdit(d) {
    Cancel drops it). */
 function netAddBridge() {
     if (!state.devices) return;
+    // round 63: ONE pending (Add) card at a time — a click while another add
+    // form is open (not yet Applied or Cancelled) is a no-op, so ten clicks
+    // don't pile up ten empty device entries. renderNetDevices keeps the
+    // button itself disabled in that state (the house greyed control).
+    if (state.devices.some((x) => x.pending)) return;
     const nm = netUniqueBridgeName();
     state.devices.push({ name: nm, type: 'bridge', connected: false, addresses: [], gateway: null, dns: [], configured: false, netplan: null, pending: true });
     state.netEditing = nm;

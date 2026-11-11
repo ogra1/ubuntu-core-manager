@@ -1064,7 +1064,7 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    rows, the in-place form), so overflow is not needed: overflow:visible
    lets the head tooltip paint, the same .ucm-config__card idiom from
    round 48d. Round 59: editing a card no longer makes it span both grid
-   columns — the form's fields are capped (inputs max-width 26rem, the
+   columns — the form's fields are capped (inputs max-width 13rem since round 63, the
    longest label ~110px), so they fit a HALF-width column almost exactly;
    the card keeps its column and only grows in HEIGHT while editing.) */
 #netIfaceSec { margin-top: 1.6rem; }
@@ -1099,7 +1099,7 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    .ucm-config__card, round 48d). */
 .ucm-netcard { margin: 0; overflow: visible; }
 /* round 59: the in-place edit form no longer makes the card span both grid
-   columns — the form's fields are capped (inputs max-width 26rem, the
+   columns — the form's fields are capped (inputs max-width 13rem since round 63, the
    longest label ~110px) and fit a HALF-width column almost exactly, so the
    card keeps its column and only grows in HEIGHT while editing. Round 61:
    align-self:start makes the editing card hug its content instead of
@@ -1134,8 +1134,37 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-netcard__foot--edit { padding-bottom: 0; }
 .ucm-netcard__edit { display: flex; flex-direction: column; gap: .55rem; padding: .2rem 0 .25rem; }
 
-.ucm-netcard__fg { margin: 0; }
-.ucm-netcard__fg .p-form-validation__input { margin-bottom: 0; max-width: 26rem; }
+.ucm-netcard__fg {
+    /* round 63 -> 64: the form is a proper GRID — every field row is
+       [caption | input]: the caption in its own column (sized to the
+       longest label, "Wi-Fi password"), the input in a fixed 13rem (208px)
+       column = half the ~524px card content (round 63: even
+       "255.255.255.255/24" filled less than half of the old 26rem field).
+       Round 64: the bundle's BASE .p-form__group is display:BLOCK (its
+       display:flex only applies to .p-form--inline inside the min-1036px
+       media query) — so the inline label + the inline-block input flowed on
+       one line with the input's LEFT EDGE FOLLOWING EACH CAPTION'S WIDTH
+       (measured: IPv4 at x106, Gateway at x78) and the DNS chip row WRAPPED
+       BELOW its caption ("squeezed to their caption"). The grid gives every
+       input the SAME x, keeps the chips on their caption's line, and makes
+       the single caption->input gap the column-gap (.75rem). The bundle's
+       label padding-right (1rem) is zeroed so it isn't a second, invisible
+       gap. The label column is a FIXED 7rem (112px) — the longest label
+       ("Wi-Fi password") measures 108px — so every field group's input
+       starts at the SAME x (a per-group max-content column would size to
+       each label and leave the inputs ragged again). */
+    margin: 0; display: grid; grid-template-columns: 7rem 13rem;
+    column-gap: .75rem; align-items: center;
+}
+.ucm-netcard__fg .p-form__label {
+    /* round 64: the bundle's stacked-form label phantoms — padding-top
+       6.56px + margin-bottom 9.44px — offset the caption glyphs 4.7px below
+       the input's centre (the round-40/50 heading-padding class). Zero both
+       so align-items:center truly centres the caption line. */
+    grid-column: 1; padding: 0; margin: 0;
+}
+.ucm-netcard__fg .p-form-validation__input { grid-column: 2; width: 100%; margin-bottom: 0; max-width: 13rem; }
+.ucm-netcard__fg .ucm-netcard__dnsrow { grid-column: 2; }
 .ucm-netcard__row { display: flex; align-items: center; gap: 1rem; }
 .ucm-netcard__row .ucm-muted { font-size: .75rem; }
 .ucm-netcard__sw { gap: .5rem; align-items: center; flex: 0 0 auto; }

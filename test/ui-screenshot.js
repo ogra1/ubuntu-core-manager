@@ -1626,6 +1626,7 @@ function mockFactoryJs() {
         addLabel: (() => { const b = document.querySelector('#netAddDevice'); return b ? b.textContent.trim() : null; })(),
         addIcon: (() => { const b = document.querySelector('#netAddDevice'); const i = b ? b.querySelector('i') : null; return i ? (i.className || '') : null; })(),
         addIconBg: (() => { const b = document.querySelector('#netAddDevice'); const i = b ? b.querySelector('i') : null; return i ? getComputedStyle(i).backgroundImage : null; })(),
+        addBtnDisabled: (() => { const b = document.querySelector('#netAddDevice'); return b ? b.disabled : null; })(),
         names: cards.map((c) => c.dataset.netcard),
         gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : null,
         twoUp: cards.length >= 2 && sameRow(rects[0], rects[1]) && widthsOk(rects[0], rects[1]),
@@ -1644,6 +1645,8 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: the Add button does not carry the + icon (class ' + JSON.stringify(gN.addIcon) + ') (round 58)');
     if (!gN.addIconBg || gN.addIconBg.indexOf('suru-add.svg') === -1)
       console.log('PAGE ERROR: the Add button + icon does not paint suru-add.svg (got ' + JSON.stringify(gN.addIconBg) + ') (round 58)');
+    if (gN.addBtnDisabled !== false)
+      console.log('PAGE ERROR: the "+ Add" button must be ENABLED when no add form is open (got ' + JSON.stringify(gN.addBtnDisabled) + ') (round 63)');
     if (JSON.stringify(gN.names) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0']))
       console.log('PAGE ERROR: the device cards are wrong (got ' + JSON.stringify(gN.names) + ', want eth0/enp3s0/wlp3s0/br0) (round 53)');
     if (gN.noEnp5 === false)
@@ -1834,6 +1837,14 @@ function mockFactoryJs() {
         cardW: card.getBoundingClientRect().width,
         keepsColumn: (card.getBoundingClientRect().width > document.querySelector('#netIfaceGrid').getBoundingClientRect().width * 0.4) && (card.getBoundingClientRect().width < document.querySelector('#netIfaceGrid').getBoundingClientRect().width * 0.55),
         formOverflow: (() => { const e = card.querySelector('.ucm-netcard__edit'); return e ? (e.scrollWidth > e.clientWidth + 1) : null; })(),
+        // round 63: the form's capped inputs must sit at ~HALF the card's
+        // content width (the 13rem cap — 26rem left fields looking stretched,
+        // even "255.255.255.255/24" filled less than half of them).
+        addInputW: (() => { const is = Array.from(card.querySelectorAll('.ucm-netcard__fg .p-form-validation__input')); const i = is.find((x) => x.getBoundingClientRect().width > 0) || is[0]; return i ? i.getBoundingClientRect().width : null; })(),
+        // round 64: the DNS chip row must sit ON its caption's line (the
+        // block-flow group wrapped it below "DNS servers").
+        dnsSideBySide: (() => { const fg = Array.from(card.querySelectorAll('.ucm-netcard__fg')).find((g) => (g.querySelector('.p-form__label') || {}).textContent && g.querySelector('.p-form__label').textContent.trim() === 'DNS servers'); if (!fg) return null; const l = fg.querySelector('.p-form__label').getBoundingClientRect(); const i = fg.querySelector('.ucm-netcard__dnsrow input').getBoundingClientRect(); return Math.abs((l.top + l.height / 2) - (i.top + i.height / 2)); })(),
+        dnsCenterDelta: (() => { const fg = Array.from(card.querySelectorAll('.ucm-netcard__fg')).find((g) => (g.querySelector('.p-form__label') || {}).textContent && g.querySelector('.p-form__label').textContent.trim() === 'DNS servers'); if (!fg) return null; const l = fg.querySelector('.p-form__label').getBoundingClientRect(); const i = fg.querySelector('.ucm-netcard__dnsrow input').getBoundingClientRect(); return Math.round(((l.top + l.height / 2) - (i.top + i.height / 2)) * 100) / 100; })(),
         // round 61: the footer buttons must not carry the bundle .p-button
         // margin-bottom phantom, and the space under them must be tight
         // (~20px) — the round-61 trim (phantom zero + the editing card hugging
@@ -1858,6 +1869,15 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the editing card should keep its own grid column, not span the row (editing ' + gNa.isEditing + ', cardW ' + gNa.cardW + ', gridW ' + gNa.gridW + ', want ~half) (round 59)');
         if (gNa.formOverflow)
             console.log('PAGE ERROR: the edit form overflows the half-width card (round 59)');
+        // band 196-274: 13rem (208px) nominal — below it a stray tighter cap,
+        // above it the 26rem-era ~416px input (which would fail the top of the
+        // band the moment the cap regresses).
+        if (gNa.addInputW != null && (gNa.addInputW < 196 || gNa.addInputW > 274))
+            console.log('PAGE ERROR: the edit form inputs are not capped at ~half the card content (got ' + Math.round(gNa.addInputW) + 'px for a ' + Math.round(gNa.cardW) + 'px card, want ~208 = 13rem) (round 63)');
+        if (gNa.dnsSideBySide != null && gNa.dnsSideBySide > 6)
+            console.log('PAGE ERROR: the DNS chip row wraps below its caption (vertical delta ' + Math.round(gNa.dnsSideBySide) + 'px, want side-by-side) (round 64)');
+        if (gNa.dnsCenterDelta != null && Math.abs(gNa.dnsCenterDelta) > 1)
+            console.log('PAGE ERROR: the DNS caption is not centred on its input (delta ' + gNa.dnsCenterDelta + 'px — the bundle label phantoms are back) (round 64)');
         if (gNa.footMb !== '0px')
             console.log('PAGE ERROR: the edit footer buttons still carry the bundle margin-bottom phantom (' + gNa.footMb + ', want 0px) (round 61)');
         if (gNa.btnGap != null && (gNa.btnGap > 26 || gNa.btnGap < 14))
@@ -1995,6 +2015,33 @@ function mockFactoryJs() {
       const fieldOf = (label) => Array.from(card.querySelectorAll('.ucm-netcard__fg label')).find((l) => l.textContent.trim() === label);
       const inpOf = (label) => { const f = fieldOf(label); return f && f.parentElement ? f.parentElement.querySelector('input') : null; };
       const s = inpOf('Network'), p = inpOf('Wi-Fi password');
+      // round 63: the wifi inputs carry the same ~half-card cap.
+      const ssidW = s ? s.getBoundingClientRect().width : null;
+      // round 64: every visible field input starts at the SAME x (the grid
+      // column) with the same caption->input gap — the block-flow group
+      // left them ragged and squeezed to their captions.
+      const visFgs = Array.from(card.querySelectorAll('.ucm-netcard__fg')).filter((g) => { const i = g.querySelector('.p-form-validation__input'); return i && i.getBoundingClientRect().width > 0; });
+      const lefts = visFgs.map((g) => Math.round(g.querySelector('.p-form-validation__input').getBoundingClientRect().left * 10) / 10);
+      const leftSpread = lefts.length > 1 ? Math.max.apply(null, lefts) - Math.min.apply(null, lefts) : 0;
+      // the GRID geometry itself: computed column sizes + the column gap,
+      // and how far each input's left edge is from (label.left + col1 + gap)
+      // — a text-edge "gap" would include the label column's trailing space
+      // for short captions (the normal laid-out look), so the invariant is
+      // the column math, not the ink distance.
+      const fgcs = visFgs[0] ? getComputedStyle(visFgs[0]) : null;
+      const cols = fgcs ? fgcs.gridTemplateColumns.split(' ').map((x) => parseFloat(x)) : null;
+      const colGapPx = fgcs ? parseFloat(fgcs.columnGap) : null;
+      const colErrs = visFgs.map((g) => {
+        const l = g.querySelector('.p-form__label').getBoundingClientRect();
+        const i = g.querySelector('.p-form-validation__input').getBoundingClientRect();
+        return Math.abs(i.left - (l.left + cols[0] + colGapPx));
+      });
+      const maxLabelW = Math.max.apply(null, visFgs.map((g) => g.querySelector('.p-form__label').getBoundingClientRect().width));
+      const centerDeltas = visFgs.map((g) => {
+        const l = g.querySelector('.p-form__label').getBoundingClientRect();
+        const i = g.querySelector('.p-form-validation__input').getBoundingClientRect();
+        return Math.round(((l.top + l.height / 2) - (i.top + i.height / 2)) * 100) / 100;
+      });
       // round 62: the NON-editing row-mate (br0) must NOT be padded out to
       // the taller wifi edit form's height — cards keep their own height.
       // Measured against br0's content-hugging height (temp align-self:start).
@@ -2004,6 +2051,14 @@ function mockFactoryJs() {
         ssid: s ? s.value : null, pw: p ? p.value : null, pwType: p ? p.type : null,
         hasHidden: !!Array.from(card.querySelectorAll('.p-switch')).find((l) => l.textContent.trim() === 'Hidden network'), hasMembers: !!card.querySelector('.ucm-netcard__members'),
         br0Stretch,
+        ssidInpW: ssidW,
+        leftSpread,
+        col1: cols ? cols[0] : null,
+        col2: cols ? cols[1] : null,
+        colGapPx,
+        colErrs,
+        maxLabelW,
+        centerDeltas,
       };
     });
     if (!gNd) console.log('PAGE ERROR: the wlp3s0 card did not enter the edit state (round 53)');
@@ -2015,6 +2070,26 @@ function mockFactoryJs() {
         if (gNd.hasMembers) console.log('PAGE ERROR: a Wi-Fi card must not carry the bridge member list (round 53)');
         if (gNd.br0Stretch != null && gNd.br0Stretch > 2)
             console.log('PAGE ERROR: the grid stretches the non-editing row-mate (br0) to the edit form\u2019s height (+' + gNd.br0Stretch + 'px) — cards must keep their own height (round 62)');
+        if (gNd.ssidInpW != null && (gNd.ssidInpW < 196 || gNd.ssidInpW > 274))
+            console.log('PAGE ERROR: the wifi form inputs are not capped at ~half the card content (got ' + Math.round(gNd.ssidInpW) + 'px, want ~208 = 13rem) (round 63)');
+        if (gNd.leftSpread > 1)
+            console.log('PAGE ERROR: the form inputs are not left-aligned (x spread ' + gNd.leftSpread + 'px — the grid must give every input the same x) (round 64)');
+        // the grid: [7rem label column | 13rem input column] with a .75rem
+        // gap — the inputs are not squeezed to their captions (round 64).
+        if (!(gNd.col1 >= 110 && gNd.col1 <= 114))
+            console.log('PAGE ERROR: the form grid label column is not 7rem (got ' + gNd.col1 + 'px — must be a real grid) (round 64)');
+        if (!(gNd.col2 >= 206 && gNd.col2 <= 210))
+            console.log('PAGE ERROR: the form grid input column is not 13rem (got ' + gNd.col2 + 'px) (round 64)');
+        if (!(gNd.colGapPx >= 11 && gNd.colGapPx <= 13))
+            console.log('PAGE ERROR: the form grid column-gap is not .75rem (got ' + gNd.colGapPx + 'px) (round 64)');
+        for (const err of (gNd.colErrs || []))
+            if (err > 1)
+                console.log('PAGE ERROR: a form input is not on its grid column (off by ' + err + 'px from label.left + col1 + gap) (round 64)');
+        if (gNd.maxLabelW > 111)
+            console.log('PAGE ERROR: the longest form label does not fit the fixed 7rem label column (' + Math.round(gNd.maxLabelW) + 'px > 112 — it would wrap) (round 64)');
+        for (const cd of (gNd.centerDeltas || []))
+            if (Math.abs(cd) > 1)
+                console.log('PAGE ERROR: a form caption is not centred on its input (delta ' + cd + 'px — the bundle label phantoms are back) (round 64)');
     }
     await page.click('[data-netcard="wlp3s0"] .ucm-netcard__foot--edit button.p-button--base');
     await wait(250);
@@ -2082,6 +2157,79 @@ function mockFactoryJs() {
     if (gNe.clears !== seedClears0 + 2)
       console.log('PAGE ERROR: the bridge apply (a 2nd successful edit) must clear the seed again (got ' + gNe.clears + ', want ' + (seedClears0 + 2) + ') (round 56)');
     await page.screenshot({ path: path.join(SHOTS, '9f-network-bridge.png') });
+
+    // (e2) round 63 — the "+ Add" button BLOCKS while an add (pending) card
+    //      is open: extra clicks must not pile up unconfigured device
+    //      entries. The button itself is disabled in that state (the house
+    //      greyed control), and a programmatic click is a no-op too.
+    await page.click('#netAddDevice');
+    await wait(250);
+    const gNe2a = await page.evaluate(() => {
+      const btn = document.querySelector('#netAddDevice');
+      return {
+        btnDisabled: btn ? btn.disabled : null,
+        btnOpacity: btn ? getComputedStyle(btn).opacity : null,
+        pendingNames: Array.from(document.querySelectorAll('[data-netcard]')).filter((c) => c.querySelector('.ucm-netcard__edit input[type="text"][placeholder*="e.g. br0"]')).map((c) => c.dataset.netcard),
+      };
+    });
+    if (gNe2a.btnDisabled !== true)
+        console.log('PAGE ERROR: the "+ Add" button must be DISABLED while a pending add card is open (got ' + JSON.stringify(gNe2a.btnDisabled) + ') (round 63)');
+    if (!/^0\.[3-4]/.test(String(gNe2a.btnOpacity)))
+        console.log('PAGE ERROR: the disabled "+ Add" button must read the house greyed opacity (~0.33, got ' + gNe2a.btnOpacity + ') (round 63)');
+    if (JSON.stringify(gNe2a.pendingNames) !== JSON.stringify(['br2']))
+        console.log('PAGE ERROR: the first Add must open exactly one pending card br2 (got ' + JSON.stringify(gNe2a.pendingNames) + ') (round 63)');
+    // extra clicks: the REAL click is absorbed by the disabled attribute
+    // (the UX layer), and a programmatic click that BYPASSES the attribute
+    // (un-disable first) must still be a no-op — the netAddBridge guard is
+    // the real mechanism, so this proves it independently of the attribute.
+    await page.click('#netAddDevice');
+    await page.evaluate(() => { const b = document.querySelector('#netAddDevice'); if (b) { b.disabled = false; b.click(); } });
+    await wait(350);
+    const gNe2b = await page.evaluate(() => ({
+      pendingNames: Array.from(document.querySelectorAll('[data-netcard]')).filter((c) => c.querySelector('.ucm-netcard__edit input[type="text"][placeholder*="e.g. br0"]')).map((c) => c.dataset.netcard),
+      cards: Array.from(document.querySelectorAll('[data-netcard]')).map((c) => c.dataset.netcard),
+    }));
+    if (JSON.stringify(gNe2b.pendingNames) !== JSON.stringify(['br2']))
+        console.log('PAGE ERROR: repeated "+ Add" clicks must NOT spawn more pending cards (got ' + JSON.stringify(gNe2b.pendingNames) + ') (round 63)');
+    if (JSON.stringify(gNe2b.cards) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0', 'br1', 'br2']))
+        console.log('PAGE ERROR: the card list must stay at the real devices + the (e) br1 + the single pending br2 (got ' + JSON.stringify(gNe2b.cards) + ') (round 63)');
+    // finishing the add form (Cancel) re-ENABLES the button — and the very
+    // next Add then works again (the block is per-pending-card, not sticky).
+    await page.click('[data-netcard="br2"] .ucm-netcard__foot--edit button.p-button--base');
+    await wait(250);
+    const gNe2c = await page.evaluate(() => {
+      const btn = document.querySelector('#netAddDevice');
+      return {
+        br2Gone: !document.querySelector('[data-netcard="br2"]'),
+        btnDisabled: btn ? btn.disabled : null,
+      };
+    });
+    if (!gNe2c.br2Gone) console.log('PAGE ERROR: cancelling the (e2) pending bridge must drop its card (round 63)');
+    if (gNe2c.btnDisabled !== false)
+        console.log('PAGE ERROR: the "+ Add" button must be ENABLED again once the pending card is cancelled (got ' + JSON.stringify(gNe2c.btnDisabled) + ') (round 63)');
+    await page.click('#netAddDevice');
+    await wait(250);
+    const gNe2d = await page.evaluate(() => ({
+      br2: !!document.querySelector('[data-netcard="br2"]'),
+      editing: (() => { const c = document.querySelector('[data-netcard="br2"]'); return c ? c.classList.contains('ucm-netcard--editing') : null; })(),
+    }));
+    if (!gNe2d.br2 || !gNe2d.editing)
+        console.log('PAGE ERROR: an Add immediately after cancelling must spawn the next pending card (br2, got ' + JSON.stringify(gNe2d) + ') (round 63)');
+    // leave NO pending card behind: cancel br2 too (the (g) drive then spawns
+    // br3 — the mock names sequentially and skips names already seen in the
+    // session, incl. the (e2) br2).
+    await page.click('[data-netcard="br2"] .ucm-netcard__foot--edit button.p-button--base');
+    await wait(250);
+    const gNe2e = await page.evaluate(() => ({
+      br2Gone: !document.querySelector('[data-netcard="br2"]'),
+      cards: Array.from(document.querySelectorAll('[data-netcard]')).map((c) => c.dataset.netcard),
+      addEnabled: (() => { const b = document.querySelector('#netAddDevice'); return b ? b.disabled === false : null; })(),
+    }));
+    if (!gNe2e.br2Gone) console.log('PAGE ERROR: cancelling the (e2) br2 must drop its card (round 63)');
+    if (JSON.stringify(gNe2e.cards) !== JSON.stringify(['eth0', 'enp3s0', 'wlp3s0', 'br0', 'br1']))
+        console.log('PAGE ERROR: after (e2) the list must be back to the real devices + the (e) br1 (got ' + JSON.stringify(gNe2e.cards) + ') (round 63)');
+    if (gNe2e.addEnabled !== true)
+        console.log('PAGE ERROR: the "+ Add" button must be enabled at the end of (e2) (got ' + JSON.stringify(gNe2e.addEnabled) + ') (round 63)');
 
     // (f) the UI validation rejects BEFORE the IPC: a bad address shows the
     //     "/prefix" toast and sends nothing (the puts delta proves it). The
@@ -2152,8 +2300,11 @@ function mockFactoryJs() {
     await wait(250);
 
     // (g) pending cancel: "Add" -> Cancel -> the pending card is gone.
-    //     After (e) br1 persists in the doc, so this 2nd add uniquely names
-    //     br2 (netUniqueBridgeName skips br0 + br1).
+    //     After (e) br1 persists in the doc, so this add uniquely names
+    //     br2 (netUniqueBridgeName skips br0 + br1 — the round-63 (e2) br2
+    //     was cancelled, which freed the name again).
+    const gNgpre = await page.evaluate(() => { const b = document.querySelector('#netAddDevice'); return b ? b.disabled === false : null; }); // round 63: enabled BEFORE the click (it disables while the pending card is open)
+    if (gNgpre !== true) console.log('PAGE ERROR: the "+ Add" button must be enabled again before a new add can work (got ' + JSON.stringify(gNgpre) + ') (round 63)');
     await page.click('#netAddDevice');
     await wait(250);
     const gNg0 = await page.evaluate(() => ({
