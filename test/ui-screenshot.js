@@ -1252,41 +1252,55 @@ function mockFactoryJs() {
       const row = view.querySelector('.row');
       const col = view.querySelector('.row > div');
       const cards = Array.from(col.children).filter((x) => x.classList.contains('p-card'));
+      const titles = cards.map((c) => c.querySelector('.p-card__header .p-heading--5').textContent.trim());
+      // Defensive: if the card SET changed (e.g. a card is missing), return
+      // early so the ORDER guard below fires as a clean PAGE ERROR instead of
+      // the geometry reads (which assume 3 cards, incl. cards[2] = Reset)
+      // throwing a FATAL.
+      if (cards.length < 3)
+        return { colClass: col.className, colSpan: getComputedStyle(col).gridColumnEnd, titles, short: true, cardW: 0, colW: 0, cardStyles: cards.map((c) => c.getAttribute('style')), rowW: 0, firstTop: 0, gap: 0, warnTopGap: 0 };
       const r1 = cards[0].getBoundingClientRect(), r2 = cards[1].getBoundingClientRect();
       const rr = row.getBoundingClientRect(), rc = col.getBoundingClientRect();
       const warn = document.querySelector('.ucm-reset__warn').getBoundingClientRect();
-      const hdr = cards[1].querySelector('.p-card__header').getBoundingClientRect();
+      // round B: the Reset card is the BOTTOM-most (the user's prepend rule) —
+      // it is cards[2] now, so its header is cards[2]'s.
+      const hdr = cards[2].querySelector('.p-card__header').getBoundingClientRect();
       return {
         colClass: col.className,
         colSpan: getComputedStyle(col).gridColumnEnd,
-        titles: [cards[0], cards[1]].map((c) => c.querySelector('.p-card__header .p-heading--5').textContent.trim()),
+        titles,
+        short: false,
         cardW: Math.round(r2.width * 10) / 10,
         colW: Math.round(rc.width * 10) / 10,
-        secondCardStyle: cards[1].getAttribute('style'),
+        cardStyles: cards.map((c) => c.getAttribute('style')),
         rowW: Math.round(rr.width * 10) / 10,
         firstTop: Math.round((r1.top - rr.top) * 100) / 100,
         gap: Math.round((r2.top - r1.bottom) * 100) / 100,
         warnTopGap: Math.round((warn.top - hdr.bottom) * 100) / 100,
       };
     });
-    if (JSON.stringify(sL.titles) !== JSON.stringify(['Session', 'Reset password']))
-        console.log('PAGE ERROR: the settings cards must be Session first, Reset password second (got ' + JSON.stringify(sL.titles) + ') (round 67)');
+    // round B: three cards, Appearance FIRST (new cards prepend), Reset
+    // password last (the least-used function stays at the bottom).
+    if (JSON.stringify(sL.titles) !== JSON.stringify(['Appearance', 'Session', 'Reset password']))
+        console.log('PAGE ERROR: the settings cards must be Appearance, Session, Reset password in that order (got ' + JSON.stringify(sL.titles) + ') (round B)');
     if (sL.colClass !== 'col-12' || sL.colSpan !== 'span 12')
         console.log('PAGE ERROR: the settings cards must span the full width (col-12, like the other pages) — got ' + JSON.stringify([sL.colClass, sL.colSpan]) + ' (round 67)');
-    if (!(sL.cardW >= sL.colW - 1 && sL.cardW > 800))
-        console.log('PAGE ERROR: a settings card does not fill the full-width column (card ' + sL.cardW + 'px vs col ' + sL.colW + 'px) (round 67)');
-    if (!(sL.firstTop >= 0 && sL.firstTop <= 6))
-        console.log('PAGE ERROR: the first settings card is not flush with the row top (off by ' + sL.firstTop + 'px — a stray margin-top on the first card?) (round 67)');
-    // round 67: the inter-card gap is the bundle .p-card margin-bottom
-    // (~24px) — the cards are plain block-flow .p-card siblings exactly like
-    // the rest of the app (the 1.2rem inline margin that used to live on the
-    // second card was redundant: margin collapse left the 24px in place).
-    if (!(sL.gap >= 22 && sL.gap <= 26))
-        console.log('PAGE ERROR: the settings cards are not the house .p-card-gap apart (gap ' + sL.gap + 'px, want ~24) (round 67)');
-    if (sL.secondCardStyle !== null)
-        console.log('PAGE ERROR: the settings cards must be plain .p-card siblings like every other page — the second card carries an inline style (' + JSON.stringify(sL.secondCardStyle) + ') (round 67)');
-    if (!(sL.warnTopGap >= 18 && sL.warnTopGap <= 26))
-        console.log('PAGE ERROR: the reset warning touches the header separator (gap ' + sL.warnTopGap + 'px, want ~19 = 1.2rem) (round 67)');
+    if (sL.cardStyles.some((st) => st !== null))
+        console.log('PAGE ERROR: the settings cards must be plain .p-card siblings like every other page — one carries an inline style (' + JSON.stringify(sL.cardStyles) + ') (round 67)');
+    if (!sL.short) {
+        if (!(sL.cardW >= sL.colW - 1 && sL.cardW > 800))
+            console.log('PAGE ERROR: a settings card does not fill the full-width column (card ' + sL.cardW + 'px vs col ' + sL.colW + 'px) (round 67)');
+        if (!(sL.firstTop >= 0 && sL.firstTop <= 6))
+            console.log('PAGE ERROR: the first settings card is not flush with the row top (off by ' + sL.firstTop + 'px — a stray margin-top on the first card?) (round 67)');
+        // round 67: the inter-card gap is the bundle .p-card margin-bottom
+        // (~24px) — the cards are plain block-flow .p-card siblings exactly like
+        // the rest of the app (the 1.2rem inline margin that used to live on the
+        // second card was redundant: margin collapse left the 24px in place).
+        if (!(sL.gap >= 22 && sL.gap <= 26))
+            console.log('PAGE ERROR: the settings cards are not the house .p-card-gap apart (gap ' + sL.gap + 'px, want ~24) (round 67)');
+        if (!(sL.warnTopGap >= 18 && sL.warnTopGap <= 26))
+            console.log('PAGE ERROR: the reset warning touches the header separator (gap ' + sL.warnTopGap + 'px, want ~19 = 1.2rem) (round 67)');
+    }
 
     // ---- 2c. round A: the appearance TOGGLE is live end-to-end. The default
     //      is LIGHT — this is also the light-regression proof (the whole light
@@ -1310,6 +1324,107 @@ function mockFactoryJs() {
     const aCalls = await page.evaluate(() => window.__mockCore.settings.__appearance());
     if (aCalls.value !== 'light' || aCalls.calls !== 2)
         console.log('PAGE ERROR: the appearance toggle did not round-trip through exactly two set calls (got ' + JSON.stringify(aCalls) + ') (round A)');
+
+    // ---- 2d. round B: the Appearance CARD — the Theme select drives the
+    //      theme through the real UI path (change -> core.settings
+    //      .setAppearance -> the pushed status flips <html>.is-dark). The
+    //      guard reads a BUNDLE surface (.p-card bg) to prove the theme
+    //      actually flipped, not just the class: light #fff -> dark #262626.
+    // round B: the card must EXIST — the drive reads #theme, so a missing
+    // card would FATAL the run; make it a clean PAGE ERROR instead.
+    const themePresent = await page.evaluate(() => !!document.querySelector('#theme'));
+    if (!themePresent) {
+        console.log('PAGE ERROR: the Appearance card / Theme select is missing from the settings view (round B)');
+    } else {
+        const aCard = await page.evaluate(() => {
+          const sel = document.querySelector('#theme');
+          const card = sel.closest('.p-card');
+          const opts = Array.from(sel.options).map((o) => o.value);
+          return {
+            cardTitle: card.querySelector('.p-card__header .p-heading--5').textContent.trim(),
+            rows: Array.from(card.querySelectorAll('dt')).map((d) => d.textContent.trim()),
+            opts,
+            selValue: sel.value,
+            selW: Math.round(sel.getBoundingClientRect().width * 10) / 10,
+            cardBg: getComputedStyle(card).backgroundColor,
+            isDark: document.documentElement.classList.contains('is-dark'),
+          };
+        });
+        if (aCard.cardTitle !== 'Appearance')
+            console.log('PAGE ERROR: the Appearance card title is wrong (got ' + JSON.stringify(aCard.cardTitle) + ') (round B)');
+        if (JSON.stringify(aCard.rows) !== JSON.stringify(['Theme']))
+            console.log('PAGE ERROR: the Appearance card must show ONLY the Theme row — got ' + JSON.stringify(aCard.rows) + ' (round B)');
+        if (JSON.stringify(aCard.opts) !== JSON.stringify(['light', 'dark']))
+            console.log('PAGE ERROR: the Theme select options are wrong (got ' + JSON.stringify(aCard.opts) + ', want light/dark) (round B)');
+        if (aCard.selValue !== 'light')
+            console.log('PAGE ERROR: the Theme select must default to the shipped appearance (light) — got ' + JSON.stringify(aCard.selValue) + ' (round B)');
+        if (aCard.selW < 100 || aCard.selW > 215)
+            console.log('PAGE ERROR: the Theme select is not compact (width ' + aCard.selW + 'px) (round B)');
+        if (aCard.isDark !== false || aCard.cardBg !== 'rgb(255, 255, 255)')
+            console.log('PAGE ERROR: in the default light appearance a .p-card must be white and <html> must not be .is-dark (got ' + JSON.stringify([aCard.cardBg, aCard.isDark]) + ') (round B)');
+
+        // CHANGE the theme to dark (a real select interaction): it must apply
+        // LIVE — the mock pref, the <html> class, the SELECT, and the bundle
+        // card surface all flip. (The __appearance calls counter is cumulative
+        // for the run — the round-A 2c proof already drove it — so assert a +1
+        // DELTA from a captured baseline, not an absolute.)
+        const aBase = await page.evaluate(() => window.__mockCore.settings.__appearance().calls);
+        await page.select('#theme', 'dark');
+        await wait(300);
+        const aDarkUi = await page.evaluate(() => {
+          const sel = document.querySelector('#theme');
+          const card = sel.closest('.p-card');
+          return {
+            mock: window.__mockCore.settings.__appearance(),
+            selValue: sel.value,
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: getComputedStyle(card).backgroundColor,
+          };
+        });
+        if (aDarkUi.mock.value !== 'dark' || aDarkUi.mock.calls !== aBase + 1)
+            console.log('PAGE ERROR: changing the Theme to dark did not send exactly one set call to the mock (base ' + aBase + ', got ' + JSON.stringify(aDarkUi.mock) + ') (round B)');
+        if (aDarkUi.isDark !== true)
+            console.log('PAGE ERROR: switching to dark must flip <html>.is-dark live (got ' + aDarkUi.isDark + ') (round B)');
+        if (aDarkUi.selValue !== 'dark')
+            console.log('PAGE ERROR: the Theme select must show "Dark" (got ' + JSON.stringify(aDarkUi.selValue) + ') (round B)');
+        if (aDarkUi.cardBg !== 'rgb(38, 38, 38)')
+            console.log('PAGE ERROR: the dark theme must flip the bundle .p-card surface to dark (#262626) — got ' + aDarkUi.cardBg + ' (round B)');
+        await page.screenshot({ path: path.join(SHOTS, '4c-settings-theme-dark.png'), fullPage: true });
+
+        // Leaving and re-entering the settings view: the persisted "dark" must
+        // still be applied, and loadSettings must CORRECT the select if it is
+        // stale. A fresh <select> shows its HTML default ('light') even though the
+        // theme is already dark (applyAuthPayload flips <html>.is-dark at boot), so
+        // simulate that stale state (set the DOM value to 'light' WITHOUT changing
+        // the applied theme), re-enter to trigger loadSettings, and assert the
+        // select is corrected back to the persisted 'dark'.
+        await page.click('.ucm-side a[data-view="dashboard"]');
+        await wait(200);
+        await page.evaluate(() => { document.querySelector('#theme').value = 'light'; }); // stale select
+        await page.click('.ucm-side a[data-view="settings"]');
+        await wait(300);
+        const aReload = await page.evaluate(() => ({
+            selValue: document.querySelector('#theme').value,
+            isDark: document.documentElement.classList.contains('is-dark'),
+        }));
+        if (aReload.selValue !== 'dark')
+            console.log('PAGE ERROR: re-entering settings must re-read the persisted "dark" into a stale select (got ' + JSON.stringify(aReload.selValue) + ') (round B)');
+        if (aReload.isDark !== true)
+            console.log('PAGE ERROR: the persisted "dark" must still be applied on re-entry (is-dark ' + aReload.isDark + ') (round B)');
+
+        // REVERT to light so the rest of the run (and the shots) reflect the
+        // shipped default.
+        await page.select('#theme', 'light');
+        await wait(300);
+        const aBackUi = await page.evaluate(() => ({
+            mock: window.__mockCore.settings.__appearance().value,
+            selValue: document.querySelector('#theme').value,
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: getComputedStyle(document.querySelector('#theme').closest('.p-card')).backgroundColor,
+        }));
+        if (aBackUi.mock !== 'light' || aBackUi.selValue !== 'light' || aBackUi.isDark !== false || aBackUi.cardBg !== 'rgb(255, 255, 255)')
+            console.log('PAGE ERROR: reverting the theme to light did not restore the chrome (got ' + JSON.stringify(aBackUi) + ') (round B)');
+    }
 
     // round 65 — the reset card de-wording + the round-64 grid idiom:
     //   caption "Reset password", no subtitle, the ONE-sentence warning,

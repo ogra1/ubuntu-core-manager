@@ -361,6 +361,23 @@
         <section class="ucm-view ucm-hidden" id="view-settings" data-view="settings">
             <div class="row">
                 <div class="col-12">
+                    <!-- round B: new cards PREPEND (the user's rule) — Reset
+                         password stays the bottom-most settings card. -->
+                    <div class="p-card">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Appearance</p></div>
+                        <dl class="ucm-kv">
+                            <div>
+                                <dt>Theme</dt>
+                                <dd>
+                                    <select id="theme" class="ucm-kv--select"
+                                            title="Color theme for the console — light or dark">
+                                        <option value="light">Light</option>
+                                        <option value="dark">Dark</option>
+                                    </select>
+                                </dd>
+                            </div>
+                        </dl>
+                    </div>
                     <div class="p-card">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Session</p></div>
                         <dl class="ucm-kv">

@@ -3091,16 +3091,29 @@ async function doResetPassword() {
  * timeoutMs to the chip). */
 async function loadSettings() {
     const sel = $('#lockTimeout');
-    if (!sel) return;
+    const themeSel = $('#theme');
+    if (!sel && !themeSel) return;
     try {
         const p = await core.auth.status();
-        // an explicit null (off) must stick; only a missing field falls back.
-        const t = (p && p.timeoutMs !== undefined) ? p.timeoutMs : state.timeoutMs;
-        state.timeoutMs = t;
-        sel.value = state.timeoutMs ? String(state.timeoutMs / 60000) : 'off';
-        updateLockChrome();
-        startSessionTick(); // sync the header chip to the pref (a persisted
-                            // "off" must show "active", not a stale countdown)
+        if (sel) {
+            // an explicit null (off) must stick; only a missing field falls back.
+            const t = (p && p.timeoutMs !== undefined) ? p.timeoutMs : state.timeoutMs;
+            state.timeoutMs = t;
+            sel.value = state.timeoutMs ? String(state.timeoutMs / 60000) : 'off';
+            updateLockChrome();
+            startSessionTick(); // sync the header chip to the pref (a persisted
+                                // "off" must show "active", not a stale countdown)
+        }
+        // round B: the Theme select must reflect the APPLIED appearance when the
+        // view is entered. On a fresh load the <select> shows its HTML default
+        // ('light') even though the theme is already dark (applyAuthPayload
+        // flipped <html>.is-dark at boot) — so read the pref from status and
+        // correct the select. (The <html> class itself is synced on every push;
+        // the SELECT is a control, so it needs the view-entry sync.)
+        if (themeSel && p && p.appearance !== undefined) {
+            state.appearance = p.appearance;
+            themeSel.value = p.appearance;
+        }
     } catch { /* keep the current value on read failure */ }
 }
 async function setLockTimeout(value) {
@@ -3116,6 +3129,27 @@ async function setLockTimeout(value) {
         sel.value = value;
         updateLockChrome();
         startSessionTick(); // the countdown (or "active") reflects the new timeout
+    } catch (e) {
+        toastErr(e);
+    } finally {
+        sel.disabled = false;
+    }
+}
+/* round B: the Appearance card's Theme select. Like the lock timeout it is
+ * NOT form-gated — a change sends immediately and applies LIVE: main
+ * persists the pref and pushes the status, and applyAuthPayload flips
+ * <html>.is-dark (the vanilla 4.x theme class). */
+async function setAppearance(value) {
+    const sel = $('#theme');
+    if (!sel) return;
+    // (a change event only fires for a REAL change — the select's value is
+    // already `value` here — so no same-value guard is needed)
+    sel.disabled = true;
+    try {
+        const p = await core.settings.setAppearance(value);
+        sel.value = p && p.value ? p.value : value;
+        // the pushed status payload (real IPC or the QA mock) updates
+        // state.appearance and flips <html>.is-dark via applyAuthPayload.
     } catch (e) {
         toastErr(e);
     } finally {
@@ -3172,6 +3206,13 @@ function wire() {
 
     // settings: the inactivity lock timeout (round 66) — applies live
     $('#lockTimeout').addEventListener('change', (e) => setLockTimeout(e.target.value));
+    // settings: the theme (round B) — applies live (the push flips <html>.is-dark).
+    // Null-guarded: wire() runs once at boot; if the Appearance card is ever
+    // absent the select is null and the bare .addEventListener would throw and
+    // abort the whole wire (the round-53 "guard the mechanism, not the UX"
+    // idiom — a missing control must not take down unrelated listeners).
+    const themeSel = $('#theme');
+    if (themeSel) themeSel.addEventListener('change', (e) => setAppearance(e.target.value));
 
     // dashboard
 
