@@ -360,7 +360,30 @@
 <!-- ================= SETTINGS VIEW ================= -->
         <section class="ucm-view ucm-hidden" id="view-settings" data-view="settings">
             <div class="row">
-                <div class="col-8">
+                <div class="col-12">
+                    <div class="p-card">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Session</p></div>
+                        <dl class="ucm-kv">
+                            <!-- round 66: the inactivity lock is configurable
+                                 (5/10/15/30 min, 1 hour, or off). The old
+                                 "Gate" row is gone — it just restated that the
+                                 console is password-gated, which is obvious. -->
+                            <div>
+                                <dt>Inactivity lock</dt>
+                                <dd>
+                                    <select id="lockTimeout" class="ucm-kv--select"
+                                            title="How long the console stays unlocked after the last activity before it locks itself">
+                                        <option value="5">5 minutes</option>
+                                        <option value="10">10 minutes</option>
+                                        <option value="15">15 minutes</option>
+                                        <option value="30">30 minutes</option>
+                                        <option value="60">1 hour</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </dd>
+                            </div>
+                        </dl>
+                    </div>
                     <div class="p-card">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Reset password</p></div>
                         <form id="resetForm" class="ucm-reset" novalidate>
@@ -385,29 +408,6 @@
                                 Wipe password &amp; return to setup
                             </button>
                         </form>
-                    </div>
-                    <div class="p-card" style="margin-top:1.2rem;">
-                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Session</p></div>
-                        <dl class="ucm-kv">
-                            <!-- round 66: the inactivity lock is configurable
-                                 (5/10/15/30 min, 1 hour, or off). The old
-                                 "Gate" row is gone — it just restated that the
-                                 console is password-gated, which is obvious. -->
-                            <div>
-                                <dt>Inactivity lock</dt>
-                                <dd>
-                                    <select id="lockTimeout" class="ucm-kv--select"
-                                            title="How long the console stays unlocked after the last activity before it locks itself">
-                                        <option value="5">5 minutes</option>
-                                        <option value="10">10 minutes</option>
-                                        <option value="15">15 minutes</option>
-                                        <option value="30">30 minutes</option>
-                                        <option value="60">1 hour</option>
-                                        <option value="off">Off</option>
-                                    </select>
-                                </dd>
-                            </div>
-                        </dl>
                     </div>
                 </div>
             </div>

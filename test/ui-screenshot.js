@@ -1222,6 +1222,50 @@ function mockFactoryJs() {
     await wait(500);
     await page.screenshot({ path: path.join(SHOTS, '4-settings-reset.png'), fullPage: true });
 
+    // round 67 — the two settings cards SPAN the full page width (col-12,
+    // like the cards on every other page) and the SESSION card comes FIRST;
+    // the reset warning no longer touches the header separator.
+    const sL = await page.evaluate(() => {
+      const view = document.querySelector('#view-settings');
+      const row = view.querySelector('.row');
+      const col = view.querySelector('.row > div');
+      const cards = Array.from(col.children).filter((x) => x.classList.contains('p-card'));
+      const r1 = cards[0].getBoundingClientRect(), r2 = cards[1].getBoundingClientRect();
+      const rr = row.getBoundingClientRect(), rc = col.getBoundingClientRect();
+      const warn = document.querySelector('.ucm-reset__warn').getBoundingClientRect();
+      const hdr = cards[1].querySelector('.p-card__header').getBoundingClientRect();
+      return {
+        colClass: col.className,
+        colSpan: getComputedStyle(col).gridColumnEnd,
+        titles: [cards[0], cards[1]].map((c) => c.querySelector('.p-card__header .p-heading--5').textContent.trim()),
+        cardW: Math.round(r2.width * 10) / 10,
+        colW: Math.round(rc.width * 10) / 10,
+        secondCardStyle: cards[1].getAttribute('style'),
+        rowW: Math.round(rr.width * 10) / 10,
+        firstTop: Math.round((r1.top - rr.top) * 100) / 100,
+        gap: Math.round((r2.top - r1.bottom) * 100) / 100,
+        warnTopGap: Math.round((warn.top - hdr.bottom) * 100) / 100,
+      };
+    });
+    if (JSON.stringify(sL.titles) !== JSON.stringify(['Session', 'Reset password']))
+        console.log('PAGE ERROR: the settings cards must be Session first, Reset password second (got ' + JSON.stringify(sL.titles) + ') (round 67)');
+    if (sL.colClass !== 'col-12' || sL.colSpan !== 'span 12')
+        console.log('PAGE ERROR: the settings cards must span the full width (col-12, like the other pages) — got ' + JSON.stringify([sL.colClass, sL.colSpan]) + ' (round 67)');
+    if (!(sL.cardW >= sL.colW - 1 && sL.cardW > 800))
+        console.log('PAGE ERROR: a settings card does not fill the full-width column (card ' + sL.cardW + 'px vs col ' + sL.colW + 'px) (round 67)');
+    if (!(sL.firstTop >= 0 && sL.firstTop <= 6))
+        console.log('PAGE ERROR: the first settings card is not flush with the row top (off by ' + sL.firstTop + 'px — a stray margin-top on the first card?) (round 67)');
+    // round 67: the inter-card gap is the bundle .p-card margin-bottom
+    // (~24px) — the cards are plain block-flow .p-card siblings exactly like
+    // the rest of the app (the 1.2rem inline margin that used to live on the
+    // second card was redundant: margin collapse left the 24px in place).
+    if (!(sL.gap >= 22 && sL.gap <= 26))
+        console.log('PAGE ERROR: the settings cards are not the house .p-card-gap apart (gap ' + sL.gap + 'px, want ~24) (round 67)');
+    if (sL.secondCardStyle !== null)
+        console.log('PAGE ERROR: the settings cards must be plain .p-card siblings like every other page — the second card carries an inline style (' + JSON.stringify(sL.secondCardStyle) + ') (round 67)');
+    if (!(sL.warnTopGap >= 18 && sL.warnTopGap <= 26))
+        console.log('PAGE ERROR: the reset warning touches the header separator (gap ' + sL.warnTopGap + 'px, want ~19 = 1.2rem) (round 67)');
+
     // round 65 — the reset card de-wording + the round-64 grid idiom:
     //   caption "Reset password", no subtitle, the ONE-sentence warning,
     //   and [caption | input] rows with both inputs at the SAME x.

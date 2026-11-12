@@ -741,7 +741,10 @@ html, body {
     background: rgba(249,155,17,.10);
     border: 1px solid rgba(249,155,17,.45);
     border-radius: .25rem;
-    padding: .8rem 1rem; margin: 0 0 1.2rem;
+    padding: .8rem 1rem; margin: 1.2rem 0 1.2rem;
+    /* round 67: the 1.2rem TOP margin lifts the warning off the card
+       header separator (the .p-card__header only pads BELOW its border,
+       so a 0 top margin made the first warning line touch it). */
 }
 .ucm-reset__warn .p-icon {
     /* the warning is the app's ONE sentence now — let it read on its
