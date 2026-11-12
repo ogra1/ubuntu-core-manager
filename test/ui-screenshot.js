@@ -257,11 +257,17 @@ function mockFactoryJs() {
            15 min; 'off' = no auto-lock (timeoutMs null, no expiresAt). */
         let __lockTimeout = '15';
         let __lockCalls = 0;
+        /* round A: the appearance (light/dark) — mock of main.js appearancePref
+           + setAppearance. Default 'light' = the shipped default (the light
+           suite is the light-regression proof). */
+        let __appearance = 'light';
+        let __appearanceCalls = 0;
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
             expiresAt: (localAuthed && __lockTimeout !== 'off') ? Date.now() + Number(__lockTimeout) * 60000 : null,
             timeoutMs: (__lockTimeout === 'off') ? null : Number(__lockTimeout) * 60000,
+            appearance: __appearance,
             storeAuthenticated: false,
             storeUsername: null,
         });
@@ -322,6 +328,22 @@ function mockFactoryJs() {
                     return p;
                 },
                 onStatusChanged(cb) { __SUBS.push(cb); return () => { const i = __SUBS.indexOf(cb); if (i >= 0) __SUBS.splice(i, 1); }; },
+            },
+            // round A: the appearance (light/dark). Mock of main.js
+            // setAppearance + pushAuthStatus. Pushing a fresh status payload
+            // drives the renderer's applyAuthPayload through the SAME path the
+            // real IPC uses (no UI card in this round — round B).
+            settings: {
+                async setAppearance(v) {
+                    const allowed = ['light', 'dark'];
+                    if (!allowed.includes(v)) throw new Error('invalid appearance: ' + v);
+                    __appearanceCalls += 1;
+                    __appearance = v;
+                    const p = status();
+                    __SUBS.forEach((f) => { try { f(p); } catch (e) {} });
+                    return { value: v, allowed, default: 'light' };
+                },
+                __appearance: () => ({ value: __appearance, calls: __appearanceCalls }),
             },
             store: {
                 // Backend-only (not used by the UI anymore); kept so the
@@ -1265,6 +1287,29 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the settings cards must be plain .p-card siblings like every other page — the second card carries an inline style (' + JSON.stringify(sL.secondCardStyle) + ') (round 67)');
     if (!(sL.warnTopGap >= 18 && sL.warnTopGap <= 26))
         console.log('PAGE ERROR: the reset warning touches the header separator (gap ' + sL.warnTopGap + 'px, want ~19 = 1.2rem) (round 67)');
+
+    // ---- 2c. round A: the appearance TOGGLE is live end-to-end. The default
+    //      is LIGHT — this is also the light-regression proof (the whole light
+    //      suite runs on this default and must stay green). Driving
+    //      settings.setAppearance flips <html>.is-dark through the SAME
+    //      status-payload path the real IPC push uses (no UI card in this
+    //      round — that is round B).
+    const aLight = await page.evaluate(() => document.documentElement.classList.contains('is-dark'));
+    if (aLight !== false)
+        console.log('PAGE ERROR: the default appearance must be light (<html> must NOT be .is-dark at load) (round A)');
+    await page.evaluate(() => window.__mockCore.settings.setAppearance('dark'));
+    await wait(250);
+    const aDark = await page.evaluate(() => document.documentElement.classList.contains('is-dark'));
+    if (aDark !== true)
+        console.log('PAGE ERROR: setting the appearance to "dark" must flip <html>.is-dark (got ' + aDark + ') (round A)');
+    await page.evaluate(() => window.__mockCore.settings.setAppearance('light'));
+    await wait(250);
+    const aBack = await page.evaluate(() => document.documentElement.classList.contains('is-dark'));
+    if (aBack !== false)
+        console.log('PAGE ERROR: reverting the appearance to "light" must remove <html>.is-dark (got ' + aBack + ') (round A)');
+    const aCalls = await page.evaluate(() => window.__mockCore.settings.__appearance());
+    if (aCalls.value !== 'light' || aCalls.calls !== 2)
+        console.log('PAGE ERROR: the appearance toggle did not round-trip through exactly two set calls (got ' + JSON.stringify(aCalls) + ') (round A)');
 
     // round 65 — the reset card de-wording + the round-64 grid idiom:
     //   caption "Reset password", no subtitle, the ONE-sentence warning,

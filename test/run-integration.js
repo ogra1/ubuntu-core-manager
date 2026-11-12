@@ -577,6 +577,33 @@ function ok(name, cond, extra = '') {
                 } else {
                     ok('auth:set-lock-timeout handler registered', false);
                 }
+                // round A: the appearance (light/dark) — a console-privileged
+                // setting. Live: setAppearance persists and the new payload
+                // (appearance) is pushed to the renderer via pushAuthStatus.
+                if (handlers['settings:set-appearance']) {
+                    const rA = await new Promise((res) => handlers['settings:set-appearance'](null, 'dark').then(res));
+                    ok('settings:set-appearance("dark") returns the appearance payload',
+                        rA.ok === true && rA.result.value === 'dark' && rA.result.default === 'light', JSON.stringify(rA));
+                    ok('the appearance is LIVE in the status payload (dark)',
+                        mw.authStatus().appearance === 'dark', JSON.stringify(mw.authStatus()));
+                    const lastA = sends.slice().reverse().find((x) => x.ch === 'auth-status-changed');
+                    ok('setting the appearance PUSHES the new payload to the renderer',
+                        !!lastA && lastA.p && lastA.p.appearance === 'dark', JSON.stringify(lastA && lastA.p));
+                    const rBadA = await new Promise((res) => handlers['settings:set-appearance'](null, 'blue').then(res));
+                    ok('settings:set-appearance rejects an unknown value (blue is not offered)',
+                        rBadA.ok === false && /invalid appearance/.test(rBadA.error), JSON.stringify(rBadA));
+                    const rBadA2 = await new Promise((res) => handlers['settings:set-appearance'](null, 'DARK').then(res));
+                    ok('settings:set-appearance rejects wrong-case (DARK)',
+                        rBadA2.ok === false && /invalid appearance/.test(rBadA2.error), JSON.stringify(rBadA2));
+                    ok('a rejected set does NOT change the appearance (still dark)',
+                        mw.authStatus().appearance === 'dark', JSON.stringify(mw.authStatus()));
+                    // revert to the shipped default so later sections see light
+                    await new Promise((res) => handlers['settings:set-appearance'](null, 'light').then(res));
+                    ok('the appearance reverts to the shipped default (light)',
+                        mw.authStatus().appearance === 'light', JSON.stringify(mw.authStatus()));
+                } else {
+                    ok('settings:set-appearance handler registered', false);
+                }
                 // Guarded local-admin reset: console-privileged (active session),
                 // re-confirms the CURRENT password, wipes $SNAP_COMMON/admin.cred
                 // -> next launch is first-boot setup again.
@@ -1246,6 +1273,38 @@ function ok(name, cond, extra = '') {
             ok('setLockTimeout rejects ' + JSON.stringify(bad), threw && m.getLockTimeout().value === 'off');
         }
         delete process.env.UCM_LOCK_TIMEOUT_PREF;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    console.log('\n[17] appearance (light/dark theme, round A)');
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-appearance-'));
+        const PREF = path.join(dir, 'appearance.pref');
+        process.env.UCM_APPEARANCE_PREF = PREF;
+        const readPref = () => { try { return fs.readFileSync(PREF, 'utf8'); } catch { return null; } };
+        // no pref -> the shipped default (light)
+        let ga = m.getAppearance();
+        ok('no pref file -> the shipped default (light)',
+            ga.value === 'light' && ga.default === 'light', JSON.stringify(ga));
+        ok('the allowed set is light/dark',
+            JSON.stringify(m.APPEARANCES) === JSON.stringify(['light', 'dark'])
+            && m.DEFAULT_APPEARANCE === 'light', JSON.stringify(m.APPEARANCES));
+        // set to dark -> persisted + reflected
+        const rDark = m.setAppearance('dark');
+        ok('setAppearance("dark") persists + reflects',
+            rDark.value === 'dark' && readPref() === 'dark', JSON.stringify(rDark));
+        ok('getAppearance reads the stored pref (dark)', m.getAppearance().value === 'dark', '');
+        // set back to light
+        const rLight = m.setAppearance('light');
+        ok('setAppearance("light") persists + reflects',
+            rLight.value === 'light' && readPref() === 'light', JSON.stringify(rLight));
+        // invalid values throw and leave the pref untouched
+        for (const bad of ['blue', '', 'DARK', 'dark ', 1, null]) {
+            let threw = false;
+            try { m.setAppearance(bad); } catch (e) { threw = /invalid appearance/.test(e.message); }
+            ok('setAppearance rejects ' + JSON.stringify(bad), threw && m.getAppearance().value === 'light');
+        }
+        delete process.env.UCM_APPEARANCE_PREF;
         fs.rmSync(dir, { recursive: true, force: true });
     }
 

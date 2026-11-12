@@ -119,6 +119,9 @@ const state = {
     // no auto-lock). The default 15 min only seeds the FIRST paint before
     // core.auth.status() lands the real pref.
     timeoutMs: 900000,
+    // round A: the appearance (light/dark). The default 'light' seeds the
+    // FIRST paint before core.auth.status() lands the real pref.
+    appearance: 'light',
     // optional store auth
     storeAuthenticated: false,
     storeUsername: null,
@@ -347,6 +350,13 @@ function applyAuthPayload(p) {
     // (undefined) falls back to the current value. (`!= null` was wrong: it
     // kept the stale default and hid a persisted "off" on load.)
     state.timeoutMs = p.timeoutMs !== undefined ? p.timeoutMs : state.timeoutMs;
+    // round A: the appearance rides the status payload. An explicit value
+    // (including 'light') must stick; only an ABSENT field (undefined) falls
+    // back — the same !==undefined contract as timeoutMs. Flipping
+    // <html>.is-dark is the ONLY theme action (vanilla 4.x themes the bundle;
+    // the app's own chrome dark pass is a separate feature).
+    state.appearance = p.appearance !== undefined ? p.appearance : state.appearance;
+    document.documentElement.classList.toggle('is-dark', state.appearance === 'dark');
     state.storeAuthenticated = !!p.storeAuthenticated;
     state.storeUsername = p.storeUsername || null;
     updateLockChrome();

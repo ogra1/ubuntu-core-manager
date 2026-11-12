@@ -399,6 +399,9 @@ function statusPayload() {
         // round 66: the CONFIGURABLE lock timeout (null = "off" — no auto-lock,
         // the UI chip then shows "active" instead of a countdown).
         timeoutMs: lockTimeoutMs(lockTimeoutPref),
+        // round A: the appearance pref ('light' | 'dark') — the renderer maps
+        // 'dark' to the vanilla <html>.is-dark class (live theme switch).
+        appearance: appearancePref,
         // store (optional)
         storeAuthenticated: session.storeAuthenticated,
         storeUsername: session.storeAuthenticated ? session.storeUsername : null,
@@ -1572,6 +1575,56 @@ function setLockTimeout(v) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 8d. Appearance (light/dark theme, round A)
+ * ------------------------------------------------------------------ *
+ * The app's offline preference for a dark theme. Like the lock timeout
+ * (8c) it lives in $SNAP_COMMON (console-privileged, no new snap plug)
+ * and is LIVE: setAppearance persists and the new value flows to the
+ * renderer through statusPayload (pushed on set). The renderer maps
+ * 'dark' -> <html>.is-dark (the vanilla-framework 4.x theme class; the
+ * vendored bundle already carries the compiled dark token set). No UI in
+ * this round — round B adds the Appearance card + toggle.
+ */
+const APPEARANCES = ['light', 'dark'];
+const DEFAULT_APPEARANCE = 'light';
+
+function appearancePrefPath() {
+    return process.env.UCM_APPEARANCE_PREF || (stateDir() ? path.join(stateDir(), 'appearance.pref') : null);
+}
+function appearancePrefRead() {
+    const p = appearancePrefPath();
+    if (!p) return DEFAULT_APPEARANCE;
+    try {
+        const v = fs.readFileSync(p, 'utf8').trim();
+        return APPEARANCES.includes(v) ? v : DEFAULT_APPEARANCE;
+    } catch { return DEFAULT_APPEARANCE; }
+}
+function appearancePrefWrite(v) {
+    const p = appearancePrefPath();
+    if (!p) return; // dev mode (no state dir) — nothing durable
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, v, { mode: 0o600 });
+}
+// the CURRENT pref — read once at module load (before any session).
+let appearancePref = appearancePrefRead();
+function getAppearance() {
+    return { value: appearancePref, allowed: APPEARANCES.slice(), default: DEFAULT_APPEARANCE };
+}
+/**
+ * Set the appearance ('light' | 'dark'). Throws on an unknown value
+ * (nothing is written). Persists the pref; the new value becomes visible
+ * to the renderer via the status payload (the caller pushes it).
+ */
+function setAppearance(v) {
+    if (typeof v !== 'string' || !APPEARANCES.includes(v)) {
+        throw new Error('invalid appearance: ' + JSON.stringify(v) + ' (allowed: ' + APPEARANCES.join(', ') + ')');
+    }
+    appearancePref = v;
+    appearancePrefWrite(v);
+    return getAppearance();
+}
+
+/* ------------------------------------------------------------------ *
  * 9. Interfaces (plug/slot control)
  * ------------------------------------------------------------------ */
 
@@ -1837,6 +1890,8 @@ const api = {
     createLocalPassword, loginLocal, logoutLocal, resetLocalPassword, authStatus, detectInitialized,
     // round 66: the configurable inactivity lock timeout
     getLockTimeout, setLockTimeout, LOCK_TIMEOUTS, DEFAULT_LOCK_TIMEOUT,
+    // round A: appearance (light/dark)
+    getAppearance, setAppearance, APPEARANCES, DEFAULT_APPEARANCE,
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
@@ -2091,6 +2146,11 @@ function initElectron() {
     // setLockTimeout re-arms the active session's watchdog, and the new
     // payload (timeoutMs) flows through pushAuthStatus to the UI chip.
     ipcMain.handle('auth:set-lock-timeout', guard((value) => { requireAuth(); const p = setLockTimeout(value); pushAuthStatus(); return p; }));
+    // round A: the appearance (light/dark). A console-privileged setting like
+    // timesync — it does not touch the gate. Live: setAppearance persists and
+    // the new payload (appearance) flows through pushAuthStatus to the
+    // renderer, which flips <html>.is-dark.
+    ipcMain.handle('settings:set-appearance', guard((value) => { requireAuth(); const p = setAppearance(value); pushAuthStatus(); return p; }));
     // Activity beacon (mouse/keyboard/wheel from the UI): re-arm resets the real
     // lock clock to a full 15 minutes. Crucially we ALSO push the fresh expiresAt
     // to the renderer — the header pill is a local countdown from the last received

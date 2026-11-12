@@ -67,7 +67,7 @@ const invoke = (channel) => (...args) =>
 const api = Object.freeze({
     // ---- local admin gate (the UI lock screen; fully offline) -------
     // status payload: { initialized, authenticated, expiresAt, timeoutMs,
-    //                   storeAuthenticated, storeUsername }
+    //                   appearance, storeAuthenticated, storeUsername }
     auth: Object.freeze({
         status: invoke('auth:status'),           // () => status
         create: invoke('auth:create'),           // (password) => status  (first boot only)
@@ -92,6 +92,16 @@ const api = Object.freeze({
             ipcRenderer.on('auth-status-changed', listener);
             return () => ipcRenderer.removeListener('auth-status-changed', listener);
         },
+    }),
+
+    // ---- appearance (light/dark theme; round A) --------------------
+    // Console-privileged (auth-required) setting, persisted in $SNAP_COMMON
+    // (no new snap plug). 'dark' -> the renderer adds <html>.is-dark (the
+    // vanilla 4.x theme class; the vendored bundle already carries the
+    // compiled dark token set). The current value also rides the auth
+    // status payload (appearance).
+    settings: Object.freeze({
+        setAppearance: invoke('settings:set-appearance'),  // (value) => {value,allowed,default}
     }),
 
     // ---- optional STORE login (snapd /v2/login; needs network) ------
