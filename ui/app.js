@@ -3112,7 +3112,11 @@ async function loadSettings() {
         // the SELECT is a control, so it needs the view-entry sync.)
         if (themeSel && p && p.appearance !== undefined) {
             state.appearance = p.appearance;
-            themeSel.value = p.appearance;
+            // round C: the control is a switch — sync its CHECKED state (the
+            // <html>.is-dark class itself is synced on every push via
+            // applyAuthPayload; the switch is a control, so it needs the
+            // view-entry sync to show the persisted value).
+            themeSel.checked = (p.appearance === 'dark');
         }
     } catch { /* keep the current value on read failure */ }
 }
@@ -3139,21 +3143,29 @@ async function setLockTimeout(value) {
  * NOT form-gated — a change sends immediately and applies LIVE: main
  * persists the pref and pushes the status, and applyAuthPayload flips
  * <html>.is-dark (the vanilla 4.x theme class). */
+// round C: the Theme control is a p-switch toggle (off = light, on = dark),
+// not a pulldown. The switch's checked state mirrors the appearance.
+function themeSwitchChecked() {
+    const sw = $('#theme');
+    return sw ? !!sw.checked : false;
+}
 async function setAppearance(value) {
-    const sel = $('#theme');
-    if (!sel) return;
-    // (a change event only fires for a REAL change — the select's value is
-    // already `value` here — so no same-value guard is needed)
-    sel.disabled = true;
+    const sw = $('#theme');
+    if (!sw) return;
+    // (a change event only fires for a REAL change — the switch's checked
+    // state is already the new value here — so no same-value guard is needed)
+    sw.disabled = true;
     try {
         const p = await core.settings.setAppearance(value);
-        sel.value = p && p.value ? p.value : value;
         // the pushed status payload (real IPC or the QA mock) updates
         // state.appearance and flips <html>.is-dark via applyAuthPayload.
+        // The switch's checked state is re-synced from state.appearance on
+        // every load (loadSettings) — here we trust the change we just made.
+        sw.checked = (p && p.value ? p.value : value) === 'dark';
     } catch (e) {
         toastErr(e);
     } finally {
-        sel.disabled = false;
+        sw.disabled = false;
     }
 }
 
@@ -3206,13 +3218,14 @@ function wire() {
 
     // settings: the inactivity lock timeout (round 66) — applies live
     $('#lockTimeout').addEventListener('change', (e) => setLockTimeout(e.target.value));
-    // settings: the theme (round B) — applies live (the push flips <html>.is-dark).
+    // settings: the theme (round C) — a p-switch toggle (off=light, on=dark),
+    // applies live (the push flips <html>.is-dark).
     // Null-guarded: wire() runs once at boot; if the Appearance card is ever
-    // absent the select is null and the bare .addEventListener would throw and
-    // abort the whole wire (the round-53 "guard the mechanism, not the UX"
-    // idiom — a missing control must not take down unrelated listeners).
-    const themeSel = $('#theme');
-    if (themeSel) themeSel.addEventListener('change', (e) => setAppearance(e.target.value));
+    // absent the switch is null and the bare .addEventListener would throw and
+    // abort the whole wire (a missing control must not take down unrelated
+    // listeners).
+    const themeSw = $('#theme');
+    if (themeSw) themeSw.addEventListener('change', (e) => setAppearance(e.target.checked ? 'dark' : 'light'));
 
     // dashboard
 

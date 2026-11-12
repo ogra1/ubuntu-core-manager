@@ -375,6 +375,58 @@ html, body {
     padding-top: .28rem; padding-bottom: .28rem;
     font-size: .95rem;
 }
+/* round C: the Appearance card's Theme TOGGLE — the General card's 48a orange
+   p-switch re-tint (off = light/grey, on = dark/orange). Sits in the .ucm-kv
+   dd, so margin 0 (the bundle switch carries no margin; the kv row provides
+   the spacing). */
+.ucm-theme__sw { display: inline-flex; margin: 0; }
+.ucm-theme__sw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
+.ucm-theme__sw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
+.ucm-theme__sw .p-switch__slider { background: #e0e0e0; }
+
+/* ==========================================================================
+   DARK SURFACES (round C) — the app's OWN .ucm-* chrome, scoped to .is-dark
+   (the vanilla 4.x theme class). The BUNDLE .p-* surfaces flip on their own;
+   these cover the light-tuned app chrome that was built for a white page.
+   Purely ADDITIVE — light mode (no .is-dark) is byte-for-byte untouched.
+   Palette: Yaru-dark (#111 page, #262626 elevated, #333 borders, #f7f7f7 text).
+   ========================================================================== */
+.is-dark .ucm-main,
+.is-dark .ucm-view { background: #111; }
+/* the base text color is set on html/body as var(--ucm-grey-dark) (near-black)
+   and INHERITED by the .ucm-* chrome. .is-dark IS the <html> element, so
+   flipping the VARIABLE here re-tints the whole #111 family at once: the base
+   body text and every element that inherits it (shell, view, toasts, the
+   stat/cpu/netgraph "now" values, chip values). It is used ONLY as a text
+   color (never a bg/border), so flipping it has no surface side-effects. */
+.is-dark { --ucm-grey-dark: #f2f2f2; }
+.is-dark .ucm-topbar { background: #1a1a1a; border-bottom-color: #333; }
+.is-dark .ucm-stat { background: #262626; border-color: #333; }
+.is-dark .ucm-deploy { background: #262626; border-color: #333; }
+.is-dark .ucm-session-chip { background: #2a2a2a; border-color: #3a3a3a; color: #d8d8d8; }
+.is-dark .ucm-brand__logo { background: #262626; }
+.is-dark .ucm-brand__logo .p-icon { color: #fff; }
+/* the explicitly-mid-grey text carriers (labels / hints / counts / captions)
+   that the inherited flip does not reach */
+.is-dark .ucm-stat__label,
+.is-dark .ucm-stat__hint,
+.is-dark .ucm-datadisk__k,
+.is-dark .ucm-datadisk__legend,
+.is-dark .ucm-netgraph__label,
+.is-dark .ucm-gen__fieldlabel,
+.is-dark .ucm-iface-count,
+.is-dark .ucm-netcard__type,
+.is-dark .ucm-ifaces-action,
+.is-dark .ucm-muted { color: #a8a8a8; }
+.is-dark .ucm-gen__label,
+.is-dark .ucm-iface-title,
+.is-dark .ucm-snaps-name { color: #e8e8e8; }
+/* explicit mid-grey leaves that carry their own (not inherited) color */
+.is-dark .ucm-stat__value--small { color: #d0d0d0; }
+.is-dark .ucm-gen__val { color: #cfcfcf; }
+/* dividers + progress track that are light-grey */
+.is-dark .ucm-bar { background: #333; }
+.is-dark .ucm-datadisk__donut { background: conic-gradient(#333 0 360deg); }
 
 /* custom thin progress bar (vanilla build has none) */
 .ucm-bar {
@@ -1020,6 +1072,10 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* tone tint matches the bundle status-label greens/ambers (positive #0e8420) */
 .ucm-iface--positive .ucm-iface__iface { color: #0e8420; }
 .ucm-iface--caution .ucm-iface__iface { color: #b36b00; }
+/* dark: the positive status green matches the bundle's dark positive token */
+.is-dark .ucm-iface--positive .ucm-iface__iface { color: #62a36c; }
+/* dark: the caution amber matches the bundle's dark caution token */
+.is-dark .ucm-iface--caution .ucm-iface__iface { color: #c48831; }
 .ucm-ifaces-action {
     text-align: right;
     white-space: nowrap;

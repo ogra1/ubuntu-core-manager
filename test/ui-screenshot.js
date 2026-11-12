@@ -1325,105 +1325,138 @@ function mockFactoryJs() {
     if (aCalls.value !== 'light' || aCalls.calls !== 2)
         console.log('PAGE ERROR: the appearance toggle did not round-trip through exactly two set calls (got ' + JSON.stringify(aCalls) + ') (round A)');
 
-    // ---- 2d. round B: the Appearance CARD — the Theme select drives the
-    //      theme through the real UI path (change -> core.settings
-    //      .setAppearance -> the pushed status flips <html>.is-dark). The
-    //      guard reads a BUNDLE surface (.p-card bg) to prove the theme
-    //      actually flipped, not just the class: light #fff -> dark #262626.
+    // ---- 2d. round C: the Appearance CARD — the Theme TOGGLE (the General
+    //      card's orange p-switch; off = light, on = dark) drives the theme
+    //      through the real UI path (change -> core.settings.setAppearance ->
+    //      the pushed status flips <html>.is-dark). The guard reads a BUNDLE
+    //      surface (.p-card bg) to prove the theme actually flipped, not just
+    //      the class: light #fff -> dark #262626.
     // round B: the card must EXIST — the drive reads #theme, so a missing
     // card would FATAL the run; make it a clean PAGE ERROR instead.
-    const themePresent = await page.evaluate(() => !!document.querySelector('#theme'));
+    const themePresent = await page.evaluate(() => {
+      const sw = document.querySelector('#theme');
+      return !!(sw && sw.type === 'checkbox');
+    });
     if (!themePresent) {
-        console.log('PAGE ERROR: the Appearance card / Theme select is missing from the settings view (round B)');
+        console.log('PAGE ERROR: the Appearance card / Theme toggle is missing from the settings view (round C)');
     } else {
         const aCard = await page.evaluate(() => {
-          const sel = document.querySelector('#theme');
-          const card = sel.closest('.p-card');
-          const opts = Array.from(sel.options).map((o) => o.value);
+          const sw = document.querySelector('#theme');
+          const card = sw.closest('.p-card');
+          const slider = card.querySelector('.p-switch__slider');
           return {
             cardTitle: card.querySelector('.p-card__header .p-heading--5').textContent.trim(),
             rows: Array.from(card.querySelectorAll('dt')).map((d) => d.textContent.trim()),
-            opts,
-            selValue: sel.value,
-            selW: Math.round(sel.getBoundingClientRect().width * 10) / 10,
+            isSwitch: !!slider,
+            checked: sw.checked,
+            sliderBg: getComputedStyle(slider).backgroundColor,
             cardBg: getComputedStyle(card).backgroundColor,
             isDark: document.documentElement.classList.contains('is-dark'),
           };
         });
         if (aCard.cardTitle !== 'Appearance')
-            console.log('PAGE ERROR: the Appearance card title is wrong (got ' + JSON.stringify(aCard.cardTitle) + ') (round B)');
+            console.log('PAGE ERROR: the Appearance card title is wrong (got ' + JSON.stringify(aCard.cardTitle) + ') (round C)');
         if (JSON.stringify(aCard.rows) !== JSON.stringify(['Theme']))
-            console.log('PAGE ERROR: the Appearance card must show ONLY the Theme row — got ' + JSON.stringify(aCard.rows) + ' (round B)');
-        if (JSON.stringify(aCard.opts) !== JSON.stringify(['light', 'dark']))
-            console.log('PAGE ERROR: the Theme select options are wrong (got ' + JSON.stringify(aCard.opts) + ', want light/dark) (round B)');
-        if (aCard.selValue !== 'light')
-            console.log('PAGE ERROR: the Theme select must default to the shipped appearance (light) — got ' + JSON.stringify(aCard.selValue) + ' (round B)');
-        if (aCard.selW < 100 || aCard.selW > 215)
-            console.log('PAGE ERROR: the Theme select is not compact (width ' + aCard.selW + 'px) (round B)');
+            console.log('PAGE ERROR: the Appearance card must show ONLY the Theme row — got ' + JSON.stringify(aCard.rows) + ' (round C)');
+        if (aCard.isSwitch !== true)
+            console.log('PAGE ERROR: the Theme control must be a p-switch toggle (a pulldown is not wanted) — no .p-switch__slider found (round C)');
+        if (aCard.checked !== false)
+            console.log('PAGE ERROR: the Theme toggle must default to OFF (light = the shipped appearance) — got checked=' + aCard.checked + ' (round C)');
+        // the 48a re-tint: an OFF slider is grey (not the bundle link-blue, not
+        // orange) — pins the General-card switch look, not the raw bundle.
+        if (aCard.sliderBg !== 'rgb(224, 224, 224)')
+            console.log('PAGE ERROR: the OFF theme slider is not the 48a grey (got ' + aCard.sliderBg + ', want #e0e0e0) (round C)');
         if (aCard.isDark !== false || aCard.cardBg !== 'rgb(255, 255, 255)')
-            console.log('PAGE ERROR: in the default light appearance a .p-card must be white and <html> must not be .is-dark (got ' + JSON.stringify([aCard.cardBg, aCard.isDark]) + ') (round B)');
+            console.log('PAGE ERROR: in the default light appearance a .p-card must be white and <html> must not be .is-dark (got ' + JSON.stringify([aCard.cardBg, aCard.isDark]) + ') (round C)');
 
-        // CHANGE the theme to dark (a real select interaction): it must apply
-        // LIVE — the mock pref, the <html> class, the SELECT, and the bundle
-        // card surface all flip. (The __appearance calls counter is cumulative
-        // for the run — the round-A 2c proof already drove it — so assert a +1
-        // DELTA from a captured baseline, not an absolute.)
+        // TOGGLE the theme to dark (a real click on the switch input): it must
+        // apply LIVE — the mock pref, the <html> class, the SWITCH, the slider
+        // re-tint, and the bundle card surface all flip. (The __appearance
+        // calls counter is cumulative for the run — the round-A 2c proof
+        // already drove it — so assert a +1 DELTA from a captured baseline.)
         const aBase = await page.evaluate(() => window.__mockCore.settings.__appearance().calls);
-        await page.select('#theme', 'dark');
+        await page.click('#theme');
         await wait(300);
         const aDarkUi = await page.evaluate(() => {
-          const sel = document.querySelector('#theme');
-          const card = sel.closest('.p-card');
+          const sw = document.querySelector('#theme');
+          const card = sw.closest('.p-card');
+          const slider = card.querySelector('.p-switch__slider');
+          // dark-surface guards: the app's own .ucm-* chrome must ALSO flip
+          // (the bundle .p-* card is covered by cardBg). A removed/reverted
+          // dark block (round C) leaves these light -> clean PAGE ERRORs.
           return {
             mock: window.__mockCore.settings.__appearance(),
-            selValue: sel.value,
+            checked: sw.checked,
+            sliderBg: getComputedStyle(slider).backgroundColor,
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: getComputedStyle(card).backgroundColor,
+            topbarBg: getComputedStyle(document.querySelector('.ucm-topbar')).backgroundColor,
+            mainBg: getComputedStyle(document.querySelector('.ucm-main')).backgroundColor,
+            mainColor: getComputedStyle(document.querySelector('.ucm-main')).color,
+            statBg: getComputedStyle(document.querySelector('.ucm-stat')).backgroundColor,
+            statLabel: getComputedStyle(document.querySelector('.ucm-stat__label')).color,
+          };
+        });
+        if (aDarkUi.mock.value !== 'dark' || aDarkUi.mock.calls !== aBase + 1)
+            console.log('PAGE ERROR: toggling the Theme to dark did not send exactly one set call to the mock (base ' + aBase + ', got ' + JSON.stringify(aDarkUi.mock) + ') (round C)');
+        if (aDarkUi.isDark !== true)
+            console.log('PAGE ERROR: toggling to dark must flip <html>.is-dark live (got ' + aDarkUi.isDark + ') (round C)');
+        if (aDarkUi.checked !== true)
+            console.log('PAGE ERROR: the Theme toggle must be ON when dark (got checked=' + aDarkUi.checked + ') (round C)');
+        if (aDarkUi.sliderBg !== 'rgb(233, 84, 32)')
+            console.log('PAGE ERROR: the ON theme slider must be the 48a orange (#e95420) — got ' + aDarkUi.sliderBg + ' (round C)');
+        if (aDarkUi.cardBg !== 'rgb(38, 38, 38)')
+            console.log('PAGE ERROR: the dark theme must flip the bundle .p-card surface to dark (#262626) — got ' + aDarkUi.cardBg + ' (round C)');
+        // dark-surface pass: the app chrome must flip too (round C).
+        if (aDarkUi.topbarBg !== 'rgb(26, 26, 26)')
+            console.log('PAGE ERROR: the dark top bar must be dark (#1a1a1a) — got ' + aDarkUi.topbarBg + ' (round C)');
+        if (aDarkUi.mainBg !== 'rgb(17, 17, 17)')
+            console.log('PAGE ERROR: the dark page background must be #111 — got ' + aDarkUi.mainBg + ' (round C)');
+        if (aDarkUi.statBg !== 'rgb(38, 38, 38)')
+            console.log('PAGE ERROR: the dark stat cards must be #262626 — got ' + aDarkUi.statBg + ' (round C)');
+        if (aDarkUi.statLabel !== 'rgb(168, 168, 168)')
+            console.log('PAGE ERROR: the dark stat labels must be the muted light grey (#a8a8a8) — got ' + aDarkUi.statLabel + ' (round C)');
+        if (aDarkUi.mainColor !== 'rgb(242, 242, 242)')
+            console.log('PAGE ERROR: the dark base text must be near-white (the --ucm-grey-dark var flip) — got ' + aDarkUi.mainColor + ' (the #111 inherited text would be unreadable on dark) (round C)');
+        await page.screenshot({ path: path.join(SHOTS, '4c-settings-theme-dark.png'), fullPage: true });
+
+        // Leaving and re-entering the settings view: the persisted "dark" must
+        // still be applied, and loadSettings must CORRECT the switch if it is
+        // stale. A fresh load leaves the switch at its HTML default (unchecked
+        // = light) even though the theme is already dark (applyAuthPayload
+        // flips <html>.is-dark at boot), so simulate that stale state (set
+        // checked=false WITHOUT changing the applied theme), re-enter to
+        // trigger loadSettings, and assert the switch is corrected back to ON.
+        await page.click('.ucm-side a[data-view="dashboard"]');
+        await wait(200);
+        await page.evaluate(() => { document.querySelector('#theme').checked = false; }); // stale switch
+        await page.click('.ucm-side a[data-view="settings"]');
+        await wait(300);
+        const aReload = await page.evaluate(() => ({
+            checked: document.querySelector('#theme').checked,
+            isDark: document.documentElement.classList.contains('is-dark'),
+        }));
+        if (aReload.checked !== true)
+            console.log('PAGE ERROR: re-entering settings must re-read the persisted "dark" into a stale switch (got checked=' + aReload.checked + ') (round C)');
+        if (aReload.isDark !== true)
+            console.log('PAGE ERROR: the persisted "dark" must still be applied on re-entry (is-dark ' + aReload.isDark + ') (round C)');
+
+        // REVERT to light so the rest of the run (and the shots) reflect the
+        // shipped default.
+        await page.click('#theme');
+        await wait(300);
+        const aBackUi = await page.evaluate(() => {
+          const sw = document.querySelector('#theme');
+          const card = sw.closest('.p-card');
+          return {
+            mock: window.__mockCore.settings.__appearance().value,
+            checked: sw.checked,
             isDark: document.documentElement.classList.contains('is-dark'),
             cardBg: getComputedStyle(card).backgroundColor,
           };
         });
-        if (aDarkUi.mock.value !== 'dark' || aDarkUi.mock.calls !== aBase + 1)
-            console.log('PAGE ERROR: changing the Theme to dark did not send exactly one set call to the mock (base ' + aBase + ', got ' + JSON.stringify(aDarkUi.mock) + ') (round B)');
-        if (aDarkUi.isDark !== true)
-            console.log('PAGE ERROR: switching to dark must flip <html>.is-dark live (got ' + aDarkUi.isDark + ') (round B)');
-        if (aDarkUi.selValue !== 'dark')
-            console.log('PAGE ERROR: the Theme select must show "Dark" (got ' + JSON.stringify(aDarkUi.selValue) + ') (round B)');
-        if (aDarkUi.cardBg !== 'rgb(38, 38, 38)')
-            console.log('PAGE ERROR: the dark theme must flip the bundle .p-card surface to dark (#262626) — got ' + aDarkUi.cardBg + ' (round B)');
-        await page.screenshot({ path: path.join(SHOTS, '4c-settings-theme-dark.png'), fullPage: true });
-
-        // Leaving and re-entering the settings view: the persisted "dark" must
-        // still be applied, and loadSettings must CORRECT the select if it is
-        // stale. A fresh <select> shows its HTML default ('light') even though the
-        // theme is already dark (applyAuthPayload flips <html>.is-dark at boot), so
-        // simulate that stale state (set the DOM value to 'light' WITHOUT changing
-        // the applied theme), re-enter to trigger loadSettings, and assert the
-        // select is corrected back to the persisted 'dark'.
-        await page.click('.ucm-side a[data-view="dashboard"]');
-        await wait(200);
-        await page.evaluate(() => { document.querySelector('#theme').value = 'light'; }); // stale select
-        await page.click('.ucm-side a[data-view="settings"]');
-        await wait(300);
-        const aReload = await page.evaluate(() => ({
-            selValue: document.querySelector('#theme').value,
-            isDark: document.documentElement.classList.contains('is-dark'),
-        }));
-        if (aReload.selValue !== 'dark')
-            console.log('PAGE ERROR: re-entering settings must re-read the persisted "dark" into a stale select (got ' + JSON.stringify(aReload.selValue) + ') (round B)');
-        if (aReload.isDark !== true)
-            console.log('PAGE ERROR: the persisted "dark" must still be applied on re-entry (is-dark ' + aReload.isDark + ') (round B)');
-
-        // REVERT to light so the rest of the run (and the shots) reflect the
-        // shipped default.
-        await page.select('#theme', 'light');
-        await wait(300);
-        const aBackUi = await page.evaluate(() => ({
-            mock: window.__mockCore.settings.__appearance().value,
-            selValue: document.querySelector('#theme').value,
-            isDark: document.documentElement.classList.contains('is-dark'),
-            cardBg: getComputedStyle(document.querySelector('#theme').closest('.p-card')).backgroundColor,
-        }));
-        if (aBackUi.mock !== 'light' || aBackUi.selValue !== 'light' || aBackUi.isDark !== false || aBackUi.cardBg !== 'rgb(255, 255, 255)')
-            console.log('PAGE ERROR: reverting the theme to light did not restore the chrome (got ' + JSON.stringify(aBackUi) + ') (round B)');
+        if (aBackUi.mock !== 'light' || aBackUi.checked !== false || aBackUi.isDark !== false || aBackUi.cardBg !== 'rgb(255, 255, 255)')
+            console.log('PAGE ERROR: reverting the theme to light did not restore the chrome (got ' + JSON.stringify(aBackUi) + ') (round C)');
     }
 
     // round 65 — the reset card de-wording + the round-64 grid idiom:

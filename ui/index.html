@@ -369,11 +369,13 @@
                             <div>
                                 <dt>Theme</dt>
                                 <dd>
-                                    <select id="theme" class="ucm-kv--select"
-                                            title="Color theme for the console — light or dark">
-                                        <option value="light">Light</option>
-                                        <option value="dark">Dark</option>
-                                    </select>
+                                    <!-- round C: a TOGGLE (the General card's 48a
+                                         orange p-switch), not a pulldown. Off =
+                                         Light, on = Dark. -->
+                                    <label class="p-switch ucm-theme__sw" title="Color theme for the console — off is Light, on is Dark">
+                                        <input class="p-switch__input" type="checkbox" id="theme">
+                                        <span class="p-switch__slider"></span>
+                                    </label>
                                 </dd>
                             </div>
                         </dl>
