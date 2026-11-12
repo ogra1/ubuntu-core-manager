@@ -920,6 +920,54 @@ function mockFactoryJs() {
     await wait(600);
     await page.screenshot({ path: path.join(SHOTS, '1-setup.png') });
 
+    // ---- 1b. round E: the INITIAL SETUP card is a dark card (it shares the
+    //      .ucm-login chrome with the lock/login prompt). The run starts LIGHT
+    //      (the shipped default), so force dark via the MOCK (which persists
+    //      through status pushes), read the setup card + note, then revert to
+    //      light so the rest of the run is the light regression proof.
+    const setupCard = await page.evaluate(() => {
+        const card = document.querySelector('#setupView .ucm-login__card');
+        const note = document.querySelector('#setupView .ucm-lockscreen-note');
+        const light = {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: card ? getComputedStyle(card).backgroundColor : null,
+            noteColor: note ? getComputedStyle(note).color : null,
+        };
+        return { light };
+    });
+    if (setupCard.light.isDark !== false)
+        console.log('PAGE ERROR: 1b must start in the default light state (round E)');
+    if (setupCard.light.cardBg !== 'rgb(255, 255, 255)')
+        console.log('PAGE ERROR: the light setup card must be white (got ' + setupCard.light.cardBg + ') (round E)');
+    await page.evaluate(() => document.documentElement.classList.add('is-dark'));
+    await wait(300);
+    const setupDark = await page.evaluate(() => {
+        const card = document.querySelector('#setupView .ucm-login__card');
+        const note = document.querySelector('#setupView .ucm-lockscreen-note');
+        const head = document.querySelector('#setupView .ucm-login__head');
+        const body = document.querySelector('#setupView .ucm-login__body');
+        return {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: card ? getComputedStyle(card).backgroundColor : null,
+            headBorder: head ? getComputedStyle(head).borderBottomWidth : null,
+            noteColor: note ? getComputedStyle(note).color : null,
+            bodyColor: body ? getComputedStyle(body).color : null,
+        };
+    });
+    if (setupDark.isDark !== true)
+        console.log('PAGE ERROR: 1b — forcing dark via the mock must flip <html>.is-dark (round E)');
+    if (setupDark.cardBg !== 'rgb(38, 38, 38)')
+        console.log('PAGE ERROR: E4 — the dark setup card must be #262626 (got ' + setupDark.cardBg + ') (round E)');
+    if (setupDark.headBorder !== '1px')
+        console.log('PAGE ERROR: E4 — the dark setup head needs its hairline divider (got ' + setupDark.headBorder + ') (round E)');
+    if (setupDark.noteColor !== 'rgb(208, 208, 208)')
+        console.log('PAGE ERROR: E4 — the dark setup note must be light (#d0d0d0, got ' + setupDark.noteColor + ') (round E)');
+    if (setupDark.bodyColor !== 'rgb(242, 242, 242)')
+        console.log('PAGE ERROR: E4 — the dark setup body text must be near-white (var flip, got ' + setupDark.bodyColor + ') (round E)');
+    // revert to light (the run continues as the light regression proof)
+    await page.evaluate(() => document.documentElement.classList.remove('is-dark'));
+    await wait(200);
+
     // mismatch validation
     await page.type('#setupPassword', 'correct-horse');
     await page.type('#setupConfirm', 'different');
@@ -1410,8 +1458,8 @@ function mockFactoryJs() {
         // dark-surface pass: the app chrome must flip too (round C).
         if (aDarkUi.topbarBg !== 'rgb(26, 26, 26)')
             console.log('PAGE ERROR: the dark top bar must be dark (#1a1a1a) — got ' + aDarkUi.topbarBg + ' (round C)');
-        if (aDarkUi.mainBg !== 'rgb(17, 17, 17)')
-            console.log('PAGE ERROR: the dark page background must be #111 — got ' + aDarkUi.mainBg + ' (round C)');
+        if (aDarkUi.mainBg !== 'rgb(32, 32, 32)')
+            console.log('PAGE ERROR: the dark page background must be the theme dark grey #202020 (round E; was #111) — got ' + aDarkUi.mainBg + ' (round C)');
         if (aDarkUi.statBg !== 'rgb(38, 38, 38)')
             console.log('PAGE ERROR: the dark stat cards must be #262626 — got ' + aDarkUi.statBg + ' (round C)');
         if (aDarkUi.statLabel !== 'rgb(168, 168, 168)')
@@ -5242,6 +5290,79 @@ function mockFactoryJs() {
     if (dLightBack.isDark !== false || dLightBack.themeLabel !== 'Light')
         console.log('PAGE ERROR: 6a — reverting the theme to light must restore <html> and the "Light" label (got ' + JSON.stringify([dLightBack.isDark, dLightBack.themeLabel]) + ') (round D)');
 
+    // ---- 6a2. round E: the SNAP INFO + CONFIG modal popups are dark. The run
+    // is in the default LIGHT state here (6a reverted it). Open the htop info
+    // + the mosquitto config modals (the config tree carries the app .ucm-conf__*
+    // carriers; the info modal carries .ucm-info__*), read them in LIGHT (the
+    // light-regression proof: the app card is still #fff), then force dark via
+    // the MOCK (persists through the status push) and pin every modal surface.
+    await page.click('.ucm-side a[data-view="snaps"]');
+    await wait(500);
+    const openRow = (name) => page.evaluate((nm) => {
+        const rows = [...document.querySelectorAll('#snapsCards tbody tr')];
+        const r = rows.find((x) => x.cells && x.cells[0].textContent.trim() === nm);
+        r.cells[0].click();
+    }, name);
+    const openCfg = (name) => page.evaluate((nm) => {
+        const rows = [...document.querySelectorAll('#snapsCards tbody tr')];
+        const r = rows.find((x) => x.cells && x.cells[0].textContent.trim() === nm);
+        r.querySelectorAll('.ucm-actions button')[0].click();
+    }, name);
+    await openRow('htop');
+    await wait(500);
+    await openCfg('mosquitto');
+    await wait(700);
+    const readModal = () => page.evaluate(() => {
+        const col = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).color : null; };
+        const bg = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).backgroundColor : null; };
+        const bw = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).borderBottomWidth : null; };
+        return {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            modals: document.querySelectorAll('.ucm-modal').length,
+            cardBg: bg('.ucm-modal__card'),
+            headBorder: bw('.ucm-modal__head'),
+            infoDesc: col('.ucm-info__desc'),
+            infoSummary: col('.ucm-info__summary'),
+            confKey: col('.ucm-conf__key'),
+            confVal: col('.ucm-conf__val'),
+            confMultiBg: bg('.ucm-conf__multi'),
+        };
+    });
+    const mLight = await readModal();
+    if (mLight.isDark !== false)
+        console.log('PAGE ERROR: 6a2 must start in the default light state (round E)');
+    if (mLight.modals !== 2)
+        console.log('PAGE ERROR: 6a2 — could not open both the info + config modals (got ' + mLight.modals + ') (round E)');
+    if (mLight.cardBg !== 'rgb(255, 255, 255)')
+        console.log('PAGE ERROR: E2 — the LIGHT modal card must be white (got ' + mLight.cardBg + ') (round E)');
+    await page.evaluate(() => document.documentElement.classList.add('is-dark'));
+    await wait(400);
+    const mDark = await readModal();
+    if (mDark.isDark !== true)
+        console.log('PAGE ERROR: 6a2 — forcing dark via the mock must flip <html>.is-dark (round E)');
+    if (mDark.cardBg !== 'rgb(38, 38, 38)')
+        console.log('PAGE ERROR: E2 — the dark modal card must be #262626 (got ' + mDark.cardBg + ') (round E)');
+    if (mDark.headBorder !== '1px')
+        console.log('PAGE ERROR: E2 — the dark modal head needs its hairline divider (got ' + mDark.headBorder + ') (round E)');
+    if (mDark.infoDesc !== 'rgb(232, 232, 232)')
+        console.log('PAGE ERROR: E2 — the dark info description must be light (#e8e8e8, got ' + mDark.infoDesc + ') (round E)');
+    if (mDark.infoSummary !== 'rgb(184, 184, 184)')
+        console.log('PAGE ERROR: E2 — the dark info summary must be light (#b8b8b8, got ' + mDark.infoSummary + ') (round E)');
+    if (mDark.confKey !== 'rgb(232, 232, 232)')
+        console.log('PAGE ERROR: E2 — the dark config key must be light (#e8e8e8, got ' + mDark.confKey + ') (round E)');
+    if (mDark.confVal !== 'rgb(207, 207, 207)')
+        console.log('PAGE ERROR: E2 — the dark config value must be light (#cfcfcf, got ' + mDark.confVal + ') (round E)');
+    if (mDark.confMultiBg !== 'rgba(255, 255, 255, 0.12)')
+        console.log('PAGE ERROR: E2 — the dark multiline config block must be the dark code surface (got ' + mDark.confMultiBg + ') (round E)');
+    await page.screenshot({ path: path.join(SHOTS, '19a-dark-modals.png'), fullPage: true });
+    // revert to light + close the modals so the 6b lock test starts clean
+    await page.evaluate(() => document.documentElement.classList.remove('is-dark'));
+    await wait(300);
+    await page.keyboard.press('Escape');
+    await wait(200);
+    await page.keyboard.press('Escape');
+    await wait(200);
+
     // ---- 6b. Round 48f: locking with popups OPEN must close them. The
     // modals are body-appended (z60) and would otherwise sit in front of the
     // login card, still interactive while the console is locked. Re-open the
@@ -5296,6 +5417,51 @@ function mockFactoryJs() {
     await page.click('#loginBtn');
     await wait(400);
     await page.screenshot({ path: path.join(SHOTS, '17-login-error.png') });
+
+    // ---- 6b1. round E: the LOCK / LOGIN password prompt is a dark card. The
+    // console is locked right now (the 6b test locked it); the run is in the
+    // default LIGHT state. Force dark via the MOCK, read the login card + note,
+    // then revert to light so the rest of the run (and the exit state) is the
+    // light regression proof.
+    const logInLight = await page.evaluate(() => {
+        const card = document.querySelector('#loginView .ucm-login__card');
+        const note = document.querySelector('#loginView .ucm-lockscreen-note');
+        return {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            loginVisible: !document.querySelector('#loginView').classList.contains('ucm-hidden'),
+            cardBg: card ? getComputedStyle(card).backgroundColor : null,
+        };
+    });
+    if (logInLight.isDark !== false || logInLight.loginVisible !== true)
+        console.log('PAGE ERROR: 6b1 must start in the light, locked state (got ' + JSON.stringify([logInLight.isDark, logInLight.loginVisible]) + ') (round E)');
+    if (logInLight.cardBg !== 'rgb(255, 255, 255)')
+        console.log('PAGE ERROR: E3 — the LIGHT login card must be white (got ' + logInLight.cardBg + ') (round E)');
+    await page.evaluate(() => document.documentElement.classList.add('is-dark'));
+    await wait(300);
+    const logInDark = await page.evaluate(() => {
+        const card = document.querySelector('#loginView .ucm-login__card');
+        const note = document.querySelector('#loginView .ucm-lockscreen-note');
+        const body = document.querySelector('#loginView .ucm-login__body');
+        return {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: card ? getComputedStyle(card).backgroundColor : null,
+            noteColor: note ? getComputedStyle(note).color : null,
+            bodyColor: body ? getComputedStyle(body).color : null,
+        };
+    });
+    if (logInDark.isDark !== true)
+        console.log('PAGE ERROR: 6b1 — forcing dark via the mock must flip <html>.is-dark (round E)');
+    if (logInDark.cardBg !== 'rgb(38, 38, 38)')
+        console.log('PAGE ERROR: E3 — the dark login card must be #262626 (got ' + logInDark.cardBg + ') (round E)');
+    if (logInDark.noteColor !== 'rgb(208, 208, 208)')
+        console.log('PAGE ERROR: E3 — the dark login note must be light (#d0d0d0, got ' + logInDark.noteColor + ') (round E)');
+    if (logInDark.bodyColor !== 'rgb(242, 242, 242)')
+        console.log('PAGE ERROR: E3 — the dark login body text must be near-white (var flip, got ' + logInDark.bodyColor + ') (round E)');
+    await page.screenshot({ path: path.join(SHOTS, '19b-dark-login.png') });
+    // revert to light (the 6b unlock flow continues from the default)
+    await page.evaluate(() => document.documentElement.classList.remove('is-dark'));
+    await wait(200);
+
 
     console.log('screenshots written to ' + SHOTS);
     if (errors.length) {

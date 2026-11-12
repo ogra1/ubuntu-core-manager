@@ -393,8 +393,13 @@ html, body {
    Purely ADDITIVE — light mode (no .is-dark) is byte-for-byte untouched.
    Palette: Yaru-dark (#111 page, #262626 elevated, #333 borders, #f7f7f7 text).
    ========================================================================== */
+/* round E: the page bg is no longer pitch-black. #111 was near-black and the
+   cards (#262626) read as floating grey boxes. The theme offers a true dark
+   grey — --vf-color-background-alt (#202020) — which keeps the #262626 cards
+   subtly elevated off the page (the round-C topbar fallback #1a1a1a would
+   have been too close to the cards to read as elevation). */
 .is-dark .ucm-main,
-.is-dark .ucm-view { background: #111; }
+.is-dark .ucm-view { background: #202020; }
 /* the base text color is set on html/body as var(--ucm-grey-dark) (near-black)
    and INHERITED by the .ucm-* chrome. .is-dark IS the <html> element, so
    flipping the VARIABLE here re-tints the whole #111 family at once: the base
@@ -464,6 +469,53 @@ html, body {
    (The dd VALUES are already fine: they inherit the var flip, or are
    .ucm-muted which round C lightened.) */
 .is-dark .ucm-kv dt { color: #a8a8a8; }
+
+/* ==========================================================================
+   DARK MODAL + GATE SURFACES (round E) — the chrome the round-C pass
+   deliberately deferred: the snap info / config modal popups, the lock +
+   login password prompt, and the initial setup screen. The bundle .p-*
+   INSIDE flips on its own (inputs, labels, headings, status labels, the
+   dual-URI info icon); these cover the app's OWN light-tuned chrome: the
+   #fff cards, the hardcoded mid-grey text, and the light dividers/code block.
+   Purely ADDITIVE — light mode (no .is-dark) is byte-for-byte untouched.
+   Card = #262626 (= the bundle --vf-color-background-default, matching the
+   app's .p-card); border #3a3a3a; text on round C's tiers.
+   ========================================================================== */
+/* the app's own modal + login/setup cards were #fff (the one light surface
+   left after round C). The modal/login HEADS are already #262626
+   (--ucm-aubergine), so once the card is dark they blend in — a hairline
+   divider keeps the head reading as its own band. */
+.is-dark .ucm-modal__card { background: #262626; }
+.is-dark .ucm-modal__head { border-bottom: 1px solid #3a3a3a; }
+.is-dark .ucm-login__card { background: #262626; }
+.is-dark .ucm-login__head { border-bottom: 1px solid #3a3a3a; }
+
+/* ---- snap INFO modal content (app .ucm-info__* carriers) ---- */
+.is-dark .ucm-info__desc { color: #e8e8e8; }
+.is-dark .ucm-info__summary,
+.is-dark .ucm-info__comp-summary { color: #b8b8b8; }
+.is-dark .ucm-info__sec,
+.is-dark .ucm-info__track { color: #a8a8a8; }
+.is-dark .ucm-info__comp-name { color: #e8e8e8; }
+.is-dark .ucm-info__comp-meta { color: #8c8c8c; }
+.is-dark .ucm-info__div,
+.is-dark .ucm-info__track-sep,
+.is-dark .ucm-info__comp { border-color: #3a3a3a; }
+
+/* ---- config modal content (app .ucm-conf__* carriers) ---- */
+.is-dark .ucm-conf__key { color: #e8e8e8; }
+.is-dark .ucm-conf__val,
+.is-dark .ucm-conf__multi { color: #cfcfcf; }
+.is-dark .ucm-conf__edithint { color: #8c8c8c; }
+.is-dark .ucm-conf__leaf + .ucm-conf__leaf,
+.is-dark .ucm-conf__leaf + .ucm-conf__node { border-color: #3a3a3a; }
+/* the multiline value's pre block was a light code box (#fafafa on #eee);
+   make it the bundle dark code surface (--vf-color-background-code). */
+.is-dark .ucm-conf__multi { background: rgba(255, 255, 255, 0.12); border-color: #3a3a3a; }
+
+/* ---- the lock/login + setup gate card text ---- */
+.is-dark .ucm-login__foot { color: #a8a8a8; }
+.is-dark .ucm-lockscreen-note { color: #d0d0d0; }
 
 /* custom thin progress bar (vanilla build has none) */
 .ucm-bar {
