@@ -5143,6 +5143,105 @@ function mockFactoryJs() {
     // unique same-named target is simply not connectable from the UI.
     await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });
 
+
+    // ---- 6a. round D (dark polish): pin all 5 reported dark-mode issues through
+    // the REAL theme path. The run is in the default LIGHT state here (round C's
+    // 2d reverted it), so the first read is the light-regression proof (every
+    // dark fix ABSENT — light is byte-for-byte untouched). Then the real #theme
+    // switch flips <html>.is-dark AND syncs the value label (change -> the mock
+    // push -> applyAuthPayload -> syncThemeLabel), so one dark read pins I1-I5.
+    // All app chrome is in the DOM (views hide, they don't remove), so the
+    // dashboard System card + donut, the netcards, the snaps red power icon, and
+    // the settings Theme + reset card are all readable at once.
+    await page.click('.ucm-side a[data-view="settings"]');
+    await wait(400);
+    const readTheme = () => page.evaluate(() => {
+        const col = (el, ps) => (el ? getComputedStyle(el, ps).color : null);
+        const filt = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).filter : null; };
+        const dtCol = (sel) => { const e = document.querySelector(sel); const kv = e && e.closest('.ucm-kv'); const dt = kv && kv.querySelector('dt'); return dt ? getComputedStyle(dt).color : null; };
+        const out = { isDark: document.documentElement.classList.contains('is-dark') };
+        out.themeLabel = (document.querySelector('#themeLabel') || { textContent: null }).textContent;
+        // I1: the three .ucm-kv dt label families (System card, Theme, Inactivity lock)
+        out.sysDt = col(document.querySelector('#dashSystem dt'));
+        out.themeDt = dtCol('#theme');
+        out.inactDt = dtCol('#lockTimeout');
+        // I3: the donut inner hole
+        const don = document.querySelector('#dataDiskDonut');
+        out.donutBefore = don ? getComputedStyle(don, '::before').backgroundColor : null;
+        // I5: the reset warning palette
+        const w = document.querySelector('.ucm-reset__warn');
+        if (w) { const cs = getComputedStyle(w); out.warnColor = cs.color; out.warnBg = cs.backgroundColor; out.warnBorder = cs.borderTopColor; }
+        // I2: the app suru icon filters
+        out.iconLock = filt('#lockBtn .p-icon--lock');
+        out.iconClock = filt('#sessionChip .p-icon--clock');
+        out.iconPower = filt('#snapsCards .p-icon--power:not(.p-icon--power-red)');
+        out.iconPowerRed = filt('#snapsCards .p-icon--power-red');
+        out.iconAdd = filt('#netAddDevice .p-icon--add');
+        out.iconEdit = filt('.ucm-netcard__head .p-icon--edit');
+        out.iconDelete = filt('#snapsCards .p-icon--delete');
+        out.powerRedPresent = !!document.querySelector('#snapsCards .p-icon--power-red');
+        return out;
+    });
+
+    const dLight = await readTheme();
+    // light-regression proof: every round-D dark rule must be ABSENT in light.
+    if (dLight.isDark !== false)
+        console.log('PAGE ERROR: 6a must start in the default light state (got isDark=' + dLight.isDark + ') (round D)');
+    if (dLight.themeLabel !== 'Light')
+        console.log('PAGE ERROR: I4 — the Theme value label must read "Light" in the light appearance (got ' + JSON.stringify(dLight.themeLabel) + ') (round D)');
+    if (dLight.sysDt !== 'rgb(85, 85, 85)' || dLight.themeDt !== 'rgb(85, 85, 85)' || dLight.inactDt !== 'rgb(85, 85, 85)')
+        console.log('PAGE ERROR: I1 — light .ucm-kv dt labels must stay #555 (got ' + JSON.stringify([dLight.sysDt, dLight.themeDt, dLight.inactDt]) + ') (round D)');
+    if (dLight.donutBefore !== 'rgb(255, 255, 255)')
+        console.log('PAGE ERROR: I3 — the light donut hole must stay #fff (got ' + dLight.donutBefore + ') (round D)');
+    if (dLight.warnColor !== 'rgb(138, 90, 0)' || dLight.warnBg !== 'rgba(249, 155, 17, 0.1)' || dLight.warnBorder !== 'rgba(249, 155, 17, 0.45)')
+        console.log('PAGE ERROR: I5 — the light reset warning must stay its amber palette (got ' + JSON.stringify([dLight.warnColor, dLight.warnBg, dLight.warnBorder]) + ') (round D)');
+    // (iconLock is NOT guarded here: the rail lock button is already whitened
+    // in BOTH themes by the pre-existing .ucm-rail-user i filter — it is not a
+    // round-D change, so its light value is not expected to be 'none'.)
+    if (dLight.iconClock !== 'none' || dLight.iconPower !== 'none' || dLight.iconAdd !== 'none' || dLight.iconEdit !== 'none' || dLight.iconDelete !== 'none' || dLight.iconPowerRed !== 'none')
+        console.log('PAGE ERROR: I2 — light suru icons must carry NO filter (got ' + JSON.stringify([dLight.iconClock, dLight.iconPower, dLight.iconAdd, dLight.iconEdit, dLight.iconDelete, dLight.iconPowerRed]) + ') (round D)');
+
+    // flip to dark through the REAL #theme switch (persists the pref + pushes the
+    // status, which flips <html>.is-dark and syncs the label).
+    await page.click('#theme');
+    await wait(400);
+    const dDark = await readTheme();
+    if (dDark.isDark !== true)
+        console.log('PAGE ERROR: the Theme toggle must flip <html>.is-dark (got ' + dDark.isDark + ') (round D)');
+    // I1 — the generic .ucm-kv dt labels lift to the muted light grey.
+    if (dDark.sysDt !== 'rgb(168, 168, 168)' || dDark.themeDt !== 'rgb(168, 168, 168)' || dDark.inactDt !== 'rgb(168, 168, 168)')
+        console.log('PAGE ERROR: I1 — the dark .ucm-kv dt labels (System/Theme/Inactivity lock) must be #a8a8a8 (got ' + JSON.stringify([dDark.sysDt, dDark.themeDt, dDark.inactDt]) + ') (round D)');
+    // I2 — the monochrome suru glyphs go solid white; the red power is EXCLUDED.
+    const dBright = 'brightness(0) invert(1)';
+    if (dDark.iconLock !== dBright || dDark.iconClock !== dBright || dDark.iconPower !== dBright || dDark.iconAdd !== dBright || dDark.iconEdit !== dBright || dDark.iconDelete !== dBright)
+        console.log('PAGE ERROR: I2 — the dark monochrome suru icons must be filter brightness(0) invert(1) (got ' + JSON.stringify([dDark.iconLock, dDark.iconClock, dDark.iconPower, dDark.iconAdd, dDark.iconEdit, dDark.iconDelete]) + ') (round D)');
+    if (!dDark.powerRedPresent)
+        console.log('PAGE ERROR: I2 — the disabled-snap red power icon (p-icon--power-red) is missing, so the exclusion guard is vacuous (round D)');
+    if (dDark.iconPowerRed !== 'none')
+        console.log('PAGE ERROR: I2 — the semantic red power icon must NOT be inverted (got filter ' + dDark.iconPowerRed + ' — invert would corrupt the red) (round D)');
+    // I3 — the donut hole matches the card.
+    if (dDark.donutBefore !== 'rgb(38, 38, 38)')
+        console.log('PAGE ERROR: I3 — the dark donut hole must be #262626 (got ' + dDark.donutBefore + ') (round D)');
+    // I4 — the value label follows the applied appearance.
+    if (dDark.themeLabel !== 'Dark')
+        console.log('PAGE ERROR: I4 — the Theme value label must read "Dark" in the dark appearance (got ' + JSON.stringify(dDark.themeLabel) + ') (round D)');
+    // I5 — the reset warning is a bright caution palette.
+    if (dDark.warnColor !== 'rgb(240, 198, 116)' || dDark.warnBg !== 'rgba(255, 115, 0, 0.2)' || dDark.warnBorder !== 'rgb(196, 136, 49)')
+        console.log('PAGE ERROR: I5 — the dark reset warning must be the bright caution palette (got ' + JSON.stringify([dDark.warnColor, dDark.warnBg, dDark.warnBorder]) + ') (round D)');
+    await page.screenshot({ path: path.join(SHOTS, '18a-dark-settings.png'), fullPage: true });
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(400);
+    await page.screenshot({ path: path.join(SHOTS, '18b-dark-dashboard.png'), fullPage: true });
+    await page.click('.ucm-side a[data-view="settings"]');
+    await wait(200);
+
+    // revert to light so the run (and the 6b lock test) continues from the default.
+    await page.click('#theme');
+    await wait(400);
+    const dLightBack = await readTheme();
+    if (dLightBack.isDark !== false || dLightBack.themeLabel !== 'Light')
+        console.log('PAGE ERROR: 6a — reverting the theme to light must restore <html> and the "Light" label (got ' + JSON.stringify([dLightBack.isDark, dLightBack.themeLabel]) + ') (round D)');
+
     // ---- 6b. Round 48f: locking with popups OPEN must close them. The
     // modals are body-appended (z60) and would otherwise sit in front of the
     // login card, still interactive while the console is locked. Re-open the

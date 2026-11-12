@@ -338,6 +338,15 @@ async function doLock() {
     }
 }
 
+// round D (I4): the Appearance card's Theme row shows a Light/Dark value
+// next to the toggle. It is a pure DISPLAY of state.appearance (the switch's
+// checked state is the control); keep it in sync wherever the appearance is
+// applied — applyAuthPayload (the live flip), loadSettings (view-entry) and
+// setAppearance (after a change).
+function syncThemeLabel() {
+    const lbl = $('#themeLabel');
+    if (lbl) lbl.textContent = state.appearance === 'dark' ? 'Dark' : 'Light';
+}
 function applyAuthPayload(p) {
     if (!p) return;
     const wasAuth = state.authenticated;
@@ -357,6 +366,7 @@ function applyAuthPayload(p) {
     // the app's own chrome dark pass is a separate feature).
     state.appearance = p.appearance !== undefined ? p.appearance : state.appearance;
     document.documentElement.classList.toggle('is-dark', state.appearance === 'dark');
+    syncThemeLabel(); // round D (I4): the Light/Dark value next to the switch
     state.storeAuthenticated = !!p.storeAuthenticated;
     state.storeUsername = p.storeUsername || null;
     updateLockChrome();
@@ -3117,6 +3127,7 @@ async function loadSettings() {
             // applyAuthPayload; the switch is a control, so it needs the
             // view-entry sync to show the persisted value).
             themeSel.checked = (p.appearance === 'dark');
+            syncThemeLabel(); // round D (I4): the value follows the applied appearance
         }
     } catch { /* keep the current value on read failure */ }
 }
@@ -3162,6 +3173,7 @@ async function setAppearance(value) {
         // The switch's checked state is re-synced from state.appearance on
         // every load (loadSettings) — here we trust the change we just made.
         sw.checked = (p && p.value ? p.value : value) === 'dark';
+        syncThemeLabel(); // round D (I4): the value follows the applied appearance
     } catch (e) {
         toastErr(e);
     } finally {

@@ -380,6 +380,8 @@ html, body {
    dd, so margin 0 (the bundle switch carries no margin; the kv row provides
    the spacing). */
 .ucm-theme__sw { display: inline-flex; margin: 0; }
+/* round D (I4): the Light/Dark value that sits next to the Theme toggle. */
+.ucm-theme__label { margin-left: .5rem; font-size: .9rem; color: var(--ucm-grey-dark); }
 .ucm-theme__sw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
 .ucm-theme__sw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
 .ucm-theme__sw .p-switch__slider { background: #e0e0e0; }
@@ -424,9 +426,44 @@ html, body {
 /* explicit mid-grey leaves that carry their own (not inherited) color */
 .is-dark .ucm-stat__value--small { color: #d0d0d0; }
 .is-dark .ucm-gen__val { color: #cfcfcf; }
+/* round D (I2): the app's OWN suru .p-icon--* glyphs are CSS background-images
+   pointing at SVGs with a HARDCODED black fill (not currentColor, not the
+   bundle's theme-aware dual data-URI), so they stay black on the dark
+   surfaces. The bundle's own .p-icon--* (close/warning/...) DO flip on their
+   own — only the app's ~11 are stuck. brightness(0) invert(1) forces any
+   monochrome glyph to solid white. EXCLUDED: .p-icon--power-red (its glyph is
+   semantic red #c7162b — invert would corrupt it) and any colored glyph.
+   The disabled-snap power row uses BOTH "p-icon--power p-icon--power-red" on
+   one <i>, so :not(.p-icon--power-red) is load-bearing (it keeps that red). */
+.is-dark .p-icon--lock:not(.p-icon--power-red),
+.is-dark .p-icon--clock,
+.is-dark .p-icon--settings,
+.is-dark .p-icon--refresh,
+.is-dark .p-icon--revert,
+.is-dark .p-icon--delete,
+.is-dark .p-icon--document,
+.is-dark .p-icon--power:not(.p-icon--power-red),
+.is-dark .p-icon--window-close,
+.is-dark .p-icon--add,
+.is-dark .p-icon--edit {
+    filter: brightness(0) invert(1);
+}
 /* dividers + progress track that are light-grey */
 .is-dark .ucm-bar { background: #333; }
 .is-dark .ucm-datadisk__donut { background: conic-gradient(#333 0 360deg); }
+/* round D (I3): the round-C pass set the OUTER donut track to conic #333 but
+   missed the INNER "hole" (the ::before circle) — a white #fff disc dead
+   centre on the #262626 card. Match it to the card. The .ucm-datadisk__pct
+   text already flips via the --ucm-grey-dark var flip, so it stays readable. */
+.is-dark .ucm-datadisk__donut::before { background: #262626; }
+/* round D (I1): the GENERIC .ucm-kv dt label. Round C flipped the specific
+   label carriers (.ucm-stat__label / .ucm-gen__label / ...) but missed
+   .ucm-kv dt, which the System card, the Network netcard rows, and the
+   Settings "Theme" + "Inactivity lock" rows actually use. #555 is
+   low-contrast on the #262626 card — lift it to the muted light grey.
+   (The dd VALUES are already fine: they inherit the var flip, or are
+   .ucm-muted which round C lightened.) */
+.is-dark .ucm-kv dt { color: #a8a8a8; }
 
 /* custom thin progress bar (vanilla build has none) */
 .ucm-bar {
@@ -802,6 +839,17 @@ html, body {
     /* the warning is the app's ONE sentence now — let it read on its
        natural line(s) (icon pinned to the first line). */
     flex: 0 0 auto; margin-top: .15rem;
+}
+/* round D (I5): the warning's light palette (dark amber text + near-transparent
+   bg + amber border) reads FAINT on the dark card. Lift it to a bright
+   caution amber for the text and match the BUNDLE's dark caution tokens:
+   --vf-color-background-caution-default hsla(27,100%,50%,.2) and
+   --vf-color-border-caution #c48831. The .p-icon--warning glyph is a BUNDLE
+   icon so it already flips bright — only text/bg/border need dark values. */
+.is-dark .ucm-reset__warn {
+    color: #f0c674;
+    background: hsla(27, 100%, 50%, 0.2);
+    border-color: #c48831;
 }
 .ucm-reset .p-form__group {
     /* round 65: the round-64 grid idiom — every field row is [caption |
