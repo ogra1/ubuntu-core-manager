@@ -40,10 +40,6 @@ apps:
       - network-control
       - network-setup-control
 
-layout:
-  /usr/share/ca-certificates:
-    bind: $SNAP/usr/share/ca-certificates
-
 parts:
   app:
     plugin: dump
@@ -85,7 +81,6 @@ parts:
       chmod +x "$CRAFT_PART_INSTALL/bin/launcher"
     stage-packages:
       - iw 
-      - ca-certificates
 
   electron:
     plugin: nil

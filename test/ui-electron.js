@@ -21,6 +21,8 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const http = require('http');
+const https = require('https');
+const tls = require('tls');
 const net = require('net');
 
 const ROOT = path.join(__dirname, '..');
@@ -45,6 +47,25 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     });
     await new Promise((r) => LP_SERVER.listen(LP_PORT, '127.0.0.1', r));
     const LP_URL = 'http://127.0.0.1:' + LP_PORT;
+    // round J: a SELF-SIGNED TLS localhost UI (the LXD case:
+    // https://127.0.0.1:8443). The <webview> must load it via the app's
+    // scoped certificate-error allowance (guest partition + loopback only).
+    const TLS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-tls-'));
+    const CERT = path.join(TLS_DIR, 'cert.pem'), KEY = path.join(TLS_DIR, 'key.pem');
+    await new Promise((resolve, reject) => {
+        require('child_process').execFile('openssl',
+            ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+             '-keyout', KEY, '-out', CERT, '-subj', '/CN=localhost',
+             '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost'],
+            (err) => (err ? reject(err) : resolve()));
+    });
+    const LPS_PORT = await freePort();
+    const LP_SSL = https.createServer({ cert: fs.readFileSync(CERT), key: fs.readFileSync(KEY) }, (req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<!doctype html><html><head><meta charset="utf-8"><title>UCM E2E TLS Guest</title></head><body><h1>tls guest ok</h1></body></html>');
+    });
+    await new Promise((r) => LP_SSL.listen(LPS_PORT, '127.0.0.1', r));
+    const LP_SSL_URL = 'https://127.0.0.1:' + LPS_PORT;
     await makeServer(SOCK, {
         requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 1, logoutCount: 0,
         netplanYaml: 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n',
@@ -64,6 +85,7 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
                 UCM_STATE_DIR: STATE,
                 UCM_E2E: '1',
                 UCM_E2E_LOCALPAGE_URL: LP_URL,
+                UCM_E2E_LOCALPAGE_SSL: LP_SSL_URL,
                 UCM_LOCAL_PAGES_PREF: path.join(STATE, 'local-pages.pref'),
                 DISPLAY: process.env.DISPLAY || '',
                 WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || '',
@@ -107,8 +129,14 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('the unreachable local page surfaced the load-failed fallback card',
         lp.ok === true && lp.r1 && lp.r1.fallback === true && /Can.t reach/.test(lp.r1.fbText || '') && lp.r1.active === true,
         JSON.stringify(lp.r1));
+    // round J: the SELF-SIGNED TLS local page loaded — the app's scoped
+    // certificate allowance (guest partition + loopback) let the webview
+    // proceed past the cert error to the real guest.
+    ok('the self-signed TLS local page loaded (scoped cert allowance; LXD case)',
+        lp.ok === true && lp.r2 && lp.r2.wv === true && (lp.r2.url === LP_SSL_URL || lp.r2.url === LP_SSL_URL + '/') && lp.r2.title === 'UCM E2E TLS Guest' && lp.r2.active === true,
+        JSON.stringify(lp.r2));
 
     console.log(`\n================= ${passed} passed, ${failed} failed =================`);
-    try { LP_SERVER.close(); fs.rmSync(STATE, { recursive: true, force: true }); fs.unlinkSync(SOCK); } catch {}
+    try { LP_SERVER.close(); LP_SSL.close(); fs.rmSync(STATE, { recursive: true, force: true }); fs.rmSync(TLS_DIR, { recursive: true, force: true }); fs.unlinkSync(SOCK); } catch {}
     process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e); process.exit(2); });

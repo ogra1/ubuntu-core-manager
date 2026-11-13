@@ -1721,6 +1721,37 @@ function setLocalPages(list) {
     localPagesPrefWrite(localPages);
     return getLocalPages();
 }
+/**
+ * Certificate-error policy for the local-page <webview> guests. Some snap web
+ * UIs serve SELF-SIGNED TLS on loopback (LXD: https://127.0.0.1:8443). A
+ * self-signed cert on a localhost address is a local trust decision — there is
+ * no man-in-the-middle channel between the console and the loopback interface,
+ * so verification adds nothing there — but the rest of the kiosk stays fully
+ * verified. The SCOPE has two halves: (a) the handler is attached ONLY to the
+ * guest partition session (session.fromPartition('ucm-local-pages') — the
+ * <webview> guest runs in its OWN session, NOT the default one, so the kiosk's
+ * own contents never see this handler); (b) within that session, only these
+ * errors on a LOOPBACK request host are allowed. `details` = the session
+ * 'certificate-error' payload ({url, error, certificate, mainFrame, ...});
+ * returns true to proceed.
+ */
+const LOCAL_PAGE_CERT_ERRORS = [
+    'CERT_SELF_SIGNED',
+    'CERT_AUTHORITY_INVALID',   // Chromium's usual error for self-signed certs
+    'CERT_COMMON_NAME_INVALID', // CN/SAN not covering the loopback address
+];
+function localPagesAllowSelfSignedCert(details) {
+    if (!details || typeof details !== 'object') return false;
+    // Chromium reports the code as 'net::ERR_CERT_...' — strip the prefix so the
+    // policy matches the stable CERT_... code (VERIFIED live: a refused
+    // self-signed loopback guest delivers error='net::ERR_CERT_AUTHORITY_INVALID').
+    const code = String(details.error || '').replace(/^net::ERR_/, '');
+    if (!LOCAL_PAGE_CERT_ERRORS.includes(code)) return false;
+    try {
+        const host = new URL(details.url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+        return LOCAL_PAGE_HOSTS.includes(host);
+    } catch { return false; }
+}
 
 /* ------------------------------------------------------------------ *
  * 9. Interfaces (plug/slot control)
@@ -1992,6 +2023,7 @@ const api = {
     getAppearance, setAppearance, APPEARANCES, DEFAULT_APPEARANCE,
     // round I: local pages (embedded localhost web UIs)
     getLocalPages, setLocalPages, validLocalPageUrl, validLocalPageName, localPagesError, LOCAL_PAGES_MAX,
+    localPagesAllowSelfSignedCert,
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
@@ -2148,6 +2180,24 @@ function initElectron() {
                 },
             });
         });
+        // round J: self-signed TLS for the LOCAL-PAGE <webview> guests (LXD's
+        // https://127.0.0.1:8443 UI). Verified against electron.d.ts: the
+        // 'certificate-error' event fires on `app` (and per WebContents) — NOT
+        // on Session — so the handler is app-level and scoped to the GUEST:
+        // a <webview> with partition="ucm-local-pages" loads in
+        // session.fromPartition('ucm-local-pages') (its OWN session, not the
+        // default one), so we allow only when the offending webContents BELONGS
+        // to that session AND the loopback/error policy passes. The kiosk's own
+        // contents (default session) never match -> full verification untouched.
+        const lpGuestSession = (typeof eSession.fromPartition === 'function')
+            ? eSession.fromPartition('ucm-local-pages')
+            : null;
+        app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+            const isGuest = !!(lpGuestSession && webContents && webContents.session && webContents.session === lpGuestSession);
+            const allow = isGuest && localPagesAllowSelfSignedCert({ url, error });
+            event.preventDefault();
+            callback(allow);
+        });
 
         // No popups, no webviews, no navigation away from the app.
         win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -2219,16 +2269,22 @@ function initElectron() {
                         const lpUrl = process.env.UCM_E2E_LOCALPAGE_URL;
                         const lpPort = parseInt(lpUrl.split(':')[2] || '9000', 10);
                         const deadUrl = 'http://127.0.0.1:' + (lpPort + 1);
+                        // round J: a self-signed TLS localhost UI (the LXD case) —
+                        // the app's scoped certificate allowance must let the
+                        // <webview> proceed to the guest (page index 2).
+                        const sslUrl = process.env.UCM_E2E_LOCALPAGE_SSL || null;
                         const LP_PROBE = `
                             (async () => {
                                 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
                                 try {
                                     await window.ucmCore.auth.create('e2e-probe-password');
                                     await wait(1200);
-                                    await window.ucmCore.settings.setLocalPages([
+                                    const pages = [
                                         { name: 'Up', url: ${JSON.stringify(lpUrl)} },
                                         { name: 'Down', url: ${JSON.stringify(deadUrl)} },
-                                    ]);
+                                    ];
+                                    ${sslUrl ? 'pages.push({ name: "TLS", url: ' + JSON.stringify(sslUrl) + ' });' : ''}
+                                    await window.ucmCore.settings.setLocalPages(pages);
                                     await wait(700);
                                     const navUp = document.querySelector('.ucm-side a[data-view="lp-0"]');
                                     if (navUp) navUp.click();
@@ -2249,7 +2305,18 @@ function initElectron() {
                                         fallback: fb ? !fb.classList.contains('ucm-hidden') : null,
                                         fbText: fb ? fb.textContent.trim().slice(0, 80) : null,
                                     };
-                                    return { ok: true, r0, r1 };
+                                    ${sslUrl ? `
+                                    const navTls = document.querySelector('.ucm-side a[data-view="lp-2"]');
+                                    if (navTls) navTls.click();
+                                    await wait(2500);
+                                    const wv2 = document.querySelector('#view-lp-2 webview');
+                                    const r2 = {
+                                        active: !document.querySelector('#view-lp-2').classList.contains('ucm-hidden'),
+                                        wv: !!wv2,
+                                        url: wv2 ? wv2.getURL() : null,
+                                        title: wv2 ? wv2.getTitle() : null,
+                                    };
+                                    return { ok: true, r0, r1, r2 };` : 'return { ok: true, r0, r1 };'}
                                 } catch (e) {
                                     return { ok: false, error: String((e && e.message) || e) };
                                 }

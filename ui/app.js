@@ -3275,16 +3275,18 @@ function renderLocalPages() {
         const wv = document.createElement('webview');
         wv.setAttribute('src', e.url);
         wv.setAttribute('class', 'ucm-webview');
-        // sandbox the guest (round I): no node, no host preload. The webview
-        // runs its own isolated origin by default; the partition keeps its
-        // cookies separate from the host page.
-        wv.setAttribute('partition', 'persist:ucm-local-pages');
+        // sandbox the guest (round I): no node, no host preload; the named
+        // partition keeps its cookies separate from the host page AND is the
+        // SCOPE the main-process self-signed-cert allowance applies to
+        // (round J, localPagesAllowSelfSignedCert) — the guest's TLS policy
+        // never leaks onto the kiosk's own contents.
+        wv.setAttribute('partition', 'ucm-local-pages');
         const view = el('section', { class: 'ucm-view ucm-view--webview ucm-hidden', id: 'view-' + e.id, 'data-view': e.id });
         const wrap = el('div', { class: 'ucm-webview__wrap' });
         const fb = el('div', { class: 'ucm-webview__fallback ucm-hidden' },
             el('p', { class: 'ucm-webview__fb-title', text: 'Can\'t reach ' + e.name }),
             el('p', { class: 'ucm-webview__fb-url mono', text: e.url }),
-            el('p', { class: 'ucm-webview__fb-hint', text: 'The page could not be loaded (the snap\'s web UI may be offline or the address changed).' }),
+            el('p', { class: 'ucm-webview__fb-hint', text: 'The page could not be loaded (the snap\'s web UI may be offline, the address changed, or its certificate was rejected).' }),
             el('button', { class: 'p-button ucm-webview__retry', type: 'button', text: 'Retry' }));
         wrap.append(fb, wv);
         view.append(wrap);

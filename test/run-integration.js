@@ -473,13 +473,19 @@ function ok(name, cond, extra = '') {
         const handlers = {};
         const events = {};
         const sends = [];
+        const sessionHandlers = {};
+        const appHandlers = {};
         process.env.UCM_FAKE_ELECTRON = '1';
         const WIRE_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-wire-'));
         process.env.UCM_STATE_DIR = WIRE_STATE;
+        // memoized partition sessions: the SAME partition name must return the
+        // SAME object — main.js scopes the cert allowance by object identity
+        // (webContents.session === session.fromPartition('ucm-local-pages')).
+        const FAKE_PARTITIONS = {};
         global.UCM_FAKE_ELECTRON = {
             app: {
                 requestSingleInstanceLock: () => true,
-                on: () => {}, whenReady: () => Promise.resolve(),
+                on: (ch, fn) => { appHandlers[ch] = fn; }, whenReady: () => Promise.resolve(),
                 quit: () => {},
             },
             BrowserWindow: class {
@@ -499,7 +505,13 @@ function ok(name, cond, extra = '') {
                 handle: (ch, fn) => { handlers[ch] = fn; },
                 on: (ch, fn) => { events[ch] = fn; },
             },
-            session: { defaultSession: { webRequest: { onHeadersReceived: () => {} }, localAuthenticated: false } },
+            session: {
+            fromPartition: (name) => {
+                if (!FAKE_PARTITIONS[name]) FAKE_PARTITIONS[name] = { name, webRequest: { onHeadersReceived: () => {} }, on: (ch, fn) => { sessionHandlers[name + ':' + ch] = fn; } };
+                return FAKE_PARTITIONS[name];
+            },
+            defaultSession: { webRequest: { onHeadersReceived: () => {} }, localAuthenticated: false },
+        },
         };
         try {
             delete require.cache[require.resolve(path.join(__dirname, '..', 'main.js'))];
@@ -636,6 +648,37 @@ function ok(name, cond, extra = '') {
                         JSON.stringify(mw.authStatus().localPages || []) === JSON.stringify([]), JSON.stringify(mw.authStatus().localPages));
                 } else {
                     ok('settings:set-local-pages handler registered', false);
+                }
+                // round J: the certificate-error handler is APP-level (verified
+                // against electron.d.ts: the event fires on app / WebContents,
+                // NOT on Session) and scoped to the GUEST partition via
+                // webContents.session === session.fromPartition('ucm-local-pages').
+                // The fake fromPartition shares one guest-session object, so
+                // driving with/without it models guest vs kiosk contents.
+                const GUEST_WC = { session: global.UCM_FAKE_ELECTRON.session.fromPartition('ucm-local-pages') };
+                const HOST_WC = { session: { name: 'default' } };
+                const driveCert = (wc, url, error) => {
+                    let cb = null, prevented = false;
+                    appHandlers['certificate-error'](
+                        { preventDefault: () => { prevented = true; } }, wc, url, error, {},
+                        (v) => { cb = v; });
+                    return { cb, prevented };
+                };
+                if (typeof appHandlers['certificate-error'] === 'function') {
+                    const okCase = driveCert(GUEST_WC, 'https://127.0.0.1:8443', 'net::ERR_CERT_AUTHORITY_INVALID');
+                    ok('certificate-error: self-signed on loopback in the GUEST partition is ALLOWED (real chromium format)',
+                        okCase.prevented === true && okCase.cb === true, JSON.stringify({ cb: okCase.cb, prevented: okCase.prevented }));
+                    const denyHost = driveCert(GUEST_WC, 'https://10.0.0.5:8443', 'net::ERR_CERT_AUTHORITY_INVALID');
+                    ok('certificate-error: a NON-loopback host is DENIED even in the guest partition',
+                        denyHost.cb === false, JSON.stringify(denyHost.cb));
+                    const denyErr = driveCert(GUEST_WC, 'https://127.0.0.1:8443', 'net::ERR_CERT_DATE_INVALID');
+                    ok('certificate-error: an expired cert is DENIED even in the guest partition',
+                        denyErr.cb === false, JSON.stringify(denyErr.cb));
+                    const denyKiosk = driveCert(HOST_WC, 'https://127.0.0.1:8443', 'net::ERR_CERT_AUTHORITY_INVALID');
+                    ok('certificate-error: the KIOSK contents (default session) are DENIED (stays fully verified)',
+                        denyKiosk.cb === false, JSON.stringify(denyKiosk.cb));
+                } else {
+                    ok('the app-level certificate-error handler is registered (round J)', false);
                 }
                 // Guarded local-admin reset: console-privileged (active session),
                 // re-confirms the CURRENT password, wipes $SNAP_COMMON/admin.cred
@@ -1389,6 +1432,32 @@ function ok(name, cond, extra = '') {
             ok('setLocalPages rejects ' + label,
                 threw && JSON.stringify(m.getLocalPages().list.map((e) => e.name)) === JSON.stringify(['HA', 'Grafana']));
         }
+        // round J: the local-page self-signed TLS policy (LXD's
+        // https://127.0.0.1:8443). The handler is attached ONLY to the guest
+        // partition session (see the [10] handler check below), so the unit
+        // policy is: the error class AND a loopback request host.
+        const cert = (url, error) => m.localPagesAllowSelfSignedCert({ url, error });
+        ok('allow: the REAL chromium error format (net::ERR_ prefix) on loopback (the LXD case)',
+            cert('https://127.0.0.1:8443', 'net::ERR_CERT_AUTHORITY_INVALID') === true
+            && cert('https://127.0.0.1:8443', 'net::ERR_CERT_COMMON_NAME_INVALID') === true, '');
+        ok('allow: self-signed / invalid-authority / invalid-CN on loopback (the LXD case)',
+            cert('https://127.0.0.1:8443', 'CERT_SELF_SIGNED') === true
+            && cert('https://127.0.0.1:8443', 'CERT_AUTHORITY_INVALID') === true
+            && cert('https://127.0.0.1:8443', 'CERT_COMMON_NAME_INVALID') === true
+            && cert('https://localhost:8443', 'CERT_SELF_SIGNED') === true
+            && cert('https://[::1]:8443', 'CERT_SELF_SIGNED') === true, '');
+        ok('deny: the same errors on a NON-loopback host (no blanket allowance)',
+            cert('https://10.0.0.5:8443', 'CERT_SELF_SIGNED') === false
+            && cert('https://192.168.1.10:8443', 'CERT_AUTHORITY_INVALID') === false
+            && cert('https://example.com', 'CERT_SELF_SIGNED') === false, '');
+        ok('deny: other cert errors (expired/revoked) — a self-signed UI is not an expired-corpse excuse',
+            cert('https://127.0.0.1:8443', 'CERT_DATE_INVALID') === false
+            && cert('https://127.0.0.1:8443', 'CERT_REVOKED') === false, '');
+        ok('deny: a malformed details payload (never proceed)',
+            m.localPagesAllowSelfSignedCert(null) === false
+            && m.localPagesAllowSelfSignedCert({ url: 'not a url', error: 'CERT_SELF_SIGNED' }) === false
+            && m.localPagesAllowSelfSignedCert({ url: 'https://127.0.0.1:8443' }) === false, '');
+
         // an empty list is valid (clearing everything)
         const rClear = m.setLocalPages([]);
         ok('setLocalPages([]) clears the list', rClear.list.length === 0 && readPref() !== null, JSON.stringify(rClear));
