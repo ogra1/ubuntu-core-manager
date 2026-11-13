@@ -411,8 +411,14 @@ html, body {
 .is-dark .ucm-stat { background: #262626; border-color: #333; }
 .is-dark .ucm-deploy { background: #262626; border-color: #333; }
 .is-dark .ucm-session-chip { background: #2a2a2a; border-color: #3a3a3a; color: #d8d8d8; }
-.is-dark .ucm-brand__logo { background: #262626; }
-.is-dark .ucm-brand__logo .p-icon { color: #fff; }
+/* round F: the brand logo is the sidebar's fixed identity — it does NOT
+   change with the theme (the user's ask). The base .ucm-brand__logo is a
+   #fff circle with a black user glyph (the .p-icon--user is a theme-flip
+   dual data-URI: black in light, white in dark). Round C wrongly darkened the
+   circle to #262626 (blending it into the rail); those two rules are removed.
+   The round-F dark rule below keeps the circle #fff and forces the glyph
+   back to BLACK (filter brightness(0)) so it stays visible on the white
+   circle — i.e. the dark logo is pixel-identical to the light one. */
 /* the explicitly-mid-grey text carriers (labels / hints / counts / captions)
    that the inherited flip does not reach */
 .is-dark .ucm-stat__label,
@@ -516,6 +522,44 @@ html, body {
 /* ---- the lock/login + setup gate card text ---- */
 .is-dark .ucm-login__foot { color: #a8a8a8; }
 .is-dark .ucm-lockscreen-note { color: #d0d0d0; }
+
+/* ==========================================================================
+   DARK MODE POLISH (round F) — three measured user reports.
+   Purely ADDITIVE / CORRECTING — light mode stays byte-for-byte (the light
+   suite is the regression proof).
+   ========================================================================== */
+/* F1: the config page's Services card — the service NAME + BOOT STATUS were
+   hardcoded mid-greys (#3b3b3b / #757575) that the round-C var flip never
+   reached (they're explicit colors, not inherited). Faint on the #262626
+   modal card. Lift them to the round-C tiers; darken the row divider. */
+.is-dark .ucm-svc__name { color: #e8e8e8; }
+.is-dark .ucm-svc__boot { color: #a8a8a8; }
+.is-dark .ucm-svc { border-color: #3a3a3a; }
+
+/* F2: keep the sidebar fixed across themes (the user's ask). The rail is
+   already #262626 in both; the two things that wrongly moved are the active
+   menu stripe + the logo (logo handled above). The bundle colours the active
+   ::before stripe with --vf-color-text-default (black in light, white in
+   dark) — pin it back to black so the "black stripe next to the orange" is
+   identical in both themes. (The orange border-left is already theme-
+   independent: --ucm-orange.) */
+/* the logo circle stays #fff, but the .p-icon--user is a theme-flip dual
+   data-URI (black glyph in light, WHITE glyph in dark) — on the #fff circle
+   the dark white glyph would be invisible. Force it back to solid black so
+   the logo is identical in both themes. (brightness(0) = the inverse of
+   round D's brightness(0) invert(1) white-icon idiom.) */
+.is-dark .ucm-brand__logo i { filter: brightness(0); }
+.is-dark .ucm-side .p-side-navigation__link.is-active::before { background-color: #000; }
+
+/* F3: the lock counter pill's yellow countdown phase. Its light palette
+   (#8a5a00 / rgba(249,155,17,.1)) already matches the reset warning's LIGHT
+   caution, but in dark it stayed light (faint). Match the reset warning's
+   DARK caution exactly (#f0c674 / hsla(27,100%,50%,.2) / #c48831). */
+.is-dark .ucm-session-chip.is-warning {
+    color: #f0c674;
+    background: hsla(27, 100%, 50%, 0.2);
+    border-color: #c48831;
+}
 
 /* custom thin progress bar (vanilla build has none) */
 .ucm-bar {

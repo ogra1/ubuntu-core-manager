@@ -5363,6 +5363,93 @@ function mockFactoryJs() {
     await page.keyboard.press('Escape');
     await wait(200);
 
+
+    // ---- 6a3. round F: three dark-polish fixes — (F1) the config page's
+    //      Services card (service NAME + BOOT STATUS) that read faint, (F2) the
+    //      sidebar (the logo circle + the active-item stripe must NOT change
+    //      with the theme), (F3) the lock pill's yellow countdown now matches
+    //      the reset warning's dark caution. The light read is the regression
+    //      proof (F1 light greys + F2 light sidebar + F3 light amber unchanged).
+    await page.click('.ucm-side a[data-view="snaps"]');
+    await wait(400);
+    const fOpenCfg = (name) => page.evaluate((nm) => {
+        const rows = [...document.querySelectorAll('#snapsCards tbody tr')];
+        const r = rows.find((x) => x.cells && x.cells[0].textContent.trim() === nm);
+        r.querySelectorAll('.ucm-actions button')[0].click();
+    }, name);
+    await fOpenCfg('mosquitto'); // the config modal's Services card renders .ucm-svc
+    await wait(700);
+    const readF = () => page.evaluate(() => {
+        const col = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).color : null; };
+        const bg = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).backgroundColor : null; };
+        const i = document.querySelector('.ucm-brand__logo i');
+        const active = document.querySelector('.ucm-side .p-side-navigation__link.is-active');
+        const svc = document.querySelector('.ucm-svc');
+        const chip = document.querySelector('#sessionChip');
+        chip.classList.add('is-warning'); // read the countdown phase's palette
+        const ccs = getComputedStyle(chip);
+        const chipWarn = { color: ccs.color, bg: ccs.backgroundColor, border: ccs.borderColor };
+        chip.classList.remove('is-warning');
+        return {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            svcPresent: !!svc,
+            svcName: col('.ucm-svc__name'),
+            svcBoot: col('.ucm-svc__boot'),
+            logoBg: bg('.ucm-brand__logo'),
+            logoGlyphFilter: i ? getComputedStyle(i).filter : null,
+            stripeBeforeBg: active ? getComputedStyle(active, '::before').backgroundColor : null,
+            stripeBorderLeft: active ? getComputedStyle(active).borderLeftColor : null,
+            chipWarn: chipWarn,
+        };
+    });
+    const fLight = await readF();
+    if (fLight.isDark !== false)
+        console.log('PAGE ERROR: 6a3 must start in the default light state (round F)');
+    if (!fLight.svcPresent)
+        console.log('PAGE ERROR: 6a3 — the mosquitto config Services card has no service row to pin (round F)');
+    // F1 light regression: the service name/boot stay their light greys.
+    if (fLight.svcName !== 'rgb(59, 59, 59)' || fLight.svcBoot !== 'rgb(117, 117, 117)')
+        console.log('PAGE ERROR: F1 — the LIGHT service name/boot must be #3b3b3b/#757575 (got ' + JSON.stringify([fLight.svcName, fLight.svcBoot]) + ') (round F)');
+    // F2 light: the sidebar is logo #fff / no glyph filter / black stripe / orange border.
+    if (fLight.logoBg !== 'rgb(255, 255, 255)' || fLight.logoGlyphFilter !== 'none' || fLight.stripeBeforeBg !== 'rgb(0, 0, 0)' || fLight.stripeBorderLeft !== 'rgb(233, 84, 32)')
+        console.log('PAGE ERROR: F2 — the LIGHT sidebar must be logo #fff / no glyph filter / black stripe / orange border (got ' + JSON.stringify([fLight.logoBg, fLight.logoGlyphFilter, fLight.stripeBeforeBg, fLight.stripeBorderLeft]) + ') (round F)');
+    // F3 light: the chip warning keeps its light amber (round F only changes dark).
+    if (fLight.chipWarn.color !== 'rgb(138, 90, 0)' || fLight.chipWarn.bg !== 'rgba(249, 155, 17, 0.1)' || fLight.chipWarn.border !== 'rgba(249, 155, 17, 0.5)')
+        console.log('PAGE ERROR: F3 — the LIGHT chip warning must keep its light amber (got ' + JSON.stringify(fLight.chipWarn) + ') (round F)');
+
+    // force dark (manual class toggle — the round-E lesson: do NOT call
+    // setAppearance here, it would pollute the cumulative __appearanceCalls
+    // counter the round-A 2c section asserts).
+    await page.evaluate(() => document.documentElement.classList.add('is-dark'));
+    await wait(300);
+    const fDark = await readF();
+    if (fDark.isDark !== true)
+        console.log('PAGE ERROR: 6a3 — forcing dark must flip <html>.is-dark (round F)');
+    // F1: the service name + boot lift to the light tiers on the dark card.
+    if (fDark.svcName !== 'rgb(232, 232, 232)')
+        console.log('PAGE ERROR: F1 — the dark service name must be #e8e8e8 (got ' + fDark.svcName + ') (round F)');
+    if (fDark.svcBoot !== 'rgb(168, 168, 168)')
+        console.log('PAGE ERROR: F1 — the dark service boot status must be #a8a8a8 (got ' + fDark.svcBoot + ') (round F)');
+    // F2: the sidebar is THEME-INDEPENDENT — dark must equal the light values.
+    if (fDark.logoBg !== 'rgb(255, 255, 255)')
+        console.log('PAGE ERROR: F2 — the dark logo circle must stay #fff (not change with the theme; got ' + fDark.logoBg + ') (round F)');
+    if (fDark.logoGlyphFilter !== 'brightness(0)')
+        console.log('PAGE ERROR: F2 — the dark logo glyph must be forced black on the #fff circle (filter brightness(0), got ' + fDark.logoGlyphFilter + ' — the theme-flip white glyph would vanish on white) (round F)');
+    if (fDark.stripeBeforeBg !== 'rgb(0, 0, 0)')
+        console.log('PAGE ERROR: F2 — the dark active stripe must stay black (not flip to white; got ' + fDark.stripeBeforeBg + ') (round F)');
+    if (fDark.stripeBorderLeft !== 'rgb(233, 84, 32)')
+        console.log('PAGE ERROR: F2 — the orange border-left must stay orange (got ' + fDark.stripeBorderLeft + ') (round F)');
+    // F3: the chip warning now matches the reset warning's dark caution palette.
+    if (fDark.chipWarn.color !== 'rgb(240, 198, 116)' || fDark.chipWarn.bg !== 'rgba(255, 115, 0, 0.2)' || fDark.chipWarn.border !== 'rgb(196, 136, 49)')
+        console.log('PAGE ERROR: F3 — the dark chip warning must match the reset warning caution #f0c674 / hsla(27,100%,50%,.2) / #c48831 (got ' + JSON.stringify(fDark.chipWarn) + ') (round F)');
+    await page.screenshot({ path: path.join(SHOTS, '20-dark-config-services.png'), fullPage: true });
+
+    // revert to light + close the config modal so the 6b lock test starts clean.
+    await page.evaluate(() => document.documentElement.classList.remove('is-dark'));
+    await wait(300);
+    await page.keyboard.press('Escape');
+    await wait(200);
+
     // ---- 6b. Round 48f: locking with popups OPEN must close them. The
     // modals are body-appended (z60) and would otherwise sit in front of the
     // login card, still interactive while the console is locked. Re-open the
