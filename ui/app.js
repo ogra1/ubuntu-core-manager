@@ -302,7 +302,7 @@ async function doCreatePassword() {
     btn.classList.add('is-disabled');
     try {
         applyAuthPayload(await core.auth.create(pw));
-        toast('positive', 'Administrator created', 'Local console password set. The store remains optional.');
+        toast('positive', 'Administrator created', 'Local console password set.');
     } catch (e) {
         setFieldState('setupPasswordGroup', 'error', e.message);
         setFieldState('setupConfirmGroup', '');

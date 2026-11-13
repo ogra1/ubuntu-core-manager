@@ -932,6 +932,9 @@ function mockFactoryJs() {
             isDark: document.documentElement.classList.contains('is-dark'),
             cardBg: card ? getComputedStyle(card).backgroundColor : null,
             noteColor: note ? getComputedStyle(note).color : null,
+            // round H: the gate copy — pin the EXACT (de-worded) strings.
+            noteText: note ? note.textContent.trim() : null,
+            footText: (() => { const f = document.querySelector('#setupView .ucm-login__foot'); return f ? f.textContent.trim() : null; })(),
         };
         return { light };
     });
@@ -939,6 +942,10 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: 1b must start in the default light state (round E)');
     if (setupCard.light.cardBg !== 'rgb(255, 255, 255)')
         console.log('PAGE ERROR: the light setup card must be white (got ' + setupCard.light.cardBg + ') (round E)');
+    if (setupCard.light.noteText !== 'Set a local administrator password.')
+        console.log('PAGE ERROR: the setup note must read exactly "Set a local administrator password." (got ' + JSON.stringify(setupCard.light.noteText) + ') (round H)');
+    if (setupCard.light.footText !== 'This step only appears when no local password exists.')
+        console.log('PAGE ERROR: the setup foot must read exactly "This step only appears when no local password exists." (got ' + JSON.stringify(setupCard.light.footText) + ') (round H)');
     await page.evaluate(() => document.documentElement.classList.add('is-dark'));
     await wait(300);
     const setupDark = await page.evaluate(() => {
@@ -983,6 +990,14 @@ function mockFactoryJs() {
     await page.screenshot({ path: path.join(SHOTS, '3-dashboard-clean.png'), fullPage: true });
     const chipGone = await page.evaluate(() => !document.querySelector('#storeChip') && !document.querySelector('#storeModal'));
     if (!chipGone) console.log('PAGE ERROR: store chip/modal still present in the DOM');
+    // round H: the setup-success toast drops "The store remains optional."
+    const setupToast = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll('.ucm-toasts .p-notification'));
+        const t = all.find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Administrator created');
+        return t ? { title: t.querySelector('.p-notification__title').textContent, msg: (t.querySelector('.p-notification__message') || {}).textContent } : { none: true };
+    });
+    if (!setupToast || setupToast.none !== undefined || setupToast.msg !== 'Local console password set.')
+        console.log('PAGE ERROR: the setup-success toast must be "Administrator created" / "Local console password set." (the store-optional sentence is dropped; got ' + JSON.stringify(setupToast) + ') (round H)');
     // CSS-integrity guard (round-17 regression): a mangled rule in app.css
     // (e.g. a rule body swallowing the next rules) is SILENT — no page error,
     // the styles just stop applying. Pin the two computed styles that broke
@@ -5538,12 +5553,19 @@ function mockFactoryJs() {
             isDark: document.documentElement.classList.contains('is-dark'),
             loginVisible: !document.querySelector('#loginView').classList.contains('ucm-hidden'),
             cardBg: card ? getComputedStyle(card).backgroundColor : null,
+            // round H: the gate copy — pin the EXACT (de-worded) strings.
+            noteText: note ? note.textContent.trim() : null,
+            footText: (() => { const f = document.querySelector('#loginView .ucm-login__foot'); return f ? f.textContent.trim() : null; })(),
         };
     });
     if (logInLight.isDark !== false || logInLight.loginVisible !== true)
         console.log('PAGE ERROR: 6b1 must start in the light, locked state (got ' + JSON.stringify([logInLight.isDark, logInLight.loginVisible]) + ') (round E)');
     if (logInLight.cardBg !== 'rgb(255, 255, 255)')
         console.log('PAGE ERROR: E3 — the LIGHT login card must be white (got ' + logInLight.cardBg + ') (round E)');
+    if (logInLight.noteText !== 'Enter the local administrator password.')
+        console.log('PAGE ERROR: the login note must read exactly "Enter the local administrator password." (got ' + JSON.stringify(logInLight.noteText) + ') (round H)');
+    if (logInLight.footText !== 'Sessions lock after 15 minutes of inactivity.')
+        console.log('PAGE ERROR: the login foot must keep ONLY the timeout info — "Sessions lock after XX minutes of inactivity." (got ' + JSON.stringify(logInLight.footText) + ') (round H)');
     await page.evaluate(() => document.documentElement.classList.add('is-dark'));
     await wait(300);
     const logInDark = await page.evaluate(() => {

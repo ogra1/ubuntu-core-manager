@@ -35,8 +35,7 @@
         <form id="setupForm" class="ucm-login__body" novalidate>
             <p class="ucm-lockscreen-note">
                 <i class="p-icon--information"></i>
-                Set a local administrator password for this console. It is stored
-                on this device only and verified offline — no network required.
+                Set a local administrator password.
             </p>
             <div class="p-form__group" id="setupPasswordGroup">
                 <label class="p-form__label" for="setupPassword">Administrator password</label>
@@ -54,8 +53,7 @@
             <button class="p-button--brand" type="submit" id="setupBtn">Create password &amp; continue</button>
         </form>
         <div class="ucm-login__foot">
-            This step only appears on first boot, before any password exists.
-            It completes with or without network connectivity.
+            This step only appears when no local password exists.
         </div>
     </div>
 </section>
@@ -76,7 +74,7 @@
         <form id="loginForm" class="ucm-login__body" novalidate>
             <p class="ucm-lockscreen-note">
                 <i class="p-icon--information"></i>
-                Enter the local administrator password for this device.
+                Enter the local administrator password.
             </p>
             <div class="p-form__group" id="loginPasswordGroup">
                 <label class="p-form__label" for="loginPassword">Password</label>
@@ -87,8 +85,7 @@
             <button class="p-button--brand" type="submit" id="loginBtn">Unlock console</button>
         </form>
         <div class="ucm-login__foot">
-            Verified offline on this device. <span id="lockNote">Sessions lock after 15 minutes
-            of inactivity.</span> Store access is optional and configured separately.
+            <span id="lockNote">Sessions lock after 15 minutes of inactivity.</span>
         </div>
     </div>
 </section>
