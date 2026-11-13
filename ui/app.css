@@ -379,9 +379,15 @@ html, body {
    p-switch re-tint (off = light/grey, on = dark/orange). Sits in the .ucm-kv
    dd, so margin 0 (the bundle switch carries no margin; the kv row provides
    the spacing). */
-.ucm-theme__sw { display: inline-flex; margin: 0; }
+.ucm-theme__sw { display: inline-flex; margin: 0; padding-top: 0; }
 /* round D (I4): the Light/Dark value that sits next to the Theme toggle. */
 .ucm-theme__label { margin-left: .5rem; font-size: .9rem; color: var(--ucm-grey-dark); }
+/* round G (2): the Theme ROW centres the toggle + the Light/Dark label on one
+   axis. The bundle's global `label` rule (padding-top: .41rem) inflated the
+   switch box and pinned the 16px slider to the box BOTTOM, so the inline text
+   sat 3px below the slider centre. The padding-top:0 above zeroes the phantom
+   on the switch itself; the flex row below does the centring. */
+.ucm-theme__row { display: flex; align-items: center; }
 .ucm-theme__sw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
 .ucm-theme__sw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
 .ucm-theme__sw .p-switch__slider { background: #e0e0e0; }
@@ -461,6 +467,12 @@ html, body {
 }
 /* dividers + progress track that are light-grey */
 .is-dark .ucm-bar { background: #333; }
+/* round G (1): the memory gauge's DEFAULT fill is var(--ucm-aubergine) =
+   #262626 — IDENTICAL to the dark stat card, so the used arc vanished. Lift
+   the normal-case fill to the brand orange (the same colour the disk donut
+   uses for its used arc). The caution/negative fills keep their semantic
+   --vf colors (both still visible on dark: #f99b11 / #c7162b). */
+.is-dark .ucm-bar__fill { background: var(--ucm-orange); }
 .is-dark .ucm-datadisk__donut { background: conic-gradient(#333 0 360deg); }
 /* round D (I3): the round-C pass set the OUTER donut track to conic #333 but
    missed the INNER "hole" (the ::before circle) — a white #fff disc dead

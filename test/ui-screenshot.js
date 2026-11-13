@@ -1397,6 +1397,9 @@ function mockFactoryJs() {
             rows: Array.from(card.querySelectorAll('dt')).map((d) => d.textContent.trim()),
             isSwitch: !!slider,
             checked: sw.checked,
+            // round G (2): is the Light/Dark label centred on the slider? (delta of
+            // vertical centres, px — want ~0; the pre-fix phantom pushed it +3px low).
+            alignDelta: (() => { const l = document.querySelector('#themeLabel'); if (!l) return null; return +(l.getBoundingClientRect().top + l.getBoundingClientRect().height / 2 - (slider.getBoundingClientRect().top + slider.getBoundingClientRect().height / 2)).toFixed(2); })(),
             sliderBg: getComputedStyle(slider).backgroundColor,
             cardBg: getComputedStyle(card).backgroundColor,
             isDark: document.documentElement.classList.contains('is-dark'),
@@ -1410,6 +1413,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the Theme control must be a p-switch toggle (a pulldown is not wanted) — no .p-switch__slider found (round C)');
         if (aCard.checked !== false)
             console.log('PAGE ERROR: the Theme toggle must default to OFF (light = the shipped appearance) — got checked=' + aCard.checked + ' (round C)');
+        if (aCard.alignDelta === null || Math.abs(aCard.alignDelta) > 1)
+            console.log('PAGE ERROR: the LIGHT Theme toggle + label must be centred on one axis (got delta ' + aCard.alignDelta + 'px, want within 1px of the slider centre) (round G)');
         // the 48a re-tint: an OFF slider is grey (not the bundle link-blue, not
         // orange) — pins the General-card switch look, not the raw bundle.
         if (aCard.sliderBg !== 'rgb(224, 224, 224)')
@@ -1435,6 +1440,7 @@ function mockFactoryJs() {
           return {
             mock: window.__mockCore.settings.__appearance(),
             checked: sw.checked,
+            alignDelta: (() => { const l = document.querySelector('#themeLabel'); if (!l) return null; return +(l.getBoundingClientRect().top + l.getBoundingClientRect().height / 2 - (slider.getBoundingClientRect().top + slider.getBoundingClientRect().height / 2)).toFixed(2); })(),
             sliderBg: getComputedStyle(slider).backgroundColor,
             isDark: document.documentElement.classList.contains('is-dark'),
             cardBg: getComputedStyle(card).backgroundColor,
@@ -1451,6 +1457,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: toggling to dark must flip <html>.is-dark live (got ' + aDarkUi.isDark + ') (round C)');
         if (aDarkUi.checked !== true)
             console.log('PAGE ERROR: the Theme toggle must be ON when dark (got checked=' + aDarkUi.checked + ') (round C)');
+        if (aDarkUi.alignDelta === null || Math.abs(aDarkUi.alignDelta) > 1)
+            console.log('PAGE ERROR: the DARK Theme toggle + label must be centred on one axis (got delta ' + aDarkUi.alignDelta + 'px, want within 1px of the slider centre) (round G)');
         if (aDarkUi.sliderBg !== 'rgb(233, 84, 32)')
             console.log('PAGE ERROR: the ON theme slider must be the 48a orange (#e95420) — got ' + aDarkUi.sliderBg + ' (round C)');
         if (aDarkUi.cardBg !== 'rgb(38, 38, 38)')
@@ -5393,6 +5401,10 @@ function mockFactoryJs() {
         return {
             isDark: document.documentElement.classList.contains('is-dark'),
             svcPresent: !!svc,
+            // round G (1): the dashboard memory gauge fills (read while the config modal is
+            // open — the dashboard view is in the DOM, hidden-view computed styles resolve).
+            barFill: (() => { const f = document.querySelector('#barMem .ucm-bar__fill'); return f ? getComputedStyle(f).backgroundColor : null; })(),
+            barTrack: (() => { const b = document.querySelector('#barMem'); return b ? getComputedStyle(b).backgroundColor : null; })(),
             svcName: col('.ucm-svc__name'),
             svcBoot: col('.ucm-svc__boot'),
             logoBg: bg('.ucm-brand__logo'),
@@ -5416,6 +5428,9 @@ function mockFactoryJs() {
     // F3 light: the chip warning keeps its light amber (round F only changes dark).
     if (fLight.chipWarn.color !== 'rgb(138, 90, 0)' || fLight.chipWarn.bg !== 'rgba(249, 155, 17, 0.1)' || fLight.chipWarn.border !== 'rgba(249, 155, 17, 0.5)')
         console.log('PAGE ERROR: F3 — the LIGHT chip warning must keep its light amber (got ' + JSON.stringify(fLight.chipWarn) + ') (round F)');
+    // G1 light regression: the memory bar keeps its aubergine fill on the light track.
+    if (fLight.barFill !== 'rgb(38, 38, 38)' || fLight.barTrack !== 'rgb(238, 238, 238)')
+        console.log('PAGE ERROR: G1 — the LIGHT memory bar must be the aubergine fill #262626 on the #eee track (got ' + JSON.stringify([fLight.barFill, fLight.barTrack]) + ') (round G)');
 
     // force dark (manual class toggle — the round-E lesson: do NOT call
     // setAppearance here, it would pollute the cumulative __appearanceCalls
@@ -5442,6 +5457,12 @@ function mockFactoryJs() {
     // F3: the chip warning now matches the reset warning's dark caution palette.
     if (fDark.chipWarn.color !== 'rgb(240, 198, 116)' || fDark.chipWarn.bg !== 'rgba(255, 115, 0, 0.2)' || fDark.chipWarn.border !== 'rgb(196, 136, 49)')
         console.log('PAGE ERROR: F3 — the dark chip warning must match the reset warning caution #f0c674 / hsla(27,100%,50%,.2) / #c48831 (got ' + JSON.stringify(fDark.chipWarn) + ') (round F)');
+    // G1: the dark memory gauge must NOT vanish — the default (aubergine) fill lifted to the
+    // brand orange; the track stays #333.
+    if (fDark.barFill !== 'rgb(233, 84, 32)')
+        console.log('PAGE ERROR: G1 — the dark memory bar fill must be the brand orange (the aubergine #262626 matched the card and vanished; got ' + fDark.barFill + ') (round G)');
+    if (fDark.barTrack !== 'rgb(51, 51, 51)')
+        console.log('PAGE ERROR: G1 — the dark memory bar track must stay #333 (got ' + fDark.barTrack + ') (round G)');
     await page.screenshot({ path: path.join(SHOTS, '20-dark-config-services.png'), fullPage: true });
 
     // revert to light + close the config modal so the 6b lock test starts clean.
