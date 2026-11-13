@@ -262,12 +262,17 @@ function mockFactoryJs() {
            suite is the light-regression proof). */
         let __appearance = 'light';
         let __appearanceCalls = 0;
+        /* round I: local pages (embedded localhost web UIs) — mock of main.js
+           localPages + setLocalPages. Default [] = a fresh console (no pages). */
+        let __localPages = [];
+        let __localPagesCalls = 0;
         const status = () => ({
             initialized: localSet,
             authenticated: localAuthed,
             expiresAt: (localAuthed && __lockTimeout !== 'off') ? Date.now() + Number(__lockTimeout) * 60000 : null,
             timeoutMs: (__lockTimeout === 'off') ? null : Number(__lockTimeout) * 60000,
             appearance: __appearance,
+            localPages: __localPages.map((e) => ({ name: e.name, url: e.url, id: 'lp-' + __localPages.indexOf(e) })),
             storeAuthenticated: false,
             storeUsername: null,
         });
@@ -344,6 +349,30 @@ function mockFactoryJs() {
                     return { value: v, allowed, default: 'light' };
                 },
                 __appearance: () => ({ value: __appearance, calls: __appearanceCalls }),
+                // round I: local pages (mock of main.js setLocalPages). The mock
+                // mirrors main.js: VALIDATE (loopback + name + dupes) then persist
+                // + PUSH status to __SUBS (like setAppearance) — so the renderer's
+                // applyAuthPayload path is exercised exactly as in production.
+                async setLocalPages(list) {
+                    const HOSTS = ['localhost', '127.0.0.1', '::1'];
+                    const valid = (u) => { try { const x = new URL(u); const host = x.hostname.toLowerCase().replace(/^\[|\]$/g, ''); return (x.protocol === 'http:' || x.protocol === 'https:') && HOSTS.includes(host); } catch (e) { return false; } };
+                    if (!Array.isArray(list)) throw new Error('invalid local pages: not a list');
+                    if (list.length > 10) throw new Error('invalid local pages: too many local pages (max 10)');
+                    const names = new Set();
+                    for (const e of list) {
+                        const n = String((e && e.name) || '').trim();
+                        if (n.length < 1 || n.length > 40) throw new Error('invalid local pages: invalid name');
+                        if (typeof (e && e.url) !== 'string' || !valid(e.url)) throw new Error('invalid local pages: invalid url');
+                        const k = n.toLowerCase(); if (names.has(k)) throw new Error('invalid local pages: duplicate name: ' + k);
+                        names.add(k);
+                    }
+                    __localPagesCalls += 1;
+                    __localPages = list.map((e) => ({ name: String(e.name).trim(), url: e.url }));
+                    const p = status();
+                    __SUBS.forEach((f) => { try { f(p); } catch (e) {} });
+                    return { list: __localPages.map((e) => ({ name: e.name, url: e.url })), max: 10 };
+                },
+                __localpages: () => ({ value: __localPages, calls: __localPagesCalls }),
             },
             store: {
                 // Backend-only (not used by the UI anymore); kept so the
@@ -1320,14 +1349,14 @@ function mockFactoryJs() {
       // early so the ORDER guard below fires as a clean PAGE ERROR instead of
       // the geometry reads (which assume 3 cards, incl. cards[2] = Reset)
       // throwing a FATAL.
-      if (cards.length < 3)
-        return { colClass: col.className, colSpan: getComputedStyle(col).gridColumnEnd, titles, short: true, cardW: 0, colW: 0, cardStyles: cards.map((c) => c.getAttribute('style')), rowW: 0, firstTop: 0, gap: 0, warnTopGap: 0 };
+      if (cards.length < 4)
+        return { colClass: col.className, colSpan: getComputedStyle(col).gridColumnEnd, titles, short: true, cardW: 0, colW: 0, cardStyles: cards.map((c) => c.getAttribute('style')), rowW: 0, firstTop: 0, gap: 0, warnTopGap: 0, resetHdr: null };
       const r1 = cards[0].getBoundingClientRect(), r2 = cards[1].getBoundingClientRect();
       const rr = row.getBoundingClientRect(), rc = col.getBoundingClientRect();
       const warn = document.querySelector('.ucm-reset__warn').getBoundingClientRect();
-      // round B: the Reset card is the BOTTOM-most (the user's prepend rule) —
-      // it is cards[2] now, so its header is cards[2]'s.
-      const hdr = cards[2].querySelector('.p-card__header').getBoundingClientRect();
+      // the Reset card is the BOTTOM-most (the user's prepend rule) — round I
+      // prepended "Local pages", so it is cards[3] now; its header is cards[3]'s.
+      const hdr = cards[3].querySelector('.p-card__header').getBoundingClientRect();
       return {
         colClass: col.className,
         colSpan: getComputedStyle(col).gridColumnEnd,
@@ -1336,6 +1365,7 @@ function mockFactoryJs() {
         cardW: Math.round(r2.width * 10) / 10,
         colW: Math.round(rc.width * 10) / 10,
         cardStyles: cards.map((c) => c.getAttribute('style')),
+        resetHdr: (cards[3] && cards[3].querySelector('.p-card__header .p-heading--5')) ? cards[3].querySelector('.p-card__header .p-heading--5').textContent.trim() : null,
         rowW: Math.round(rr.width * 10) / 10,
         firstTop: Math.round((r1.top - rr.top) * 100) / 100,
         gap: Math.round((r2.top - r1.bottom) * 100) / 100,
@@ -1344,8 +1374,10 @@ function mockFactoryJs() {
     });
     // round B: three cards, Appearance FIRST (new cards prepend), Reset
     // password last (the least-used function stays at the bottom).
-    if (JSON.stringify(sL.titles) !== JSON.stringify(['Appearance', 'Session', 'Reset password']))
-        console.log('PAGE ERROR: the settings cards must be Appearance, Session, Reset password in that order (got ' + JSON.stringify(sL.titles) + ') (round B)');
+    if (JSON.stringify(sL.titles) !== JSON.stringify(['Local pages', 'Appearance', 'Session', 'Reset password']))
+        console.log('PAGE ERROR: the settings cards must be Local pages, Appearance, Session, Reset password in that order (got ' + JSON.stringify(sL.titles) + ') (round I; the round B 3-card order is superseded)');
+    if (!sL.short && sL.resetHdr !== 'Reset password')
+        console.log('PAGE ERROR: the Reset password card must stay BOTTOM-most on Settings (got ' + JSON.stringify(sL.resetHdr) + ') (round I)');
     if (sL.colClass !== 'col-12' || sL.colSpan !== 'span 12')
         console.log('PAGE ERROR: the settings cards must span the full width (col-12, like the other pages) — got ' + JSON.stringify([sL.colClass, sL.colSpan]) + ' (round 67)');
     if (sL.cardStyles.some((st) => st !== null))
@@ -1597,6 +1629,7 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: a reset input is not on its grid column (off by ' + gR.curColErr + '/' + gR.repColErr + 'px) (round 65)');
     if (Math.abs(gR.curCenter) > 1 || Math.abs(gR.repCenter) > 1)
         console.log('PAGE ERROR: a reset caption is not centred on its input (delta ' + gR.curCenter + '/' + gR.repCenter + 'px) (round 65)');
+
 
     // ---- 2b. round 66: the inactivity lock is CONFIGURABLE (ask 2) + the
     //      Session card lost its "Gate" row (ask 3). The select applies LIVE.
@@ -2028,7 +2061,7 @@ function mockFactoryJs() {
     await wait(150);
     // 3i: the LIVE sync toggle (core.timesync.setEnabled) flips the row.
     const tsPuts0 = await page.evaluate(() => window.__mockCore.timesync.__ts().puts);
-    await page.click('#genCard [data-gen-row="time"] .p-switch__input');
+    await page.click('#genCard [data-gen-row="time"] .p-switch__slider'); // click the VISIBLE slider (the input is opacity:0) — the round-49f input-click was flaky under load; the slider forwards to the input deterministically
     await wait(300);
     let g7 = await page.evaluate(() => {
       const r = Array.from(document.querySelectorAll('#genCard .ucm-gen__row')).find((x) => x.querySelector('.ucm-gen__label').textContent.trim() === 'Sync time from internet');
@@ -2038,7 +2071,7 @@ function mockFactoryJs() {
       console.log('PAGE ERROR: turning "Sync time from internet" OFF did not call setEnabled(false) (round 49f)');
     if (g7.puts !== tsPuts0 + 1)
       console.log('PAGE ERROR: the sync toggle should send exactly one core.timesync call (round 49f)');
-    await page.click('#genCard [data-gen-row="time"] .p-switch__input');
+    await page.click('#genCard [data-gen-row="time"] .p-switch__slider'); // click the VISIBLE slider (the input is opacity:0) — the round-49f input-click was flaky under load; the slider forwards to the input deterministically
     await wait(300);
     const g7b = await page.evaluate(() => window.__mockCore.timesync.__ts().ntp);
     if (g7b !== true) console.log('PAGE ERROR: turning "Sync time from internet" back ON should restore NTP (round 49f)');
@@ -5215,6 +5248,261 @@ function mockFactoryJs() {
     await page.screenshot({ path: path.join(SHOTS, '15-interfaces-after-connect.png'), fullPage: true });
 
 
+    // ---- 2m. round I: LOCAL PAGES — embed a snap's own localhost web UI as a
+    //      page inside the console. The Settings "Local pages" card manages the
+    //      list; each entry becomes a SIDEBAR entry (below a separator, only
+    //      when the list is non-empty) whose view is a <webview> (the sidebar
+    //      stays permanently visible). Only LOOPBACK URLs are allowed.
+    //      PLACED LATE (after all the CDP-click-heavy light sections) because the
+    //      webview + sidebar-card DOM churn degrades the timing of EARLIER CDP
+    //      clicks (a section-3i regression this location avoids); it runs in the
+    //      authenticated LIGHT state, right before the dark sections (6a).
+    await page.click('.ucm-side a[data-view="settings"]');
+    await wait(600);
+
+    const lp0 = await page.evaluate(() => {
+        const card = document.querySelector('.ucm-lp');
+        const list = document.querySelector('#lpList');
+        const nav = document.querySelector('.ucm-side .p-side-navigation__list');
+        const sep = document.querySelector('.ucm-side .ucm-lp-sepitem');
+        const entries = nav ? nav.querySelectorAll('.ucm-lp-entry').length : null;
+        return {
+            cardPresent: !!card,
+            cardTitle: card ? card.querySelector('.p-card__header .p-heading--5').textContent.trim() : null,
+            emptyText: list && list.querySelector('.ucm-lp__empty') ? list.querySelector('.ucm-lp__empty').textContent.trim() : null,
+            sepPresent: !!sep,
+            entryCount: entries,
+            mock: window.__mockCore.settings.__localpages(),
+        };
+    });
+    if (!lp0.cardPresent || lp0.cardTitle !== 'Local pages')
+        console.log('PAGE ERROR: the Local pages card must be present on Settings with the title "Local pages" (got ' + JSON.stringify([lp0.cardPresent, lp0.cardTitle]) + ') (round I)');
+    if (lp0.emptyText !== 'No local pages yet — add one below.')
+        console.log('PAGE ERROR: an empty Local pages list must show the empty state (got ' + JSON.stringify(lp0.emptyText) + ') (round I)');
+    if (lp0.sepPresent !== false)
+        console.log('PAGE ERROR: with NO local pages the sidebar separator must NOT show (got present=' + lp0.sepPresent + ') (round I)');
+    if (lp0.entryCount !== 0)
+        console.log('PAGE ERROR: with NO local pages the sidebar must have 0 local entries (got ' + lp0.entryCount + ') (round I)');
+
+    // (add 1) add a good localhost page through the REAL form.
+    await page.type('#lpName', 'Home Assistant');
+    await page.type('#lpUrl', 'http://localhost:8123');
+    await page.click('#lpAddBtn');
+    await wait(500);
+    const lp1 = await page.evaluate(() => {
+        const nav = document.querySelector('.ucm-side .p-side-navigation__list');
+        const sep = document.querySelector('.ucm-side .ucm-lp-sepitem');
+        const entries = nav ? [...nav.querySelectorAll('.ucm-lp-entry a')].map((a) => a.textContent.trim()) : null;
+        const row = document.querySelector('#lpList .ucm-lp__row');
+        const wv = document.querySelector('#view-lp-0 webview');
+        const viewHidden = document.querySelector('#view-lp-0') ? document.querySelector('#view-lp-0').classList.contains('ucm-hidden') : null;
+        return {
+            sepPresent: !!sep,
+            entries: entries,
+            rowName: row ? row.querySelector('.ucm-lp__name').textContent.trim() : null,
+            rowUrl: row ? row.querySelector('.ucm-lp__url').textContent.trim() : null,
+            wvPresent: !!wv,
+            wvSrc: wv ? wv.getAttribute('src') : null,
+            viewHidden: viewHidden,
+            formName: document.querySelector('#lpName').value,
+            formUrl: document.querySelector('#lpUrl').value,
+            addVisible: !document.querySelector('#lpAddBtn').classList.contains('ucm-hidden'),
+            mock: window.__mockCore.settings.__localpages(),
+        };
+    });
+    if (lp1.sepPresent !== true)
+        console.log('PAGE ERROR: after adding a local page the sidebar separator must appear (got present=' + lp1.sepPresent + ') (round I)');
+    if (JSON.stringify(lp1.entries) !== JSON.stringify(['Home Assistant']))
+        console.log('PAGE ERROR: the sidebar must show exactly one local entry "Home Assistant" (got ' + JSON.stringify(lp1.entries) + ') (round I)');
+    if (lp1.rowName !== 'Home Assistant' || lp1.rowUrl !== 'http://localhost:8123')
+        console.log('PAGE ERROR: the Local pages card row must show the name + url (got ' + JSON.stringify([lp1.rowName, lp1.rowUrl]) + ') (round I)');
+    if (lp1.wvPresent !== true || lp1.wvSrc !== 'http://localhost:8123')
+        console.log('PAGE ERROR: a <webview> view must be created for the entry with the right src (got ' + JSON.stringify([lp1.wvPresent, lp1.wvSrc]) + ') (round I)');
+    if (lp1.viewHidden !== true)
+        console.log('PAGE ERROR: the new webview view must start HIDDEN (the dashboard is the active view) (got ' + lp1.viewHidden + ') (round I)');
+    if (lp1.formName !== '' || lp1.formUrl !== '')
+        console.log('PAGE ERROR: after a successful add the form must be cleared (got ' + JSON.stringify([lp1.formName, lp1.formUrl]) + ') (round I)');
+    if (lp1.addVisible !== true)
+        console.log('PAGE ERROR: after an add the form must be back in "add" mode (Add visible) (got ' + lp1.addVisible + ') (round I)');
+    if (lp1.mock.calls !== 1 || JSON.stringify(lp1.mock.value) !== JSON.stringify([{ name: 'Home Assistant', url: 'http://localhost:8123' }]))
+        console.log('PAGE ERROR: the add must send the whole list to the mock exactly once (got ' + JSON.stringify(lp1.mock) + ') (round I)');
+
+    // (nav) click the sidebar entry -> the webview view becomes active.
+    await page.click('.ucm-side a[data-view="lp-0"]');
+    await wait(400);
+    const lp2 = await page.evaluate(() => {
+        const v = document.querySelector('#view-lp-0');
+        const wv = v ? v.querySelector('webview') : null;
+        const active = document.querySelector('.ucm-side a[data-view="lp-0"]');
+        return {
+            viewActive: v ? !v.classList.contains('ucm-hidden') : null,
+            wvPresent: !!wv,
+            wvSrc: wv ? wv.getAttribute('src') : null,
+            topbar: document.querySelector('#topbarTitle').textContent,
+            navActive: active ? active.classList.contains('is-active') : null,
+            dashboardHidden: document.querySelector('#view-dashboard').classList.contains('ucm-hidden'),
+        };
+    });
+    if (lp2.viewActive !== true)
+        console.log('PAGE ERROR: clicking the local-page sidebar entry must activate its view (got ' + lp2.viewActive + ') (round I)');
+    if (lp2.topbar !== 'Home Assistant')
+        console.log('PAGE ERROR: the topbar title must be the local page name (got ' + JSON.stringify(lp2.topbar) + ') (round I)');
+    if (lp2.navActive !== true)
+        console.log('PAGE ERROR: the active local-page sidebar link must carry is-active (got ' + lp2.navActive + ') (round I)');
+    if (lp2.dashboardHidden !== true)
+        console.log('PAGE ERROR: switching to the local page must hide the dashboard view (got ' + lp2.dashboardHidden + ') (round I)');
+
+    // (add 2) a second page -> the sidebar shows both entries (order = add order).
+    await page.click('.ucm-side a[data-view="settings"]');
+    await wait(400);
+    await page.type('#lpName', 'Grafana');
+    await page.type('#lpUrl', 'http://127.0.0.1:3000');
+    await page.click('#lpAddBtn');
+    await wait(500);
+    const lp3 = await page.evaluate(() => {
+        const nav = document.querySelector('.ucm-side .p-side-navigation__list');
+        const entries = nav ? [...nav.querySelectorAll('.ucm-lp-entry a')].map((a) => a.textContent.trim()) : null;
+        const sep = document.querySelector('.ucm-side .ucm-lp-sepitem');
+        const views = [...document.querySelectorAll('.ucm-view--webview')].map((v) => v.id);
+        return {
+            entries: entries,
+            sepCount: nav ? nav.querySelectorAll('.ucm-lp-sepitem').length : null,
+            sepPresent: !!sep,
+            webviewViews: views,
+            mock: window.__mockCore.settings.__localpages(),
+        };
+    });
+    if (JSON.stringify(lp3.entries) !== JSON.stringify(['Home Assistant', 'Grafana']))
+        console.log('PAGE ERROR: two local pages must show two sidebar entries in add order (got ' + JSON.stringify(lp3.entries) + ') (round I)');
+    if (lp3.sepCount !== 1)
+        console.log('PAGE ERROR: there must be exactly ONE sidebar separator (got ' + lp3.sepCount + ') (round I)');
+    if (JSON.stringify(lp3.webviewViews) !== JSON.stringify(['view-lp-0', 'view-lp-1']))
+        console.log('PAGE ERROR: two <webview> views must exist (lp-0, lp-1) (got ' + JSON.stringify(lp3.webviewViews) + ') (round I)');
+    if (lp3.mock.calls !== 2)
+        console.log('PAGE ERROR: the second add must be the 2nd setLocalPages call (got ' + lp3.mock.calls + ') (round I)');
+
+    // (edit) edit the first entry's url -> the list updates + the webview src re-points.
+    await page.click('#lpList .ucm-lp__row .ucm-lp__acts button[aria-label^="Edit"]');
+    await wait(200);
+    await page.click('#lpUrl', { clickCount: 3 });
+    await page.type('#lpUrl', 'http://127.0.0.1:8123');
+    await page.click('#lpSaveBtn');
+    await wait(500);
+    const lp4 = await page.evaluate(() => {
+        const wv = document.querySelector('#view-lp-0 webview');
+        const save = document.querySelector('#lpSaveBtn');
+        const add = document.querySelector('#lpAddBtn');
+        return {
+            wvSrc: wv ? wv.getAttribute('src') : null,
+            saveHidden: save ? save.classList.contains('ucm-hidden') : null,
+            addVisible: add ? !add.classList.contains('ucm-hidden') : null,
+            mock: window.__mockCore.settings.__localpages(),
+        };
+    });
+    if (lp4.wvSrc !== 'http://127.0.0.1:8123')
+        console.log('PAGE ERROR: editing an entry must re-point its <webview> src (got ' + lp4.wvSrc + ') (round I)');
+    if (lp4.saveHidden !== true || lp4.addVisible !== true)
+        console.log('PAGE ERROR: after a save the form must be back in "add" mode (got ' + JSON.stringify([lp4.saveHidden, lp4.addVisible]) + ') (round I)');
+    if (lp4.mock.calls !== 3 || lp4.mock.value[0].url !== 'http://127.0.0.1:8123')
+        console.log('PAGE ERROR: the edit must send the updated list (got ' + JSON.stringify(lp4.mock) + ') (round I)');
+
+    // (reject) a NON-loopback url is rejected by the renderer (no IPC, list unchanged).
+    await page.type('#lpName', 'Bad');
+    await page.type('#lpUrl', 'http://10.0.0.5:8080');
+    await page.click('#lpAddBtn');
+    await wait(300);
+    const lp5 = await page.evaluate(() => {
+        const grp = document.querySelector('#lpUrlGroup');
+        const msg = grp ? grp.querySelector('.p-form-validation__message').textContent : null;
+        const nameErr = document.querySelector('#lpNameGroup').classList.contains('is-error');
+        return {
+            urlErr: grp ? grp.classList.contains('is-error') : null,
+            urlMsg: msg,
+            nameErr: nameErr,
+            mock: window.__mockCore.settings.__localpages(),
+            nav: [...document.querySelectorAll('.ucm-lp-entry a')].map((a) => a.textContent.trim()),
+        };
+    });
+    if (lp5.urlErr !== true)
+        console.log('PAGE ERROR: a non-loopback url must be rejected with an error on the URL field (got ' + lp5.urlErr + ') (round I)');
+    if (!/localhost/.test(lp5.urlMsg || ''))
+        console.log('PAGE ERROR: the url rejection message must say localhost is required (got ' + JSON.stringify(lp5.urlMsg) + ') (round I)');
+    if (lp5.nameErr !== false)
+        console.log('PAGE ERROR: a valid name must not be flagged (got ' + lp5.nameErr + ') (round I)');
+    if (lp5.mock.calls !== 3)
+        console.log('PAGE ERROR: a rejected add must NOT send a setLocalPages call (got ' + lp5.mock.calls + ') (round I)');
+    if (JSON.stringify(lp5.nav) !== JSON.stringify(['Home Assistant', 'Grafana']))
+        console.log('PAGE ERROR: a rejected add must not change the sidebar (got ' + JSON.stringify(lp5.nav) + ') (round I)');
+
+    // (reject 2) an empty name is rejected by the renderer.
+    await page.click('#lpName', { clickCount: 3 });
+    await page.evaluate(() => { const n = document.querySelector('#lpName'); n.value = ''; n.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.click('#lpUrl', { clickCount: 3 });
+    await page.evaluate(() => { const u = document.querySelector('#lpUrl'); u.value = ''; u.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.click('#lpAddBtn');
+    await wait(300);
+    const lp6 = await page.evaluate(() => ({
+        nameErr: document.querySelector('#lpNameGroup').classList.contains('is-error'),
+        calls: window.__mockCore.settings.__localpages().calls,
+    }));
+    if (lp6.nameErr !== true)
+        console.log('PAGE ERROR: an empty name must be rejected with an error on the Name field (got ' + lp6.nameErr + ') (round I)');
+    if (lp6.calls !== 3)
+        console.log('PAGE ERROR: an empty-name add must NOT send a setLocalPages call (got ' + lp6.calls + ') (round I)');
+
+    // (remove) remove the second entry -> the list shrinks + the sidebar re-renders.
+    // Click the Grafana row's remove button (2nd row, 2nd button).
+    await page.evaluate(() => {
+        const b = document.querySelector('#lpList button[aria-label="Remove Grafana"]');
+        if (b) b.click();
+    });
+    await wait(500);
+    const lp7 = await page.evaluate(() => {
+        const nav = document.querySelector('.ucm-side .p-side-navigation__list');
+        const entries = nav ? [...nav.querySelectorAll('.ucm-lp-entry a')].map((a) => a.textContent.trim()) : null;
+        const views = [...document.querySelectorAll('.ucm-view--webview')].map((v) => v.id);
+        return {
+            entries: entries,
+            webviewViews: views,
+            sepPresent: !!document.querySelector('.ucm-side .ucm-lp-sepitem'),
+            mock: window.__mockCore.settings.__localpages(),
+        };
+    });
+    if (JSON.stringify(lp7.entries) !== JSON.stringify(['Home Assistant']))
+        console.log('PAGE ERROR: removing the second page must leave exactly "Home Assistant" (got ' + JSON.stringify(lp7.entries) + ') (round I)');
+    if (JSON.stringify(lp7.webviewViews) !== JSON.stringify(['view-lp-0']))
+        console.log('PAGE ERROR: removing a page must remove its <webview> view (got ' + JSON.stringify(lp7.webviewViews) + ') (round I)');
+    if (lp7.sepPresent !== true)
+        console.log('PAGE ERROR: with one page left the separator must still show (got ' + lp7.sepPresent + ') (round I)');
+    if (lp7.mock.calls !== 4 || lp7.mock.value.length !== 1)
+        console.log('PAGE ERROR: the remove must send the shrunk list (got ' + JSON.stringify(lp7.mock) + ') (round I)');
+
+    // (remove all) remove the last entry -> the separator DISAPPEARS (the user's
+    // "only if there are local links added" requirement).
+    await page.evaluate(() => {
+        const b = document.querySelector('#lpList button[aria-label="Remove Home Assistant"]');
+        if (b) b.click();
+    });
+    await wait(500);
+    const lp8 = await page.evaluate(() => ({
+        sepPresent: !!document.querySelector('.ucm-side .ucm-lp-sepitem'),
+        entries: document.querySelectorAll('.ucm-lp-entry').length,
+        views: document.querySelectorAll('.ucm-view--webview').length,
+        emptyText: (() => { const l = document.querySelector('#lpList'); const e = l && l.querySelector('.ucm-lp__empty'); return e ? e.textContent.trim() : null; })(),
+        mock: window.__mockCore.settings.__localpages(),
+    }));
+    if (lp8.sepPresent !== false)
+        console.log('PAGE ERROR: removing the LAST page must hide the separator (got present=' + lp8.sepPresent + ') (round I)');
+    if (lp8.entries !== 0 || lp8.views !== 0)
+        console.log('PAGE ERROR: removing the last page must leave 0 entries + 0 webview views (got ' + JSON.stringify([lp8.entries, lp8.views]) + ') (round I)');
+    if (lp8.emptyText !== 'No local pages yet — add one below.')
+        console.log('PAGE ERROR: an emptied list must show the empty state again (got ' + JSON.stringify(lp8.emptyText) + ') (round I)');
+    if (lp8.mock.calls !== 5 || lp8.mock.value.length !== 0)
+        console.log('PAGE ERROR: the final remove must send an empty list (got ' + JSON.stringify(lp8.mock) + ') (round I)');
+
+    // back to the dashboard for the rest of the run.
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(300);
     // ---- 6a. round D (dark polish): pin all 5 reported dark-mode issues through
     // the REAL theme path. The run is in the default LIGHT state here (round C's
     // 2d reverted it), so the first read is the light-regression proof (every

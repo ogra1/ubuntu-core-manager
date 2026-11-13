@@ -402,6 +402,9 @@ function statusPayload() {
         // round A: the appearance pref ('light' | 'dark') — the renderer maps
         // 'dark' to the vanilla <html>.is-dark class (live theme switch).
         appearance: appearancePref,
+        // round I: the local pages list (embedded localhost web UIs) — the
+        // renderer renders the sidebar entries + the <webview> views.
+        localPages: localPages.map((e) => ({ name: e.name, url: e.url })),
         // store (optional)
         storeAuthenticated: session.storeAuthenticated,
         storeUsername: session.storeAuthenticated ? session.storeUsername : null,
@@ -1625,6 +1628,101 @@ function setAppearance(v) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 8e. Local pages (embedded localhost web UIs; round I)
+ * ------------------------------------------------------------------ *
+ * The user can bookmark a snap's own web UI (a localhost service) as an
+ * embedded page: a Settings card manages the list (name + URL), each entry
+ * becomes a SIDEBAR entry (below a separator, only when the list is
+ * non-empty) whose view is a <webview> inside the app shell (the sidebar
+ * stays permanently visible — the guest never replaces the chrome).
+ *
+ * Security boundary: only LOOPBACK URLs are allowed (http/https on
+ * localhost / 127.0.0.1 / ::1, any port/path). This is a privileged,
+ * always-on-top admin kiosk; embedding must not reach LAN/external hosts.
+ * The guest runs sandboxed (webview guest: no preload, no node; its own
+ * partition for cookies).
+ *
+ * Like appearance (8d) / lock timeout (8c): console-privileged, persisted
+ * in $SNAP_COMMON (no new snap plug), LIVE — setLocalPages persists and the
+ * new list flows to the renderer through statusPayload (pushed on set).
+ * The renderer is the authority for LIST EDITS (it computes add/edit/remove
+ * and sends the whole list); main.js VALIDATES every entry + uniqueness and
+ * owns persistence.
+ */
+const LOCAL_PAGES_MAX = 10;                 // keep the sidebar sane
+const LOCAL_PAGE_HOSTS = ['localhost', '127.0.0.1', '::1'];
+
+function localPagesPrefPath() {
+    return process.env.UCM_LOCAL_PAGES_PREF
+        || (stateDir() ? path.join(stateDir(), 'local-pages.pref') : null);
+}
+function validLocalPageUrl(url) {
+    let u;
+    try { u = new URL(String(url)); } catch { return false; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    // the URL parser keeps the BRACKETS on an IPv6 hostname ("[::1]") — strip
+    // them so "::1" matches the host list.
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return LOCAL_PAGE_HOSTS.includes(host);
+}
+function validLocalPageName(name) {
+    const n = String(name).trim();
+    return n.length >= 1 && n.length <= 40;
+}
+// validate ONE entry; returns null when valid, else the human error string.
+function localPageEntryError(e) {
+    if (!e || typeof e !== 'object') return 'invalid entry';
+    if (!validLocalPageName(e.name)) return 'invalid name';
+    if (typeof e.url !== 'string' || !validLocalPageUrl(e.url)) return 'invalid url';
+    return null;
+}
+// validate a WHOLE list; returns null when valid, else the human error string.
+function localPagesError(list) {
+    if (!Array.isArray(list)) return 'not a list';
+    if (list.length > LOCAL_PAGES_MAX) return 'too many local pages (max ' + LOCAL_PAGES_MAX + ')';
+    const names = new Set();
+    for (const e of list) {
+        const err = localPageEntryError(e);
+        if (err) return err;
+        const key = String(e.name).trim().toLowerCase();
+        if (names.has(key)) return 'duplicate name: ' + key;
+        names.add(key);
+    }
+    return null;
+}
+function localPagesPrefRead() {
+    const p = localPagesPrefPath();
+    if (!p) return [];
+    try {
+        const v = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return (Array.isArray(v) && !localPagesError(v)) ? v.map((e) => ({ name: String(e.name).trim(), url: e.url })) : [];
+    } catch { return []; }
+}
+function localPagesPrefWrite(list) {
+    const p = localPagesPrefPath();
+    if (!p) return; // dev mode (no state dir) — nothing durable
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(list), { mode: 0o600 });
+}
+// the CURRENT list — read once at module load (before any session).
+let localPages = localPagesPrefRead();
+function getLocalPages() {
+    return { list: localPages.map((e) => ({ name: e.name, url: e.url })), max: LOCAL_PAGES_MAX };
+}
+/**
+ * Set the WHOLE local-pages list. Throws on any invalid entry (nothing is
+ * written). Persists; the new list becomes visible to the renderer via the
+ * status payload (the caller pushes it).
+ */
+function setLocalPages(list) {
+    const err = localPagesError(list);
+    if (err) throw new Error('invalid local pages: ' + err);
+    localPages = list.map((e) => ({ name: String(e.name).trim(), url: e.url }));
+    localPagesPrefWrite(localPages);
+    return getLocalPages();
+}
+
+/* ------------------------------------------------------------------ *
  * 9. Interfaces (plug/slot control)
  * ------------------------------------------------------------------ */
 
@@ -1892,6 +1990,8 @@ const api = {
     getLockTimeout, setLockTimeout, LOCK_TIMEOUTS, DEFAULT_LOCK_TIMEOUT,
     // round A: appearance (light/dark)
     getAppearance, setAppearance, APPEARANCES, DEFAULT_APPEARANCE,
+    // round I: local pages (embedded localhost web UIs)
+    getLocalPages, setLocalPages, validLocalPageUrl, validLocalPageName, localPagesError, LOCAL_PAGES_MAX,
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
@@ -2016,6 +2116,7 @@ function initElectron() {
                 contextIsolation: true,
                 nodeIntegration: false,
                 sandbox: true,
+                webviewTag: true,       // round I: <webview> for embedded localhost pages
                 webSecurity: true,
                 allowRunningInsecureContent: false,
                 experimentalFeatures: false,
@@ -2108,6 +2209,57 @@ function initElectron() {
                     } catch (err) {
                         probe = { error: String((err && err.message) || err) };
                     }
+                    // ---- round I: the <webview> E2E (only when UCM_E2E_LOCALPAGE_URL is
+                    //      set — the real sandbox/webviewTag check). Create a local
+                    //      password + one GOOD (served) and one DEAD (unreachable) local
+                    //      page through the REAL bridge, then navigate to each and report
+                    //      what actually happened (good -> webview loaded the guest;
+                    //      dead -> the app's load-failed fallback card).
+                    if (process.env.UCM_E2E_LOCALPAGE_URL) {
+                        const lpUrl = process.env.UCM_E2E_LOCALPAGE_URL;
+                        const lpPort = parseInt(lpUrl.split(':')[2] || '9000', 10);
+                        const deadUrl = 'http://127.0.0.1:' + (lpPort + 1);
+                        const LP_PROBE = `
+                            (async () => {
+                                const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+                                try {
+                                    await window.ucmCore.auth.create('e2e-probe-password');
+                                    await wait(1200);
+                                    await window.ucmCore.settings.setLocalPages([
+                                        { name: 'Up', url: ${JSON.stringify(lpUrl)} },
+                                        { name: 'Down', url: ${JSON.stringify(deadUrl)} },
+                                    ]);
+                                    await wait(700);
+                                    const navUp = document.querySelector('.ucm-side a[data-view="lp-0"]');
+                                    if (navUp) navUp.click();
+                                    await wait(2500);
+                                    const wv0 = document.querySelector('#view-lp-0 webview');
+                                    const r0 = {
+                                        active: !document.querySelector('#view-lp-0').classList.contains('ucm-hidden'),
+                                        wv: !!wv0,
+                                        url: wv0 ? wv0.getURL() : null,
+                                        title: wv0 ? wv0.getTitle() : null,
+                                    };
+                                    const navDown = document.querySelector('.ucm-side a[data-view="lp-1"]');
+                                    if (navDown) navDown.click();
+                                    await wait(2500);
+                                    const fb = document.querySelector('#view-lp-1 .ucm-webview__fallback');
+                                    const r1 = {
+                                        active: !document.querySelector('#view-lp-1').classList.contains('ucm-hidden'),
+                                        fallback: fb ? !fb.classList.contains('ucm-hidden') : null,
+                                        fbText: fb ? fb.textContent.trim().slice(0, 80) : null,
+                                    };
+                                    return { ok: true, r0, r1 };
+                                } catch (e) {
+                                    return { ok: false, error: String((e && e.message) || e) };
+                                }
+                            })()`;
+                        try {
+                            probe.lp = await win.webContents.executeJavaScript(LP_PROBE, false);
+                        } catch (err) {
+                            probe.lp = { ok: false, error: String((err && err.message) || err) };
+                        }
+                    }
                     console.log('UCM_E2E_RESULT ' + JSON.stringify(probe));
                     app.quit();
                 }, 800);
@@ -2151,6 +2303,9 @@ function initElectron() {
     // the new payload (appearance) flows through pushAuthStatus to the
     // renderer, which flips <html>.is-dark.
     ipcMain.handle('settings:set-appearance', guard((value) => { requireAuth(); const p = setAppearance(value); pushAuthStatus(); return p; }));
+    // round I: local pages (embedded localhost web UIs). Console-privileged
+    // like appearance — set persists and the new list rides the auth status push.
+    ipcMain.handle('settings:set-local-pages', guard((list) => { requireAuth(); const p = setLocalPages(list); pushAuthStatus(); return p; }));
     // Activity beacon (mouse/keyboard/wheel from the UI): re-arm resets the real
     // lock clock to a full 15 minutes. Crucially we ALSO push the fresh expiresAt
     // to the renderer — the header pill is a local countdown from the last received

@@ -517,6 +517,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['net:devices'] && !!handlers['net:apply-device'] && !handlers['net:apply']);
             ok('lock-timeout handler registered (round 66, auth-gated)',
                 !!handlers['auth:set-lock-timeout']);
+            ok('local-pages handler registered (round I, auth-gated)',
+                !!handlers['settings:set-local-pages']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -603,6 +605,37 @@ function ok(name, cond, extra = '') {
                         mw.authStatus().appearance === 'light', JSON.stringify(mw.authStatus()));
                 } else {
                     ok('settings:set-appearance handler registered', false);
+                }
+                // round I: local pages (embedded localhost web UIs) — a
+                // console-privileged setting. Live: setLocalPages persists and the
+                // new list is pushed to the renderer via pushAuthStatus.
+                if (handlers['settings:set-local-pages']) {
+                    const LP = [{ name: 'HA', url: 'http://localhost:8123' }, { name: 'G', url: 'http://127.0.0.1:3000' }];
+                    const rLP = await new Promise((res) => handlers['settings:set-local-pages'](null, JSON.parse(JSON.stringify(LP))).then(res));
+                    ok('settings:set-local-pages(list) returns the {list,max} payload',
+                        rLP.ok === true && rLP.result.max === 10
+                        && JSON.stringify(rLP.result.list.map((e) => e.name)) === JSON.stringify(['HA', 'G']), JSON.stringify(rLP));
+                    ok('the local pages are LIVE in the status payload',
+                        JSON.stringify((mw.authStatus().localPages || []).map((e) => e.name)) === JSON.stringify(['HA', 'G']),
+                        JSON.stringify(mw.authStatus().localPages));
+                    const lastLP = sends.slice().reverse().find((x) => x.ch === 'auth-status-changed');
+                    ok('setting the local pages PUSHES the new payload to the renderer',
+                        !!lastLP && lastLP.p && JSON.stringify((lastLP.p.localPages || []).map((e) => e.name)) === JSON.stringify(['HA', 'G']),
+                        JSON.stringify(lastLP && lastLP.p && lastLP.p.localPages));
+                    const rBadLP = await new Promise((res) => handlers['settings:set-local-pages'](null, [{ name: 'X', url: 'http://10.0.0.5:8080' }]).then(res));
+                    ok('set-local-pages rejects a NON-loopback url (the security boundary)',
+                        rBadLP.ok === false && /invalid local pages/.test(rBadLP.error), JSON.stringify(rBadLP));
+                    const rDupLP = await new Promise((res) => handlers['settings:set-local-pages'](null, [{ name: 'A', url: 'http://localhost:1' }, { name: 'a', url: 'http://localhost:2' }]).then(res));
+                    ok('set-local-pages rejects duplicate names (case-insensitive)',
+                        rDupLP.ok === false && /duplicate name/.test(rDupLP.error), JSON.stringify(rDupLP));
+                    ok('a rejected set does NOT change the local pages (still HA,G)',
+                        JSON.stringify((mw.authStatus().localPages || []).map((e) => e.name)) === JSON.stringify(['HA', 'G']),
+                        JSON.stringify(mw.authStatus().localPages));
+                    await new Promise((res) => handlers['settings:set-local-pages'](null, []).then(res));
+                    ok('the local pages revert to empty (the shipped default)',
+                        JSON.stringify(mw.authStatus().localPages || []) === JSON.stringify([]), JSON.stringify(mw.authStatus().localPages));
+                } else {
+                    ok('settings:set-local-pages handler registered', false);
                 }
                 // Guarded local-admin reset: console-privileged (active session),
                 // re-confirms the CURRENT password, wipes $SNAP_COMMON/admin.cred
@@ -1305,6 +1338,61 @@ function ok(name, cond, extra = '') {
             ok('setAppearance rejects ' + JSON.stringify(bad), threw && m.getAppearance().value === 'light');
         }
         delete process.env.UCM_APPEARANCE_PREF;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    console.log('\n[18] local pages (embedded localhost web UIs, round I)');
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-localpages-'));
+        const PREF = path.join(dir, 'local-pages.pref');
+        process.env.UCM_LOCAL_PAGES_PREF = PREF;
+        const readPref = () => { try { return JSON.parse(fs.readFileSync(PREF, 'utf8')); } catch { return null; } };
+        // no pref -> empty (a fresh console has no local pages)
+        ok('no pref file -> an empty local-pages list',
+            JSON.stringify(m.getLocalPages().list) === JSON.stringify([]), JSON.stringify(m.getLocalPages()));
+        // the url boundary (loopback only)
+        ok('validLocalPageUrl accepts localhost / 127.0.0.1 / ::1 (any port/path)',
+            m.validLocalPageUrl('http://localhost:8123') === true
+            && m.validLocalPageUrl('http://127.0.0.1:3000/x') === true
+            && m.validLocalPageUrl('https://[::1]:8080') === true, '');
+        ok('validLocalPageUrl REJECTS non-loopback hosts (the security boundary)',
+            m.validLocalPageUrl('http://10.0.0.5:8080') === false
+            && m.validLocalPageUrl('http://192.168.1.1') === false
+            && m.validLocalPageUrl('http://8.8.8.8') === false
+            && m.validLocalPageUrl('http://example.com') === false, '');
+        ok('validLocalPageUrl REJECTS non-http schemes',
+            m.validLocalPageUrl('ftp://localhost:21') === false
+            && m.validLocalPageUrl('file:///etc/passwd') === false
+            && m.validLocalPageUrl('javascript:alert(1)') === false, '');
+        ok('validLocalPageName: 1..40 chars, trims whitespace',
+            m.validLocalPageName('  HA  ') === true && m.validLocalPageName('') === false
+            && m.validLocalPageName('x'.repeat(41)) === false, '');
+        // set a valid list -> persists + reflects
+        const rSet = m.setLocalPages([{ name: 'HA', url: 'http://localhost:8123' }, { name: 'Grafana', url: 'http://127.0.0.1:3000' }]);
+        ok('setLocalPages persists + reflects',
+            rSet.list.length === 2 && rSet.list[0].name === 'HA'
+            && readPref() && readPref().length === 2, JSON.stringify(rSet));
+        ok('getLocalPages reads the stored pref',
+            JSON.stringify(m.getLocalPages().list.map((e) => e.name)) === JSON.stringify(['HA', 'Grafana']), '');
+        // invalid values throw and leave the pref untouched
+        const cases = [
+            ['a non-loopback url', [{ name: 'X', url: 'http://10.0.0.5:8080' }], /invalid local pages: invalid url/],
+            ['a non-http scheme', [{ name: 'X', url: 'ftp://localhost' }], /invalid local pages: invalid url/],
+            ['an empty name', [{ name: '   ', url: 'http://localhost:1' }], /invalid local pages: invalid name/],
+            ['a duplicate name (case-insensitive)', [{ name: 'A', url: 'http://localhost:1' }, { name: 'a', url: 'http://localhost:2' }], /duplicate name/],
+            ['a non-array', 'nope', /not a list/],
+            ['too many entries (>10)', Array.from({ length: 11 }, (_, k) => ({ name: 'p' + k, url: 'http://localhost:' + k })), /too many local pages/],
+        ];
+        for (const [label, bad, re] of cases) {
+            let threw = false;
+            try { m.setLocalPages(bad); } catch (e) { threw = re.test(e.message); }
+            ok('setLocalPages rejects ' + label,
+                threw && JSON.stringify(m.getLocalPages().list.map((e) => e.name)) === JSON.stringify(['HA', 'Grafana']));
+        }
+        // an empty list is valid (clearing everything)
+        const rClear = m.setLocalPages([]);
+        ok('setLocalPages([]) clears the list', rClear.list.length === 0 && readPref() !== null, JSON.stringify(rClear));
+        delete process.env.UCM_LOCAL_PAGES_PREF;
         fs.rmSync(dir, { recursive: true, force: true });
     }
 

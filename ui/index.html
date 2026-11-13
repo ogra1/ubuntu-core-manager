@@ -360,6 +360,39 @@
                 <div class="col-12">
                     <!-- round B: new cards PREPEND (the user's rule) — Reset
                          password stays the bottom-most settings card. -->
+                    <!-- round I: Local pages — embed a snap's own localhost web
+                         UI as a page inside the console (a <webview> behind the
+                         permanent sidebar). New card PREPENDS (above Appearance). -->
+                    <div class="p-card ucm-lp">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Local pages</p></div>
+                        <div class="ucm-lp__body">
+                            <p class="ucm-lp__help">
+                                Embed a web UI that a snap provides on this machine (a localhost
+                                address, e.g. <span class="mono">http://localhost:8080</span>) as an
+                                additional page. It appears in the menu below a separator.
+                            </p>
+                            <div id="lpList" class="ucm-lp__list"></div>
+                            <div class="ucm-lp__form">
+                                <div class="p-form__group" id="lpNameGroup">
+                                    <label class="p-form__label" for="lpName">Name</label>
+                                    <input class="p-form-validation__input" type="text" id="lpName"
+                                           placeholder="e.g. Home Assistant" maxlength="40" spellcheck="false" autocomplete="off">
+                                    <p class="p-form-validation__message" id="lpNameMsg"></p>
+                                </div>
+                                <div class="p-form__group" id="lpUrlGroup">
+                                    <label class="p-form__label" for="lpUrl">URL</label>
+                                    <input class="p-form-validation__input" type="text" id="lpUrl"
+                                           placeholder="http://localhost:8080" spellcheck="false" autocomplete="off">
+                                    <p class="p-form-validation__message" id="lpUrlMsg"></p>
+                                </div>
+                                <div class="ucm-lp__actions">
+                                    <button class="p-button--positive p-button" type="button" id="lpAddBtn">Add</button>
+                                    <button class="p-button ucm-hidden" type="button" id="lpSaveBtn">Save changes</button>
+                                    <button class="p-button ucm-lp__basecancel ucm-hidden" type="button" id="lpCancelBtn">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="p-card">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Appearance</p></div>
                         <dl class="ucm-kv">

@@ -102,6 +102,10 @@ const api = Object.freeze({
     // status payload (appearance).
     settings: Object.freeze({
         setAppearance: invoke('settings:set-appearance'),  // (value) => {value,allowed,default}
+        // round I: local pages (embedded localhost web UIs). SET takes the whole
+        // list (renderer computes add/edit/remove); the CURRENT list rides the
+        // auth status payload (core.auth.status().localPages) — read-only here.
+        setLocalPages: invoke('settings:set-local-pages'),  // (list) => {list,max}
     }),
 
     // ---- optional STORE login (snapd /v2/login; needs network) ------

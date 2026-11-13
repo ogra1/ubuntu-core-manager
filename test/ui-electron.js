@@ -20,13 +20,31 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
+const http = require('http');
+const net = require('net');
 
 const ROOT = path.join(__dirname, '..');
 const SOCK = '/tmp/e2e-snapd-' + process.pid + '.socket';
 const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
 
+
 (async () => {
     const { makeServer } = require('./stub-snapd.js');
+    // round I: a REAL localhost web UI (what a snap might ship). The UCM_E2E
+    // probe seeds it as a local page; the <webview> must load it.
+    function freePort() {
+        return new Promise((resolve) => {
+            const srv = net.createServer();
+            srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); });
+        });
+    }
+    const LP_PORT = await freePort();
+    const LP_SERVER = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<!doctype html><html><head><meta charset="utf-8"><title>UCM E2E Guest</title></head><body><h1>guest ok</h1></body></html>');
+    });
+    await new Promise((r) => LP_SERVER.listen(LP_PORT, '127.0.0.1', r));
+    const LP_URL = 'http://127.0.0.1:' + LP_PORT;
     await makeServer(SOCK, {
         requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 1, logoutCount: 0,
         netplanYaml: 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n',
@@ -45,6 +63,8 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
                 SNAPD_SOCKET: SOCK,
                 UCM_STATE_DIR: STATE,
                 UCM_E2E: '1',
+                UCM_E2E_LOCALPAGE_URL: LP_URL,
+                UCM_LOCAL_PAGES_PREF: path.join(STATE, 'local-pages.pref'),
                 DISPLAY: process.env.DISPLAY || '',
                 WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || '',
             },
@@ -76,7 +96,19 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('bridge object present (window.ucmCore)', p.bridge === 'object', JSON.stringify(p));
     ok('a gate view is visible (setup or login)', p.boot === true, JSON.stringify(p));
 
+    // ---- round I: the <webview> E2E (real sandbox/webviewTag). The probe
+    // created a local password, seeded a GOOD (served) + a DEAD (unreachable)
+    // local page, and navigated to each. Good -> the webview loaded the guest;
+    // dead -> the app's load-failed fallback card.
+    const lp = p.lp || {};
+    ok('the good local page loaded in a real <webview> (webviewTag + sandbox OK)',
+        lp.ok === true && lp.r0 && lp.r0.wv === true && (lp.r0.url === LP_URL || lp.r0.url === LP_URL + '/') && lp.r0.title === 'UCM E2E Guest' && lp.r0.active === true,
+        JSON.stringify(lp.r0));
+    ok('the unreachable local page surfaced the load-failed fallback card',
+        lp.ok === true && lp.r1 && lp.r1.fallback === true && /Can.t reach/.test(lp.r1.fbText || '') && lp.r1.active === true,
+        JSON.stringify(lp.r1));
+
     console.log(`\n================= ${passed} passed, ${failed} failed =================`);
-    try { fs.rmSync(STATE, { recursive: true, force: true }); fs.unlinkSync(SOCK); } catch {}
+    try { LP_SERVER.close(); fs.rmSync(STATE, { recursive: true, force: true }); fs.unlinkSync(SOCK); } catch {}
     process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e); process.exit(2); });

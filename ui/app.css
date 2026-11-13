@@ -1444,3 +1444,93 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     flex: 1 1 12rem; margin: 0; border-radius: 0;
     font-family: "Ubuntu Mono variable", monospace;
 }
+
+/* ==========================================================================
+   ROUND I — LOCAL PAGES (embedded localhost web UIs)
+   ==========================================================================
+   A Settings "Local pages" card manages a list of {name,url} (localhost only);
+   each entry becomes a SIDEBAR link (below a separator, only when non-empty)
+   whose view is a <webview> filling the content area (the permanent sidebar
+   stays visible). The sidebar is THEME-INDEPENDENT (both themes share the
+   #262626 rail) so the separator + entries are theme-agnostic; the card +
+   fallback are app chrome, so they get the usual light values + .is-dark
+   overrides. */
+
+/* ---- sidebar separator + entries (appended to the nav <ul>) ---- */
+.ucm-side .ucm-lp-sepitem { padding: 0; }
+.ucm-side__sep {
+    border: 0; border-top: 1px solid rgba(255, 255, 255, .14);
+    margin: .35rem .75rem;
+}
+/* the local-page entries use the same link look as the static entries (the
+   .p-side-navigation__link rules above already style them; nothing extra). */
+
+/* ---- the webview view: fill the content area under the sticky topbar ----
+   The static .ucm-view has padding + normal flow (scrolls inside .ucm-main);
+   a webview view is a fixed flex column so the <webview> exactly fills the
+   space below the 3.2rem topbar. */
+.ucm-view--webview {
+    display: flex; flex-direction: column;
+    padding: 0;
+    /* in-flow: fill the .ucm-main column below the sticky 3.2rem topbar.
+       (The main pane already sits right of the rail in the .ucm-shell grid,
+       so no left offset is needed — this is the whole point of the user's
+       "sidebar stays permanently visible" requirement.) */
+    height: calc(100vh - 3.2rem);
+    min-height: 0;
+    background: var(--ucm-grey-50);
+}
+.ucm-webview__wrap { position: relative; flex: 1 1 auto; min-height: 0; }
+.ucm-webview {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border: 0;
+    display: flex;
+}
+/* a genuinely-failed load hides the (blank) guest behind the fallback card */
+.ucm-webview--down { visibility: hidden; }
+.ucm-webview__fallback {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: .4rem; text-align: center; padding: 2rem;
+    background: var(--ucm-grey-50); color: #3b3b3b;
+}
+.ucm-webview__fb-title { font-size: 1.15rem; font-weight: 550; margin: 0; }
+.ucm-webview__fb-url { font-size: .85rem; margin: 0; color: #555; word-break: break-all; }
+.ucm-webview__fb-hint { font-size: .85rem; margin: 0 0 .6rem; color: #757575; max-width: 34rem; }
+.ucm-webview__retry { margin: 0; }
+
+/* ---- the Settings "Local pages" card ---- */
+.ucm-lp__body { padding: 1rem 1.25rem 1.25rem; }
+.ucm-lp__help { margin: 0 0 1rem; font-size: .85rem; color: #555; }
+.ucm-lp__list { margin: 0 0 1rem; display: flex; flex-direction: column; gap: .5rem; }
+.ucm-lp__empty { margin: 0; font-size: .85rem; color: #888; }
+.ucm-lp__row {
+    display: flex; align-items: center; gap: 1rem;
+    border: 1px solid #e5e5e5; border-radius: .4rem;
+    padding: .5rem .75rem;
+}
+.ucm-lp__row.is-editing { border-color: var(--ucm-orange); }
+.ucm-lp__meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .1rem; }
+.ucm-lp__name { font-weight: 550; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ucm-lp__url { font-size: .8rem; color: #757575; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ucm-lp__acts { flex: 0 0 auto; display: flex; gap: .15rem; }
+.ucm-lp__acts .ucm-iconbtn { margin: 0; }
+.ucm-lp__form { border-top: 1px solid #f0f0f0; padding-top: .9rem; display: grid; grid-template-columns: 1fr 1fr; column-gap: 1rem; }
+.ucm-lp__form .p-form__group { margin-bottom: .2rem; }
+.ucm-lp__form .p-form-validation__input { max-width: 100%; margin-bottom: 0; }
+.ucm-lp__actions { grid-column: 1 / -1; display: flex; gap: .6rem; }
+.ucm-lp__actions .p-button { margin-bottom: 0; }
+
+/* dark mode (app chrome; the sidebar above is theme-independent) */
+.is-dark .ucm-lp__help { color: #a8a8a8; }
+.is-dark .ucm-lp__empty { color: #8c8c8c; }
+.is-dark .ucm-lp__row { border-color: #3a3a3a; background: #262626; }
+.is-dark .ucm-lp__name { color: #e8e8e8; }
+.is-dark .ucm-lp__url { color: #8c8c8c; }
+.is-dark .ucm-lp__form { border-top-color: #333; }
+.is-dark .ucm-lp__form .p-form__label { color: #d8d8d8; }
+.is-dark .ucm-view--webview { background: #202020; }
+.is-dark .ucm-webview__fallback { background: #202020; color: #e8e8e8; }
+.is-dark .ucm-webview__fb-url { color: #a8a8a8; }
+.is-dark .ucm-webview__fb-hint { color: #8c8c8c; }

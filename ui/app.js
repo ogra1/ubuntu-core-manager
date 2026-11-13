@@ -122,6 +122,9 @@ const state = {
     // round A: the appearance (light/dark). The default 'light' seeds the
     // FIRST paint before core.auth.status() lands the real pref.
     appearance: 'light',
+    // round I: local pages (embedded localhost web UIs). [] seeds the FIRST
+    // paint before core.auth.status() lands the real list.
+    localPages: [],
     // optional store auth
     storeAuthenticated: false,
     storeUsername: null,
@@ -179,22 +182,31 @@ function showGate() {
     if (toLogin) $('#loginPassword').focus();
 }
 
+function isView(name) {
+    return VIEWS.includes(name) || /^lp-\d+$/.test(name); // round I: dynamic local-page views
+}
 function switchView(name) {
-    if (!VIEWS.includes(name)) name = 'dashboard';
+    if (!isView(name)) name = 'dashboard';
     state.view = name;
     $$('#appShell .ucm-view').forEach((v) => v.classList.toggle('ucm-hidden', v.dataset.view !== name));
     $$('.ucm-side .p-side-navigation__link').forEach((a) =>
         a.classList.toggle('is-active', a.dataset.view === name));
-    $('#topbarTitle').textContent = VIEW_TITLES[name];
+    // round I: a local page's title is its entry name (the VIEWS-only map has no
+    // lp-* key; fall back to the name, else Dashboard).
+    $('#topbarTitle').textContent = VIEW_TITLES[name]
+        || (state.localPages.some((e) => e && e.id === name) ? state.localPages.find((e) => e.id === name).name : 'Dashboard');
     history.replaceState(null, '', '#' + name);
 
-    ({
+    const loaders = {
         dashboard: () => { loadDashboard(); sampleCpu(); sampleNet(); },
         network: loadNetwork,
         snaps: loadSnaps,
         interfaces: loadInterfaces,
         settings: loadSettings,
-    })[name]();
+    };
+    if (loaders[name]) loaders[name]();
+    // round I: a local-page view has NO loader — the <webview> is already in
+    // the DOM (hidden views still render), so switching just reveals it.
 }
 
 function enterApp() {
@@ -210,8 +222,9 @@ function enterApp() {
     // the model; derive the set here, loadSnaps has a fetch fallback.
     state.systemNames = modelSystemNames(state.model);
     state.requiredNames = modelRequiredNames(state.model);
+    renderLocalPages(); // round I: first paint of the sidebar entries + <webview> views
     const fromHash = (location.hash || '').replace('#', '');
-    switchView(VIEWS.includes(fromHash) ? fromHash : 'dashboard');
+    switchView(isView(fromHash) ? fromHash : 'dashboard');
 }
 
 function exitApp() {
@@ -367,6 +380,18 @@ function applyAuthPayload(p) {
     state.appearance = p.appearance !== undefined ? p.appearance : state.appearance;
     document.documentElement.classList.toggle('is-dark', state.appearance === 'dark');
     syncThemeLabel(); // round D (I4): the Light/Dark value next to the switch
+    // round I: the local-pages list rides the status payload. An ABSENT field
+    // (undefined) falls back; an explicit [] sticks (cleared list). Re-render
+    // ONLY when the list actually changed — a lock/appearance push carries the
+    // SAME list, and re-rendering on every push (the whole run) churns the DOM
+    // + CDP and degrades the timing of other sections' clicks.
+    if (p.localPages !== undefined) {
+        const lp = p.localPages.map((e, i) => ({ ...e, id: 'lp-' + i }));
+        if (JSON.stringify(lp) !== JSON.stringify(state.localPages)) {
+            state.localPages = lp;
+            renderLocalPages();
+        }
+    }
     state.storeAuthenticated = !!p.storeAuthenticated;
     state.storeUsername = p.storeUsername || null;
     updateLockChrome();
@@ -3103,6 +3128,10 @@ async function loadSettings() {
     const sel = $('#lockTimeout');
     const themeSel = $('#theme');
     if (!sel && !themeSel) return;
+    // round I: the Local pages card — render the entry list + reset the add form
+    // to a clean "add" state on every view entry (a stale edit from a prior visit
+    // must not persist across view switches).
+    lpState.editing = null; lpResetForm(); lpSyncFormButtons(null); renderLocalPagesCard();
     try {
         const p = await core.auth.status();
         if (sel) {
@@ -3183,6 +3212,211 @@ async function setAppearance(value) {
 
 /* ------------------------------- wiring ---------------------------------- */
 
+
+/* ============================= round I: local pages =============================
+   Embed a snap's own localhost web UI as a page inside the console. The Settings
+   "Local pages" card manages the list (name + URL); each entry becomes a
+   sidebar entry (below a separator, only when the list is non-empty) whose view
+   is a <webview> (the permanent sidebar stays visible — the guest never replaces
+   the chrome). Only LOOPBACK URLs are allowed (http/https on localhost/127.0.0.1/
+   ::1) — this is a privileged admin kiosk. The renderer computes the new list on
+   add/edit/remove and sends the WHOLE thing to main.js (settings.setLocalPages);
+   main.js validates every entry + uniqueness and persists; the result rides the
+   auth status payload back through applyAuthPayload -> renderLocalPages().
+   The <webview> element is created with the lowercase tag name (the HTML parser
+   promotes it to the namespace-qualified webview); it is added to the DOM via a
+   string-fragment insert (NOT document.createElement, which would not promote).
+=============================================================================== */
+const LP_HOSTS = ['localhost', '127.0.0.1', '::1'];
+function lpValidUrl(url) {
+    let u; try { u = new URL(url); } catch { return false; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return LP_HOSTS.includes(host);
+}
+function lpValidName(name) { const n = String(name).trim(); return n.length >= 1 && n.length <= 40; }
+// render the sidebar local-page entries (the separator + the links) AND the
+// <webview> views (one per entry). Re-runs on every list change (the auth
+// payload push) and once at enterApp (the first paint).
+function renderLocalPages() {
+    const nav = document.querySelector('.ucm-side .p-side-navigation__list');
+    const main = $('#appShell .ucm-main');
+    const settingsView = document.querySelector('#view-settings');
+    if (!nav || !main || !settingsView) return;
+    const pages = state.localPages || [];
+    // --- sidebar: the separator shows ONLY when there is at least one entry.
+    // The entries are appended at the END of the nav <ul> (below Settings); the
+    // whole group is re-rendered on every list change (clear + append) so the
+    // markup is always exactly the current list.
+    nav.querySelectorAll(':scope > .ucm-lp-sepitem, :scope > .ucm-lp-entry').forEach((n) => n.remove());
+    if (pages.length) {
+        nav.append(
+            el('li', { class: 'p-side-navigation__item ucm-lp-sepitem' },
+                el('hr', { class: 'ucm-side__sep' })),
+        );
+        for (const e of pages) {
+            nav.append(el('li', { class: 'p-side-navigation__item ucm-lp-entry' },
+                el('a', {
+                    class: 'p-side-navigation__link', href: '#' + e.id, 'data-view': e.id,
+                    onclick: (ev) => { ev.preventDefault(); switchView(e.id); },
+                }, el('span', { class: 'ucm-nav-label', text: e.name }))));
+        }
+    }
+    // --- webview views: build one per entry, insert each before the settings
+    //     view (so the sidebar + all static views keep their order). Reuse an
+    //     existing #view-lp-N if its url matches (avoid a churn on re-render);
+    //     otherwise replace it. A <webview> is a custom element that the browser
+    //     upgrades; we create it via a fragment string so the parser promotes
+    //     it to the right namespace (document.createElement('webview') on a
+    //     non-customized tag would give an unknown element).
+    const byId = {};
+    main.querySelectorAll(':scope > .ucm-view[data-view^="lp-"]').forEach((v) => { byId[v.dataset.view] = v; v.remove(); });
+    for (const e of pages) {
+        const wv = document.createElement('webview');
+        wv.setAttribute('src', e.url);
+        wv.setAttribute('class', 'ucm-webview');
+        // sandbox the guest (round I): no node, no host preload. The webview
+        // runs its own isolated origin by default; the partition keeps its
+        // cookies separate from the host page.
+        wv.setAttribute('partition', 'persist:ucm-local-pages');
+        const view = el('section', { class: 'ucm-view ucm-view--webview ucm-hidden', id: 'view-' + e.id, 'data-view': e.id });
+        const wrap = el('div', { class: 'ucm-webview__wrap' });
+        const fb = el('div', { class: 'ucm-webview__fallback ucm-hidden' },
+            el('p', { class: 'ucm-webview__fb-title', text: 'Can\'t reach ' + e.name }),
+            el('p', { class: 'ucm-webview__fb-url mono', text: e.url }),
+            el('p', { class: 'ucm-webview__fb-hint', text: 'The page could not be loaded (the snap\'s web UI may be offline or the address changed).' }),
+            el('button', { class: 'p-button ucm-webview__retry', type: 'button', text: 'Retry' }));
+        wrap.append(fb, wv);
+        view.append(wrap);
+        // The webview's load lifecycle -> the unreachable fallback. A refused
+        // connection fires did-fail-load (the real error) and, in Electron/Chromium,
+        // a did-finish-load for the internal error page right after — so a plain
+        // did-finish-load would hide the fallback immediately. Track whether the
+        // current load attempt FAILED: reset on each start, set on a genuine
+        // failure, and hide the fallback ONLY on a finish whose attempt didn't fail
+        // (i.e. a real page loaded, e.g. after a successful Retry).
+        let lpFailed = false;
+        wv.addEventListener('did-start-loading', () => { lpFailed = false; });
+        wv.addEventListener('did-fail-load', (ev) => {
+            // ev.errorCode -3 = ERR_ABORTED (a navigation was replaced) — not a real
+            // failure; only surface the fallback for a genuine load error.
+            if (ev.errorCode === -3) return;
+            lpFailed = true;
+            fb.classList.remove('ucm-hidden');
+            wv.classList.add('ucm-webview--down');
+        });
+        wv.addEventListener('did-finish-load', () => {
+            if (lpFailed) return; // the "finished" load was a failed attempt's error page
+            fb.classList.add('ucm-hidden');
+            wv.classList.remove('ucm-webview--down');
+        });
+        fb.querySelector('.ucm-webview__retry').addEventListener('click', () => {
+            fb.classList.add('ucm-hidden');
+            try { wv.reload(); } catch (_) { try { wv.loadURL(e.url); } catch (__) {} }
+        });
+        main.insertBefore(view, settingsView);
+    }
+    // keep the Settings card's entry list in sync with the sidebar + views.
+    renderLocalPagesCard();
+}
+// clear the local-pages form errors + fields (used by add/cancel/save).
+function lpResetForm() {
+    setFieldState('lpNameGroup', ''); setFieldState('lpUrlGroup', '');
+    const n = $('#lpName'), u = $('#lpUrl');
+    if (n) n.value = ''; if (u) u.value = '';
+}
+function lpSyncFormButtons(editing) {
+    $('#lpAddBtn').classList.toggle('ucm-hidden', !!editing);
+    $('#lpSaveBtn').classList.toggle('ucm-hidden', !editing);
+    $('#lpCancelBtn').classList.toggle('ucm-hidden', !editing);
+}
+// submit the ADD or EDIT. `editing` = the entry id being edited, or null for add.
+async function lpSubmit(editing) {
+    const name = ($('#lpName') && $('#lpName').value || '').trim();
+    const url = ($('#lpUrl') && $('#lpUrl').value || '').trim();
+    let bad = false;
+    if (!lpValidName(name)) { setFieldState('lpNameGroup', 'error', editing ? 'Enter a name (1–40 characters).' : 'Enter a name for this page.'); bad = true; }
+    else setFieldState('lpNameGroup', '');
+    if (!lpValidUrl(url)) { setFieldState('lpUrlGroup', 'error', 'Only a localhost address (http:// or https:// on localhost, 127.0.0.1 or ::1).'); bad = true; }
+    else setFieldState('lpUrlGroup', '');
+    if (bad) return;
+    const pages = (state.localPages || []).slice();
+    if (editing) {
+        const i = pages.findIndex((e) => e.id === editing);
+        if (i >= 0) pages[i] = { ...pages[i], name, url };
+    } else {
+        pages.push({ name, url });
+    }
+    // duplicate name?
+    const lower = {};
+    for (const e of pages) { const k = e.name.toLowerCase(); if (lower[k]) { setFieldState('lpNameGroup', 'error', 'That name is already used.'); return; } lower[k] = 1; }
+    const btn = editing ? $('#lpSaveBtn') : $('#lpAddBtn');
+    if (btn) btn.classList.add('is-disabled');
+    try {
+        const p = await core.settings.setLocalPages(pages.map((e) => ({ name: e.name, url: e.url })));
+        lpResetForm(); lpSyncFormButtons(null);
+        // the pushed status re-renders the sidebar + views.
+    } catch (e) {
+        toastErr(e);
+    } finally {
+        if (btn) btn.classList.remove('is-disabled');
+    }
+}
+// start editing an existing entry (prefill + swap buttons).
+function lpStartEdit(e) {
+    $('#lpName').value = e.name;
+    $('#lpUrl').value = e.url;
+    lpState.editing = e.id;
+    lpSyncFormButtons(e.id);
+    renderLocalPagesCard(); // highlight the row being edited
+    const n = $('#lpName'); if (n) { n.focus(); n.select && n.select(); }
+}
+function lpCancel() { lpState.editing = null; lpResetForm(); lpSyncFormButtons(null); }
+function lpRemove(e) {
+    const pages = (state.localPages || []).slice();
+    const i = pages.findIndex((x) => x.id === e.id);
+    if (i < 0) return;
+    pages.splice(i, 1);
+    if (lpState.editing === e.id) lpCancel();
+    const btn = null; // no persistent btn
+    core.settings.setLocalPages(pages.map((x) => ({ name: x.name, url: x.url })))
+        .then(() => { if (state.view === e.id) switchView('settings'); })
+        .catch(toastErr);
+}
+const lpState = { editing: null };
+// render the card's entry LIST (rows with edit/remove).
+function renderLocalPagesCard() {
+    const list = $('#lpList');
+    if (!list) return;
+    list.textContent = '';
+    const pages = state.localPages || [];
+    if (!pages.length) {
+        list.append(el('p', { class: 'ucm-lp__empty', text: 'No local pages yet — add one below.' }));
+        return;
+    }
+    for (const e of pages) {
+        const row = el('div', { class: 'ucm-lp__row' + (lpState.editing === e.id ? ' is-editing' : ''), 'data-id': e.id });
+        const name = el('div', { class: 'ucm-lp__name', text: e.name });
+        const url = el('div', { class: 'ucm-lp__url mono', text: e.url });
+        const edit = el('button', {
+            class: 'p-button--base p-button ucm-iconbtn p-tooltip--top-right', type: 'button',
+            'aria-label': 'Edit ' + e.name, 'data-tooltip': 'Edit', title: 'Edit',
+        }, el('i', { class: 'p-icon--edit' }));
+        edit.addEventListener('click', () => lpStartEdit(e));
+        const del = el('button', {
+            class: 'p-button--base p-button ucm-iconbtn p-tooltip--top-right', type: 'button',
+            'aria-label': 'Remove ' + e.name, 'data-tooltip': 'Remove', title: 'Remove',
+        }, el('i', { class: 'p-icon--delete' }));
+        del.addEventListener('click', () => lpRemove(e));
+        const meta = el('div', { class: 'ucm-lp__meta' }, name, url);
+        const acts = el('div', { class: 'ucm-lp__acts' }, edit, del);
+        row.append(meta, acts);
+        list.append(row);
+    }
+}
+// (re)render the card list — called from loadSettings + after each edit.
+function renderLocalPagesAll() { renderLocalPagesCard(); }
+
 function wire() {
     const netAdd = $('#netAddDevice');
     if (netAdd) netAdd.addEventListener('click', () => netAddBridge());
@@ -3226,6 +3460,19 @@ function wire() {
     $('#resetForm').addEventListener('submit', (e) => {
         e.preventDefault();
         doResetPassword();
+    });
+
+    // round I: the Local pages card form (add / save / cancel / remove).
+    const lpAdd = $('#lpAddBtn'); if (lpAdd) lpAdd.addEventListener('click', () => lpSubmit(null));
+    const lpSave = $('#lpSaveBtn'); if (lpSave) lpSave.addEventListener('click', () => lpSubmit(lpState.editing));
+    const lpCancel = $('#lpCancelBtn'); if (lpCancel) lpCancel.addEventListener('click', () => lpCancel());
+    // Enter in the URL field submits (add or save, depending on mode).
+    const lpUrlIn = $('#lpUrl'); if (lpUrlIn) lpUrlIn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); lpSubmit(lpState.editing); }
+        if (e.key === 'Escape' && lpState.editing) { e.stopPropagation(); lpCancel(); }
+    });
+    const lpNameIn = $('#lpName'); if (lpNameIn) lpNameIn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); lpUrlIn && lpUrlIn.focus(); }
     });
 
     // settings: the inactivity lock timeout (round 66) — applies live
