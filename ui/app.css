@@ -1461,6 +1461,13 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-side__sep {
     border: 0; border-top: 1px solid rgba(255, 255, 255, .14);
     margin: .35rem .75rem;
+    /* round K: width auto (the default). The bundle sets hr{box-sizing:content-box}
+       and the element computes a 248px (full-rail) width, so the 12px inset
+       MARGINS sat OUTSIDE a full-width content box -> the <hr> border box ran
+       12px past the rail's right edge -> a horizontal scrollbar on .ucm-side
+       the moment an entry (and its separator) existed. width:auto makes the
+       content box fill (rail - 24px margins) and the line insets cleanly. */
+    width: auto;
 }
 /* the local-page entries use the same link look as the static entries (the
    .p-side-navigation__link rules above already style them; nothing extra). */

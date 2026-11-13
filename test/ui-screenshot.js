@@ -5326,6 +5326,15 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: after an add the form must be back in "add" mode (Add visible) (got ' + lp1.addVisible + ') (round I)');
     if (lp1.mock.calls !== 1 || JSON.stringify(lp1.mock.value) !== JSON.stringify([{ name: 'Home Assistant', url: 'http://localhost:8123' }]))
         console.log('PAGE ERROR: the add must send the whole list to the mock exactly once (got ' + JSON.stringify(lp1.mock) + ') (round I)');
+    // round K: the separator + entry must not overflow the rail horizontally
+    // (the bundle's content-box <hr> + inset margins ran 12px past the edge and
+    // gave the sidebar a horizontal scrollbar as soon as an entry existed).
+    const lp1o = await page.evaluate(() => {
+        const side = document.querySelector('.ucm-side');
+        return { cw: side.clientWidth, sw: side.scrollWidth };
+    });
+    if (lp1o.sw > lp1o.cw)
+        console.log('PAGE ERROR: the sidebar must have NO horizontal overflow with a local page added (scrollWidth ' + lp1o.sw + ' > clientWidth ' + lp1o.cw + ' — a horizontal scrollbar would appear) (round K)');
 
     // (nav) click the sidebar entry -> the webview view becomes active.
     await page.click('.ucm-side a[data-view="lp-0"]');
@@ -5499,6 +5508,12 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: an emptied list must show the empty state again (got ' + JSON.stringify(lp8.emptyText) + ') (round I)');
     if (lp8.mock.calls !== 5 || lp8.mock.value.length !== 0)
         console.log('PAGE ERROR: the final remove must send an empty list (got ' + JSON.stringify(lp8.mock) + ') (round I)');
+    const lp8o = await page.evaluate(() => {
+        const side = document.querySelector('.ucm-side');
+        return { cw: side.clientWidth, sw: side.scrollWidth };
+    });
+    if (lp8o.sw > lp8o.cw)
+        console.log('PAGE ERROR: the empty-state sidebar must have NO horizontal overflow either (scrollWidth ' + lp8o.sw + ' > clientWidth ' + lp8o.cw + ') (round K)');
 
     // back to the dashboard for the rest of the run.
     await page.click('.ucm-side a[data-view="dashboard"]');
