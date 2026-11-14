@@ -1474,19 +1474,20 @@ function ok(name, cond, extra = '') {
     {
         // ---- journal argv builder (pure) ----
         const jArgs = (o) => m.journalArgs(o);
-        ok('journalArgs: the default tail (200 lines, no extras)',
-            JSON.stringify(jArgs({})) === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '200']));
+        ok('journalArgs: the default read is UNBOUNDED (the full journal - no -n; round O: a search/filter must span the WHOLE journal, the bounded 200-line tail is a view choice)',
+            !jArgs({}).includes('-n') && JSON.stringify(jArgs({})) === JSON.stringify(['--no-pager', '--output=short-iso']));
         ok('journalArgs: unit + match + priority + lines are all threaded (match = a GREP pattern via -g, round N)',
             JSON.stringify(jArgs({ unit: 'snapd', match: 'foo bar', pri: 'err', lines: 50 }))
                 === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '50', '-p', 'err', '-u', 'snapd', '-g', 'foo bar']));
-        ok('journalArgs: the match is ALWAYS passed via -g (never as a positional MATCH - a bare positional word is an INVALID match: "Failed to add match" - the round-N bug)',
-            JSON.stringify(jArgs({ match: 'systemd' })) === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '200', '-g', 'systemd'])
+        ok('journalArgs: the match is ALWAYS passed via -g (never as a positional MATCH - a bare positional word is an INVALID match: "Failed to add match" - the round-N bug) AND spans the full journal (no -n)',
+            JSON.stringify(jArgs({ match: 'systemd' })) === JSON.stringify(['--no-pager', '--output=short-iso', '-g', 'systemd'])
             && (() => { const a2 = jArgs({ unit: 'u', match: 'm' }); const i = a2.lastIndexOf('m'); return a2[i - 1] === '-g'; })());
         ok('journalArgs: follow adds -f', jArgs({ follow: true }).includes('-f') && jArgs({}).includes('-f') === false);
-        const nOf = (args) => args[args.indexOf('-n') + 1];
-        ok('journalArgs: the line count is clamped (0/junk -> the 200 default, >2000 capped)',
-            nOf(jArgs({ lines: 0 })) === '200' && nOf(jArgs({ lines: 99999 })) === '2000'
-            && nOf(jArgs({ lines: 'junk' })) === '200' && nOf(jArgs({ lines: 55 })) === '55');
+        const nOf = (args) => args.includes('-n') ? args[args.indexOf('-n') + 1] : null;
+        ok('journalArgs: the line count is clamped (0/junk -> the 200 default, >100000 capped; null/absent = UNBOUNDED - no -n)',
+            nOf(jArgs({ lines: 0 })) === '200' && nOf(jArgs({ lines: 9999999 })) === '100000'
+            && nOf(jArgs({ lines: 'junk' })) === '200' && nOf(jArgs({ lines: 55 })) === '55'
+            && nOf(jArgs({ lines: null })) === null && nOf(jArgs({})) === null);
 
         // ---- journalTail e2e (an INJECTED fake journalctl binary — the house
         //      ip/resolvctl-injection idiom; the real binary is the log-observe
@@ -1503,6 +1504,27 @@ function ok(name, cond, extra = '') {
         const jt2 = await m.journalTail({ unit: 'nope' });
         ok('journalTail: a failing binary is a clean { ok:false, error } (never throws)', jt2.ok === false && jt2.lines.length === 0 && /No such unit/.test(jt2.error), JSON.stringify(jt2));
         m.__setJournalBinary(null);
+        // round O: a HUNG read is a clean { ok:false } on its timeout budget - the
+        // BOUNDED tail gets the fast one, the UNBOUNDED full-journal read the slow
+        // one (an unbounded read streams the whole journal and legitimately takes
+        // longer on a busy box). Shrunk via the injectable timeouts.
+        const hangStub = path.join(JDIR, 'journalctl-hang');
+        fs.writeFileSync(hangStub, '#!/bin/sh\nsleep 5\n', { mode: 0o755 });
+        m.__setJournalBinary(hangStub);
+        m.__setJournalTimeouts(150, 300);
+        const jtHang = await m.journalTail({ lines: 10 }); // bounded -> the fast budget
+        ok('journalTail: a hung BOUNDED read is a clean { ok:false } on the fast timeout (round O)', jtHang.ok === false && jtHang.lines.length === 0, JSON.stringify(jtHang));
+        const jtHang2 = await m.journalTail({});           // unbounded -> the slow budget
+        ok('journalTail: a hung UNBOUNDED read is a clean { ok:false } on the slow timeout (round O)', jtHang2.ok === false && jtHang2.lines.length === 0, JSON.stringify(jtHang2));
+        // the UNBOUNDED read must actually get the SLOW budget (a read that takes
+        // 3s SUCCEEDS under the slow one and would be killed under the fast).
+        const slowStub = path.join(JDIR, 'journalctl-slow');
+        fs.writeFileSync(slowStub, '#!/bin/sh\nsleep 3\necho "2026-11-14T08:00:01Z host unit[1]: slow read done"\n', { mode: 0o755 });
+        m.__setJournalBinary(slowStub);
+        m.__setJournalTimeouts(1500, 4000);
+        const jtSlow = await m.journalTail({});           // unbounded -> survives the 4s budget
+        ok('journalTail: an UNBOUNDED read completes on the slow budget (a bounded read of the same duration would be killed; round O)', jtSlow.ok === true && jtSlow.lines.length === 1, JSON.stringify(jtSlow));
+        m.__setJournalTimeouts(8000, 60000);
         fs.rmSync(JDIR, { recursive: true, force: true });
 
         // ---- the refresh.schedule validator (mirrors snapd's

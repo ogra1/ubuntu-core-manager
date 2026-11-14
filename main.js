@@ -1796,17 +1796,27 @@ function journalPriorIndex(p) {
 
 /** Build the journalctl argv for the requested view. Pure (unit-tested).
  *   opts: { unit?, match?, pri?, lines?, follow? }
- *   Lines are read NEWEST-FIRST (--reverse) so the tail of the journal is
- *   what fills the modal; the renderer reverses for display. */
+ *   lines: a POSITIVE integer = the N newest entries (-n N); null/absent
+ *   = the FULL journal (no -n). unit/grep/priority ALWAYS apply to the
+ *   whole journal, not just the tail - a search or a unit filter must
+ *   reach entries from long ago (the "why did the unit fail on first
+ *   start after boot" case), so -n only ever LIMITS the unfiltered view. */
 function journalArgs(opts) {
     const o = opts || {};
-    // -n N returns the NEWEST N entries in CHRONOLOGICAL (oldest-first) order —
-    // the terminal's order (newest at the bottom); the renderer keeps it as-is.
-    // (No --no-legend: not available on every systemd — journalTail drops the
-    // legend line itself.)
     const args = ['--no-pager', '--output=short-iso'];
-    const n = o.lines != null ? Math.max(1, Math.min(2000, parseInt(o.lines, 10) || 200)) : 200;
-    args.push('-n', String(n));
+    // -n N = the N newest entries; OMITTED (lines null/absent) = the FULL journal.
+    // A unit / grep / priority filter ALWAYS searches the full journal (round O) -
+    // -n only ever limits the UNFILTERED tail, so a search never misses an older
+    // entry. v255 prints -n N (with or without -g) oldest-first = the terminal
+    // order; the renderer keeps it as-is. (No --no-legend: not available on every
+    // systemd - journalTail drops the legend line itself.)
+    if (o.lines != null) {
+        // 0 / junk -> the shipped 200 default (a fresh read must return data);
+        // 100000 cap: the bounded view is a TAIL - an absurd -n is a typo.
+        // null is NOT clamped: null = unlimited (the full journal, round O).
+        const n = Math.max(1, Math.min(100000, parseInt(o.lines, 10) || 200));
+        args.push('-n', String(n));
+    }
     if (o.follow) args.push('-f');
     const pri = journalPriorIndex(o.pri);
     if (pri > 0) args.push('-p', JOURNAL_PRIORITIES[pri]);
@@ -1828,6 +1838,16 @@ function journalArgs(opts) {
 /* Injectable binary path (the integration test swaps in a stub script). */
 let __journalBinary = null;
 function __setJournalBinary(p) { __journalBinary = p || null; }
+
+/* Injectable read timeouts (the integration test shrinks them to force the
+   kill paths). Fast = a bounded tail; slow = an unbounded full-journal read
+   (round O: the whole journal can stream for a while on a big box). */
+let __journalTimeoutFast = 8000;
+let __journalTimeoutSlow = 60000;
+function __setJournalTimeouts(fast, slow) {
+    if (fast) __journalTimeoutFast = fast;
+    if (slow) __journalTimeoutSlow = slow;
+}
 function journalBinary() { return __journalBinary || 'journalctl'; }
 
 /* A running follow (journalctl -f) child. One at a time; killed on a new
@@ -1845,8 +1865,13 @@ async function journalTail(opts) {
     return new Promise((resolve) => {
         let settled = false;
         const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+        // Timeout: a BOUNDED tail (-n N) is fast (the journal is indexed); an
+        // UNBOUNDED full-journal read streams the WHOLE journal and can take
+        // tens of seconds on a big box, so it gets a longer budget (round O).
+        const bounded = opts && opts.lines != null;
+        const tmo = bounded ? __journalTimeoutFast : __journalTimeoutSlow;
         try {
-            execFile(journalBinary(), journalArgs(opts), { encoding: 'utf8', timeout: 8000 },
+            execFile(journalBinary(), journalArgs(opts), { encoding: 'utf8', timeout: tmo },
                 (err, stdout, stderr) => {
                     // err = a non-zero exit (unknown unit, unreadable journal)
                     // or the 8s timeout kill; err=null with empty stdout = an
@@ -2303,7 +2328,7 @@ const api = {
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
     // round L: System page (journal / refresh schedule / power)
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
-    __setJournalBinary,
+    __setJournalBinary, __setJournalTimeouts,
     refreshScheduleRead, refreshScheduleWrite, validRefreshSchedule, refreshScheduleFromDoc,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,

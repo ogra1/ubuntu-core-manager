@@ -1572,8 +1572,18 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 /* the journal modal (a WIDER card: short-iso lines run ~120 chars) */
 .ucm-modal--journal .ucm-modal__card { max-width: 72rem; }
 .ucm-journal__filters { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
-.ucm-journal__filters input { width: 13rem; margin-bottom: 0; }
+.ucm-journal__filters input:not([type=number]) { width: 13rem; margin-bottom: 0; }
 .ucm-journal__filters select { margin-bottom: 0; }
+/* The bundle BASE `button` rule carries margin 0 1rem 1.18rem 0 (an 18.88px bottom
+   margin, the round-7/50/61 phantom class): on this center-aligned row the two
+   buttons would ride 9px ABOVE the inputs (their inflated margin box is centred).
+   Zero it, like the inputs/select above. */
+.ucm-journal__filters button { margin: 0; }
+/* The lines control is a COUNT, not a 13rem text box - and it shares the
+   .p-form-validation__input base (whose [type=number] rule sets width 100% + the
+   18.88px bottom margin), so size it explicitly. Empty = 'all' (the full journal). */
+.ucm-journal__filters .ucm-journal__lines-input { width: 6rem; min-width: 0; margin-bottom: 0; } /* min-width:0 - the
+   [type=number] base carries min-width:8em, which would floor a 6rem width at 128px */
 .ucm-journal__status { margin-left: auto; font-size: .8rem; white-space: nowrap; }
 /* the entries pane: a TERMINAL surface — deliberately theme-independent
    (the sidebar-rail logic): dark on dark in both themes reads as "console". */

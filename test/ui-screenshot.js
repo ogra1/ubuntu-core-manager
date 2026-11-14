@@ -933,6 +933,20 @@ function mockFactoryJs() {
                     '2026-11-14T08:00:06.678901Z core-kvm-01 snapd[1234]: ERROR store access denied: invalid credentials',
                     '2026-11-14T08:00:07.789012Z core-kvm-01 systemd[1]: systemd-resolved[56]: Clock change detected.',
                 ];
+                // round O: the FULL journal. The canned lines above are the NEWEST tail of
+                // it; the 200 middle lines model entries from long ago (a TAIL read is the
+                // newest N of this list, an UNBOUNDED read is the whole list). One middle
+                // entry sits OUTSIDE the default 200-line tail - only a full-journal unit
+                // search can reach it (the round-O load-bearing probe).
+                const __mid = [];
+                for (let __i = 1; __i <= 250; __i++) {
+                    __mid.push('2026-11-01T00:00:0' + (__i % 10) + '.000000Z core-kvm-01 systemd[1]: mid-journal entry ' + __i);
+                }
+                // ONE old entry OUTSIDE the default 200-line tail (index 50: the tail starts at
+                // middle index 50, so this entry at 49 is the last one the tail CANNOT reach) -
+                // only a full-journal unit search can see it (the round-O load-bearing probe).
+                __mid[49] = '2026-11-01T00:00:05.000000Z core-kvm-01 snapd[1234]: early snapd entry (before the default 200-line tail)';
+                const J_LINES_FULL = __mid.concat(J_LINES);
                 const __priMin = { all: 7, info: 6, notice: 5, warning: 4, err: 3 }; // keep severity <= this number
                 // parse the severity of a canned line (the 'ERROR' token = err).
                 const __pri = (l) => /ERROR/.test(l) ? 3 : (/Starting|Started|Succeeded/.test(l) ? 6 : 5);
@@ -947,7 +961,9 @@ function mockFactoryJs() {
                         try { re = new RegExp(opts.match, 'i'); }
                         catch (e) { return { error: 'regex compilation error: ' + e.message }; }
                     }
-                    return J_LINES
+                    // round O: a unit / grep / priority filter ALWAYS searches the WHOLE
+                    // journal (J_LINES_FULL) - never just the tail.
+                    return J_LINES_FULL
                         .filter((l) => (opts.unit ? l.split(' ')[2].startsWith(opts.unit + '[') : true))
                         .filter((l) => (re ? re.test(l) : true))
                         .filter((l) => __pri(l) <= __priMin[opts.pri || 'all']);
@@ -962,19 +978,32 @@ function mockFactoryJs() {
                         // regression lives on, so the mock must resolve too.
                         if (o.unit === 'definitely-not-a-unit') return { ok: false, lines: [], error: 'No such unit' };
 
-                        // HONEST shape: main.js (no --reverse) returns the newest N
-                        // entries in CHRONOLOGICAL (oldest-first) order; the
-                        // renderer reverses them for display.
+                        // HONEST shape (round O): main.js (no --reverse) returns the NEWEST
+                        // N entries in CHRONOLOGICAL (oldest-first) order when bounded
+                        // (o.lines != null) and the FULL filtered journal when unbounded.
                         const hits = __filter(o);
                         if (hits && hits.error) return { ok: false, lines: [], error: hits.error };
-                        return { ok: true, lines: hits, error: '' };
+                        const out = o.lines != null ? hits.slice(-o.lines) : hits;
+                        return { ok: true, lines: out, error: '' };
                     },
                     async journalFollow(opts) {
                         __m.followCalls += 1;
-                        // stream a couple of lines after a short delay (models journalctl -f)
+                        // stream a couple of lines after a short delay (models journalctl -f).
+                        // round O: the stream honors the ACTIVE filters (the real -f runs with
+                        // the same -u/-g/-p argv) - the unfiltered drive keeps both lines.
+                        const __f = (l) => {
+                            const o2 = opts || {};
+                            if (o2.unit && !l.split(' ')[2].startsWith(o2.unit + '[')) return false;
+                            if (o2.match) { try { if (!new RegExp(o2.match, 'i').test(l)) return false; } catch (e) {} }
+                            return true;
+                        };
                         setTimeout(() => {
-                            ['2026-11-14T08:01:00.000001Z core-kvm-01 systemd[1]: Journal follow line one.',
-                             '2026-11-14T08:01:01.000002Z core-kvm-01 snapd[1234]: follow line two'].forEach((l) => {
+                            // journalctl -f -n N re-emits the last N entries, THEN follows:
+                            // stream the (filtered) tail so the pane is scrollable (a real
+                            // follow fills ~200 lines), then the two live follow lines.
+                            const tail = J_LINES_FULL.filter(__f).slice(-250);
+                            tail.concat(['2026-11-14T08:01:00.000001Z core-kvm-01 systemd[1]: Journal follow line one.',
+                             '2026-11-14T08:01:01.000002Z core-kvm-01 snapd[1234]: follow line two']).filter(__f).forEach((l) => {
                                 __mSubs.forEach((f) => { try { f(l); } catch (e) {} });
                             });
                         }, 120);
@@ -1016,6 +1045,8 @@ function mockFactoryJs() {
                         return { cancelled: had };
                     },
                     async powerScheduled() { return JSON.parse(JSON.stringify(__m.scheduled)); },
+                    // round O: the harness can inspect the canned journal pool.
+                    __jlines: { tail: () => J_LINES.length, full: () => J_LINES_FULL.length },
                     __machine: () => __m,
                 };
             })(),
@@ -5669,60 +5700,85 @@ function mockFactoryJs() {
     if (gS.schedRowHidden !== true) console.log('PAGE ERROR: the scheduled row must be hidden when nothing is scheduled (round L)');
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(gS.schedWhen || '')) console.log('PAGE ERROR: the schedule time input must be pre-filled with a datetime-local value (got ' + JSON.stringify(gS.schedWhen) + ') (round L)');
 
-    // ---- 5s-j: the journal modal (open + tail + filter + follow + close) ----
+    // ---- 5s-j: the journal modal (open + tail + filters + follow + close) ----
+    // round O: a search or unit filter ALWAYS spans the FULL journal (the canned
+    // pool is 257 lines - 250 "old" + the 7 newest tail; ONE old snapd entry sits
+    // OUTSIDE the default 200-line tail), the count is configurable (default 200,
+    // a number, or empty = ALL), and follow stays pinned to the bottom until the
+    // user scrolls up (which STOPS the follow, terminal-style).
     await page.click('#journalOpenBtn');
     await new Promise((r) => setTimeout(r, 700));
     const j1 = await page.evaluate(() => {
         const modal = document.querySelector('.ucm-modal.ucm-modal--journal');
         const pre = modal && modal.querySelector('.ucm-journal__lines');
         const status = modal && (modal.querySelector('.ucm-journal__status') || {});
+        const f = modal && modal.querySelector('.ucm-journal__filters');
+        const btns = f ? Array.from(f.querySelectorAll('button')) : [];
+        const centerOf = (e) => { const b = e.getBoundingClientRect(); return Math.round((b.top + b.bottom) / 2 * 10) / 10; };
+        const unit = f && f.querySelector('input[aria-label="Filter by unit"]');
+        const refresh = btns.find((b) => b.textContent === 'Refresh');
+        const follow = btns.find((b) => b.textContent === 'Follow');
+        const linesInp = f && f.querySelector('input[aria-label="Number of lines (empty = all)"]');
         return {
             present: !!modal,
             head: (modal && (modal.querySelector('.ucm-modal__head .p-heading--5') || {}).textContent) || null,
-            lines: pre ? pre.textContent : null,
+            text: pre ? pre.textContent : null,
             lineCount: pre ? pre.textContent.split('\n').filter((l) => l).length : 0,
             firstLine: pre ? (pre.textContent.split('\n').filter(Boolean)[0] || '') : null,
             lastLine: pre ? (pre.textContent.split('\n').filter(Boolean).pop() || '') : null,
             status: status.textContent || null,
-            followLabel: (modal && (modal.querySelector('.ucm-modal__head') && document.querySelector('.ucm-journal__filters .p-button--base')) || {}).textContent || null,
+            linesVal: linesInp ? linesInp.value : null,
+            linesW: linesInp ? Math.round(linesInp.getBoundingClientRect().width) : null,
+            // round O: the filter row is CENTER-aligned - the two buttons must sit
+            // on the SAME line as the inputs (the bundle base `button` margin of
+            // 18.88px bottom would otherwise lift their ink ~9px).
+            align: unit && refresh ? Math.abs(centerOf(unit) - centerOf(refresh)) : null,
+            btnMb: refresh ? getComputedStyle(refresh).marginBottom : null,
         };
     });
     if (!j1.present) console.log('PAGE ERROR: the journal modal must open (round L)');
     if (j1.head !== 'System journal') console.log('PAGE ERROR: the journal modal head is wrong (got ' + JSON.stringify(j1.head) + ') (round L)');
-    if (!(j1.lineCount >= 5)) console.log('PAGE ERROR: the journal must show the canned tail entries (got ' + j1.lineCount + ' lines) (round L)');
-    // round M: TERMINAL order — the oldest first, the NEWEST at the bottom
-    // (like journalctl in a terminal; the follow mode appends at the bottom).
-    if (!/Starting Daily apt download/.test(j1.firstLine || '')) console.log('PAGE ERROR: the journal must show the OLDEST entry first (terminal order; got ' + JSON.stringify(j1.firstLine) + ') (round M)');
-    if (!/Clock change detected/.test(j1.lastLine || '')) console.log('PAGE ERROR: the journal must show the NEWEST entry last (terminal order; got ' + JSON.stringify(j1.lastLine) + ') (round M)');
-    if (!/7 entries/.test(j1.status || '')) console.log('PAGE ERROR: the journal status must report the entry count (got ' + JSON.stringify(j1.status) + ') (round L)');
+    // round O: the default view is a bounded TAIL - the 200 newest of the 207-line
+    // canned pool (the 7 newest are the last 7 of the tail; the 7 oldest are cut).
+    if (j1.lineCount !== 200) console.log('PAGE ERROR: the journal default view must be the 200-line tail (got ' + j1.lineCount + ' lines) (round O)');
+    if (!/mid-journal entry 58/.test(j1.firstLine || '')) console.log('PAGE ERROR: the journal 200-tail must start at the 58th-middle entry (the 57 oldest are cut from the 257; terminal order; got ' + JSON.stringify(j1.firstLine) + ') (round M/O)');
+    if (!/Clock change detected/.test(j1.lastLine || '')) console.log('PAGE ERROR: the journal tail must end with the newest entry (terminal order; got ' + JSON.stringify(j1.lastLine) + ') (round M)');
+    if (!/200 entries/.test(j1.status || '')) console.log('PAGE ERROR: the journal status must report the entry count (got ' + JSON.stringify(j1.status) + ') (round L)');
+    // round O: the count field defaults to 200 (a bounded tail; empty = all).
+    if (j1.linesVal !== '200') console.log('PAGE ERROR: the journal lines control must default to 200 (got ' + JSON.stringify(j1.linesVal) + ') (round O)');
+    // the count field is a COMPACT control (6rem), not the 13rem/100% bundle box
+    if (!(j1.linesW >= 80 && j1.linesW <= 112)) console.log('PAGE ERROR: the journal lines control must be compact (~96px, got ' + JSON.stringify(j1.linesW) + ') (round O)');
+    // round O: the filter row alignment (the two buttons on the inputs' line).
+    if (j1.btnMb !== '0px') console.log('PAGE ERROR: the journal filter buttons must carry no bundle bottom margin (got ' + JSON.stringify(j1.btnMb) + ' - the 18.88px button margin) (round O)');
+    if (j1.align == null || j1.align > 2) console.log('PAGE ERROR: the journal filter buttons must be vertically centered on the inputs (delta ' + JSON.stringify(j1.align) + 'px, want <=2) (round O)');
 
-    // filter: unit 'snapd' -> only the snapd lines (2)
+    // round O: a UNIT filter searches the FULL journal - it reaches an old snapd
+    // entry that sits OUTSIDE the default 200-line tail (the load-bearing probe:
+    // tail-only semantics would return just 2 entries here).
     await page.evaluate(() => {
         const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
-        inp.value = 'snapd'; inp.dispatchEvent(new Event('change'));
+        inp.value = 'snapd';
     });
-    // press Enter in the unit input to reload
     await page.focus('.ucm-journal__filters input[aria-label="Filter by unit"]');
     await page.keyboard.press('Enter');
     await new Promise((r) => setTimeout(r, 500));
     const j2 = await page.evaluate(() => {
         const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
-        return { text: pre ? pre.textContent : null, status: status ? status.textContent : null };
+        const t = pre ? pre.textContent : '';
+        return { text: t, status: status ? status.textContent : null, reachesOld: /early snapd entry \(before the default 200-line tail\)/.test(t) };
     });
     if (!/refresh schedule window reached/.test(j2.text || '')) console.log('PAGE ERROR: the unit filter must keep the snapd lines (round L)');
+    if (!j2.reachesOld) console.log('PAGE ERROR: a unit filter must reach entries OLDER than the tail window (the full journal - the "first start after boot" case; got ' + JSON.stringify((j2.status || '')) + ') (round O)');
     if (/CRON|systemd\[1\]/.test(j2.text || '')) console.log('PAGE ERROR: the unit filter must drop non-snapd lines (got: ' + JSON.stringify(j2.text) + ') (round L)');
-    if (!/2 entries/.test(j2.status || '')) console.log('PAGE ERROR: the filtered count must be 2 (got ' + JSON.stringify(j2.status) + ') (round L)');
+    if (!/3 entries/.test(j2.status || '')) console.log('PAGE ERROR: the snapd unit filter must hit 3 entries in the full journal (2 newest + 1 old; got ' + JSON.stringify(j2.status) + ') (round O)');
 
-    // round N: the MATCH TEXT is a journalctl GREP PATTERN (-g): matched
-    // against the MESSAGE (the mock: a case-insensitive regex over the line).
-    // A plain word, an OR ('|'), and an INVALID pattern (which must surface
-    // the error WITHOUT wedging the controls - the round-M stuck-busy path).
+    // round O: a SEARCH (grep) also spans the full journal (the unit filter is cleared first).
     await page.evaluate(() => {
-        const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
-        inp.value = ''; inp.dispatchEvent(new Event('change'));
+        const unit = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        unit.value = '';
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
-        m.value = 'CRON'; m.dispatchEvent(new Event('change'));
+        m.value = 'CRON';
     });
     await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
     await page.keyboard.press('Enter');
@@ -5730,12 +5786,14 @@ function mockFactoryJs() {
     const jMatch1 = await page.evaluate(() => {
         const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
-        return { text: pre ? pre.textContent : null, status: status ? status.textContent : null };
+        return { text: pre ? pre.textContent : '', status: status ? status.textContent : null };
     });
     if (!/CRON/.test(jMatch1.text || '')) console.log('PAGE ERROR: a grep pattern must filter the entries (got ' + JSON.stringify(jMatch1.text) + ') (round N)');
     if (!/1 entries/.test(jMatch1.status || '')) console.log('PAGE ERROR: the CRON pattern must hit exactly 1 canned line (got ' + JSON.stringify(jMatch1.status) + ') (round N)');
-    // OR via the regex alternation: 'CRON|denied' = 2 lines
+    // the regex OR alternation: 'CRON|denied' = 2 lines (round N)
     await page.evaluate(() => {
+        const unit = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        unit.value = '';
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
         m.value = 'CRON|denied';
     });
@@ -5748,8 +5806,7 @@ function mockFactoryJs() {
     });
     if (!/2 entries/.test(jMatch2.status || '')) console.log('PAGE ERROR: the OR pattern (CRON|denied) must hit 2 lines (got ' + JSON.stringify(jMatch2.status) + ') (round N)');
     // an INVALID pattern (a lone '('): journalctl rejects it -> the error is
-    // surfaced AND the controls stay ALIVE (no re-open needed - the round-M
-    // stuck-busy regression, now via the pattern-error path).
+    // surfaced AND the controls stay ALIVE (the round-M stuck-busy regression).
     await page.evaluate(() => {
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
         m.value = '(';
@@ -5764,22 +5821,78 @@ function mockFactoryJs() {
     if (!/Could not read the journal/.test(jBad.status || '')) console.log('PAGE ERROR: an invalid grep pattern must surface the journalctl error (got ' + JSON.stringify(jBad.status) + ') (round N)');
     // clear + Reload - the controls must be ALIVE again without a re-open
     await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        pre.scrollTop = pre.scrollHeight; // re-stick to the bottom before the reload
+        pre.dispatchEvent(new Event('scroll'));
+        const unit = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        unit.value = '';
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
         m.value = '';
     });
     await page.click('.ucm-journal__filters button'); // Refresh (the first button)
     await new Promise((r) => setTimeout(r, 500));
+    // round O: scroll back to the bottom first (the un-stick test came first) so the reload re-sticks cleanly
     const jBack = await page.evaluate(() => {
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
         return { status: status ? status.textContent : null };
     });
-    if (!/7 entries/.test(jBack.status || '')) console.log('PAGE ERROR: after a rejected pattern the controls must still work (no re-open needed; got ' + JSON.stringify(jBack.status) + ') (round N)');
+    if (!/200 entries/.test(jBack.status || '')) console.log('PAGE ERROR: after a rejected pattern the controls must still work (no re-open needed; got ' + JSON.stringify(jBack.status) + ') (round N)');
 
-    // clear the unit filter, then FOLLOW (streams 2 lines)
+    // round O: the line count is configurable - a number re-reads the tail.
     await page.evaluate(() => {
-        const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
-        inp.value = ''; inp.dispatchEvent(new Event('change'));
+        const li = document.querySelector('.ucm-journal__filters input[aria-label="Number of lines (empty = all)"]');
+        li.value = '10';
+        li.dispatchEvent(new Event('change'));
     });
+    await new Promise((r) => setTimeout(r, 400));
+    const jCount1 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { n: pre ? pre.textContent.split('\n').filter(Boolean).length : null, status: status ? status.textContent : null };
+    });
+    if (jCount1.n !== 10 || !/10 entries/.test(jCount1.status || '')) console.log('PAGE ERROR: setting the count to 10 must show exactly the 10 newest (got ' + JSON.stringify(jCount1) + ') (round O)');
+    // and the UNLIMITED option: an empty field reads the FULL journal.
+    await page.evaluate(() => {
+        const li = document.querySelector('.ucm-journal__filters input[aria-label="Number of lines (empty = all)"]');
+        li.value = '';
+        li.dispatchEvent(new Event('change'));
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    const jCount2 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        const j = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__jlines ? window.__mockCore.machine.__jlines : null;
+        return { n: pre ? pre.textContent.split('\n').filter(Boolean).length : null, status: status ? status.textContent : null, full: j ? j.full() : null };
+    });
+    if (jCount2.full !== 257) console.log('PAGE ERROR: the canned full journal must be 257 lines (250 old + 7 newest; got ' + JSON.stringify(jCount2.full) + ') (round O)');
+    if (jCount2.n !== 257 || !/257 entries/.test(jCount2.status || '')) console.log('PAGE ERROR: an empty count must read the FULL journal (got ' + JSON.stringify(jCount2) + ') (round O)');
+    // a SEARCH is NEVER limited by the count field (the user's ask: 'a search of any
+    // kind and a filter by unit should always go across the full log, not just the
+    // limited 200 lines'). unit=systemd + count=5 -> ALL 253 matching entries.
+    await page.evaluate(() => {
+        const unit = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        unit.value = 'systemd';
+        const li = document.querySelector('.ucm-journal__filters input[aria-label="Number of lines (empty = all)"]');
+        li.value = '5';
+        li.dispatchEvent(new Event('change'));
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    const jCount3 = await page.evaluate(() => {
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { status: status ? status.textContent : null };
+    });
+    if (!/253 entries/.test(jCount3.status || '')) console.log('PAGE ERROR: a unit search must span the FULL journal and ignore the count field (253 = 249 old + 4 newest; got ' + JSON.stringify(jCount3.status) + ') (round O)');
+    // restore the default view for the follow drives below
+    await page.evaluate(() => {
+        const unit = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        unit.value = '';
+        const li = document.querySelector('.ucm-journal__filters input[aria-label="Number of lines (empty = all)"]');
+        li.value = '200';
+        li.dispatchEvent(new Event('change'));
+    });
+    await new Promise((r) => setTimeout(r, 400));
+
+    // FOLLOW: the pane stays pinned to the bottom as lines arrive (terminal)
     await page.evaluate(() => {
         const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Follow');
         if (b) b.click();
@@ -5789,24 +5902,114 @@ function mockFactoryJs() {
         const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
         const btns = Array.from(document.querySelectorAll('.ucm-journal__filters button')).map((b) => b.textContent);
-        return { hasFollowLine: /Journal follow line one/.test(pre ? pre.textContent : ''), status: status ? status.textContent : null, followLabel: btns.includes('Stop') };
+        return {
+            hasFollowLine: /Journal follow line one/.test(pre ? pre.textContent : ''),
+            status: status ? status.textContent : null,
+            followLabel: btns.includes('Stop'),
+            atBottom: pre ? (pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 5) : null,
+        };
     });
     if (!j3.hasFollowLine) console.log('PAGE ERROR: follow mode must stream the new journal lines (round L)');
     if (!/Following/.test(j3.status || '')) console.log('PAGE ERROR: the follow status must be live (got ' + JSON.stringify(j3.status) + ') (round L)');
     if (/(newest on top)/.test(j3.status || '')) console.log('PAGE ERROR: the follow status must not restate the (removed) newest-on-top order (got ' + JSON.stringify(j3.status) + ') (round M)');
     if (j3.followLabel !== true) console.log('PAGE ERROR: the Follow button must toggle to Stop while following (round L)');
-    // Stop following (by text — the button list is [Refresh, Follow/Stop])
+    if (j3.atBottom !== true) console.log('PAGE ERROR: follow must keep the pane pinned to the bottom as lines ARRIVE (terminal-style auto-scroll; got ' + JSON.stringify(j3.atBottom) + ') (round O)');
+    // round O: SCROLLING UP un-sticks the pane AND STOPS the follow (the user's
+    // ask) - the streamed lines stop and the status says why.
+    await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        pre.scrollTop = 0;
+        pre.dispatchEvent(new Event('scroll'));
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const jScroll = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        const btns = Array.from(document.querySelectorAll('.ucm-journal__filters button')).map((b) => b.textContent);
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            unStuck: pre ? (pre.scrollHeight - pre.scrollTop - pre.clientHeight > 24) : null,
+            status: status ? status.textContent : null,
+            stopped: btns.includes('Follow') && !btns.includes('Stop'),
+            atBottom: pre ? (pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 5) : null,
+            stopCalls: m ? m.stopCalls : null,
+        };
+    });
+    if (jScroll.unStuck !== true) console.log('PAGE ERROR: scrolling up must UN-stick the pane from the bottom (leave it where the user put it; got ' + JSON.stringify(jScroll.unStuck) + ') (round O)');
+    if (jScroll.stopped !== true) console.log('PAGE ERROR: scrolling up during follow must STOP the follow (the button must read Follow; got ' + JSON.stringify(jScroll.stopped) + ') (round O)');
+    if (!/scrolled away from the tail/.test(jScroll.status || '')) console.log('PAGE ERROR: the scroll-stop must say why the follow stopped (got ' + JSON.stringify(jScroll.status) + ') (round O)');
+    if (jScroll.stopCalls < 1) console.log('PAGE ERROR: the scroll-stop must call journalStop (got ' + JSON.stringify(jScroll.stopCalls) + ') (round O)');
+    // the pane must NOT be yanked back to the bottom after the un-stick
+    await new Promise((r) => setTimeout(r, 200));
+    const jScroll2 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        return { stillStuckUp: pre ? (pre.scrollTop < pre.scrollHeight - pre.clientHeight) : null };
+    });
+    if (jScroll2.stillStuckUp !== true) console.log('PAGE ERROR: after scrolling up the pane must stay where the user put it (round O)');
+    // a FILTERED follow: the stream honors the active unit filter (the real -f
+    // runs with the same -u/-g/-p argv). unit=systemd -> only the matching
+    // 'Journal follow line one' arrives; the snapd 'follow line two' must NOT.
+    await page.evaluate(() => {
+        const unit = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        unit.value = 'systemd';
+        const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Follow');
+        if (b) b.click();
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    const jFilterFollow = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        const t = pre ? pre.textContent : '';
+        return {
+            hasSystemd: /Journal follow line one/.test(t),
+            droppedSnapd: !/follow line two/.test(t),
+            status: status ? status.textContent : null,
+        };
+    });
+    if (!jFilterFollow.hasSystemd) console.log('PAGE ERROR: a filtered follow must stream the matching (systemd) line (round O)');
+    if (!jFilterFollow.droppedSnapd) console.log('PAGE ERROR: a systemd-filtered follow must DROP the non-matching (snapd) line (the stream honors the -u filter; round O)');
+    if (!/Following/.test(jFilterFollow.status || '')) console.log('PAGE ERROR: the filtered follow must be live (got ' + JSON.stringify(jFilterFollow.status) + ') (round O)');
+    // a BUTTON stop (while stuck): the pane stays at the bottom (the auto-scroll
+    // put it there; the stop must not yank it away) + the stop call is recorded.
     await page.evaluate(() => {
         const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Stop');
         if (b) b.click();
     });
     await new Promise((r) => setTimeout(r, 300));
     const j3b = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
         const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
-        return { stopCalls: m ? m.stopCalls : null, followCalls: m ? m.followCalls : null, journalCalls: m ? m.journalCalls : null };
+        return {
+            stopCalls: m ? m.stopCalls : null,
+            followCalls: m ? m.followCalls : null,
+            atBottom: pre ? (pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 5) : null,
+        };
     });
-    if (j3b.stopCalls < 1) console.log('PAGE ERROR: stopping the follow must call journalStop (got ' + JSON.stringify(j3b.stopCalls) + ') (round L)');
-    if (j3b.followCalls < 1) console.log('PAGE ERROR: follow mode must have started (got ' + JSON.stringify(j3b.followCalls) + ') (round L)');
+    if (j3b.followCalls < 2) console.log('PAGE ERROR: the filtered follow must have started (got ' + JSON.stringify(j3b.followCalls) + ' follow starts) (round O)');
+    if (j3b.atBottom !== true) console.log('PAGE ERROR: a button stop must leave the pane at the bottom (got ' + JSON.stringify(j3b.atBottom) + ') (round O)');
+    // a SCROLL-UP stop: the pane must stay WHERE THE USER SCROLLED (a stop must
+    // never yank the reader back to the tail - that would undo the gesture).
+    await page.evaluate(() => {
+        const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Follow');
+        if (b) b.click();
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        pre.scrollTop = 0;
+        pre.dispatchEvent(new Event('scroll')); // un-stick -> the follow stops
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const jScrollStop2 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            stayed: pre ? (pre.scrollTop < 5) : null,
+            stopCalls: m ? m.stopCalls : null,
+        };
+    });
+    if (jScrollStop2.stayed !== true) console.log('PAGE ERROR: a scroll-up stop must NOT re-pin the pane (the user stayed put; got ' + JSON.stringify(jScrollStop2.stayed) + ') (round O)');
+    if (jScrollStop2.stopCalls < 2) console.log('PAGE ERROR: the scroll-up stop must call journalStop (got ' + JSON.stringify(jScrollStop2.stopCalls) + ') (round O)');
     // close the modal (the X button; the Esc path is the 6b lock test's domain)
     await page.click('.ucm-modal--journal .ucm-modal__head button[aria-label="Close"]');
     await new Promise((r) => setTimeout(r, 250));

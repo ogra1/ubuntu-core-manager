@@ -3545,18 +3545,34 @@ function openJournalModal() {
         el('p', { class: 'p-heading--5', text: 'System journal', style: 'margin:0;' }),
         close));
 
-    // --- the filter row (unit + match + priority + follow + refresh) ------
+    // --- the filter row (unit + match + priority + LINES + follow + refresh) --
     const filters = el('div', { class: 'ucm-journal__filters' });
     const unitInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'unit (e.g. snapd)', 'aria-label': 'Filter by unit', spellcheck: 'false' });
-    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (a grep pattern on the message, e.g. snapd.*denied)', 'aria-label': 'Match text', spellcheck: 'false' });
+    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (a grep pattern on the message, e.g. snapd.*denied; the full journal)', 'aria-label': 'Match text', spellcheck: 'false' });
     const prioSel = el('select', { class: 'ucm-kv--select', 'aria-label': 'Minimum priority' });
     for (const [v, label] of SYS_JOURNAL_PRIOS) prioSel.append(el('option', { value: v, text: label }));
+    // The number of entries to show (round O): DEFAULT 200 (a bounded, fast tail);
+    // the user types a count for a bigger/smaller tail or CLEARS the field for
+    // UNLIMITED = the FULL journal. A search / unit filter ALWAYS spans the whole
+    // journal regardless of the count (reaching entries from long ago). main.js
+    // clamps (0/junk -> 200, absurd > 100000 capped); null = unlimited.
+    const linesInp = el('input', { class: 'p-form-validation__input ucm-journal__lines-input', type: 'number', min: '1', max: '100000', step: '1', value: '200', placeholder: 'all', 'aria-label': 'Number of lines (empty = all)', spellcheck: 'false' });
     const followBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Follow' });
     const refreshBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Refresh' });
     const statusLine = el('span', { class: 'ucm-journal__status ucm-muted', text: 'Loading…' });
-    filters.append(unitInp, matchInp, prioSel, refreshBtn, followBtn, statusLine);
+    filters.append(unitInp, matchInp, prioSel, linesInp, refreshBtn, followBtn, statusLine);
 
     const pre = el('pre', { class: 'ucm-journal__lines' });
+    // FOLLOW MODE: the pane stays pinned to the bottom while lines arrive (like a
+    // terminal). The user SCROLLING UP un-sticks it AND STOPS the follow (round O
+    // ask: 'if the user manually scrolls up the follow mode should be stopped').
+    let autoStuck = true;
+    pre.addEventListener('scroll', () => {
+        const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+        if (!nearBottom && autoStuck) autoStuck = false;
+        else if (nearBottom) autoStuck = true;
+        if (!nearBottom && following) stopFollow().then(() => setStatus('Stopped following (scrolled away from the tail)'));
+    });
     const bodyBox = el('div', { class: 'ucm-modal__body' });
     bodyBox.append(filters, pre);
     inner.append(bodyBox);
@@ -3568,13 +3584,25 @@ function openJournalModal() {
         unit: unitInp.value.trim(),
         match: matchInp.value.trim(),
         pri: prioSel.value === 'all' ? null : prioSel.value,
-        lines: 200,
+        // A unit / match / priority filter ALWAYS spans the WHOLE journal (round O:
+        // the user must be able to find an entry from long ago, e.g. a first-boot
+        // failure) - the count is ignored while a filter is active. With no filter,
+        // the field's number = the N newest (a TAIL, default 200); an EMPTY field
+        // = UNLIMITED = the full journal.
+        lines: (unitInp.value.trim() || matchInp.value.trim() || prioSel.value !== 'all')
+            ? null
+            : (linesInp.value === '' ? null : parseInt(linesInp.value, 10) || 200),
     });
     const render = () => {
         pre.textContent = lines.length ? lines.join('\n') : '(no matching entries)';
+        if (autoStuck) pre.scrollTop = pre.scrollHeight; // stay on the newest line
     };
     const setStatus = (t) => { if (statusLine) statusLine.textContent = t; };
 
+    // Note (round O): a filter / 'all' read is an UNBOUNDED full-journal query -
+    // journalctl streams the whole journal, so on a busy box the status shows
+    // 'Loading…' longer than the 200-line tail does (main.js gives the unbounded
+    // read a 60s budget, vs 8s for the bounded tail).
     const loadTail = async () => {
         if (busy) return;
         busy = true; setStatus('Loading…');
@@ -3598,6 +3626,9 @@ function openJournalModal() {
         if (!following) return;
         following = false;
         followBtn.textContent = 'Follow';
+        // NO re-pin here: a BUTTON stop happens while autoStuck is still true (the pane
+        // is already at the bottom), and a SCROLL-UP stop has un-sticked it - yanking the
+        // user back to the bottom would undo the very gesture they made (round O).
         try { await core.machine.journalStop(); } catch { /* best effort */ }
     };
 
@@ -3605,22 +3636,27 @@ function openJournalModal() {
         if (busy) return;
         if (following) { await stopFollow(); setStatus('Stopped following'); return; }
         following = true; followBtn.textContent = 'Stop';
-        lines.length = 0; render();
+        autoStuck = true; lines.length = 0; render(); pre.scrollTop = pre.scrollHeight;
         setStatus('Following…');
         try {
             await core.machine.journalFollow(opts());
         } catch {
             following = false; followBtn.textContent = 'Follow';
             setStatus('Could not start following');
+            autoStuck = true;
+            if (pre) pre.scrollTop = pre.scrollHeight;
             return;
         }
         unsub = core.machine.onJournalLine((line) => {
             lines.push(line); // the terminal appends at the bottom
             if (lines.length > 2000) lines.shift();
+            if (autoStuck) pre.scrollTop = pre.scrollHeight; // follow the tail
             render();
         });
     };
-    refreshBtn.onclick = () => loadTail();
+    const reload = () => loadTail();
+    refreshBtn.onclick = reload;
+    linesInp.addEventListener('change', reload); // a new count (or 'all') re-reads
     // Enter in the filter inputs = reload (the affordance a text field gives).
     for (const f of [unitInp, matchInp]) {
         f.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); loadTail(); } });
