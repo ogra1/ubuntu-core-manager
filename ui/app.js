@@ -3526,7 +3526,7 @@ function openJournalModal() {
     let unsub = null;
     let following = false;
     let busy = false;
-    const lines = [];            // newest-first (display order)
+    const lines = [];            // chronological (the terminal order: oldest first, newest appended at the bottom)
     const box = el('div', { class: 'ucm-modal ucm-modal--journal' });
     const onKey = (e) => { if (e.key === 'Escape') stopFollow().then(closeModal); };
     const closeModal = () => {
@@ -3548,7 +3548,7 @@ function openJournalModal() {
     // --- the filter row (unit + match + priority + follow + refresh) ------
     const filters = el('div', { class: 'ucm-journal__filters' });
     const unitInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'unit (e.g. snapd)', 'aria-label': 'Filter by unit', spellcheck: 'false' });
-    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text', 'aria-label': 'Match text', spellcheck: 'false' });
+    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (words are ANDed, + is OR)', 'aria-label': 'Match text', spellcheck: 'false' });
     const prioSel = el('select', { class: 'ucm-kv--select', 'aria-label': 'Minimum priority' });
     for (const [v, label] of SYS_JOURNAL_PRIOS) prioSel.append(el('option', { value: v, text: label }));
     const followBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Follow' });
@@ -3582,11 +3582,16 @@ function openJournalModal() {
             const r = await core.machine.journalTail(opts());
             if (!r || r.ok === false) { setStatus('Could not read the journal: ' + (r ? r.error : '')); return; }
             lines.length = 0;
-            for (const l of (r.lines || []).slice().reverse()) lines.push(l); // newest on top
+            for (const l of (r.lines || [])) lines.push(l); // terminal order (newest at the bottom)
             render();
             setStatus(lines.length + ' entries');
         } catch (e) { toastErr(e); setStatus('Could not read the journal'); }
-        busy = false;
+        finally {
+            // The error path above RETURNS early — without this, a failed
+            // query (bad match expression, unknown unit) left the buttons
+            // permanently inert until the modal was re-opened.
+            busy = false;
+        }
     };
 
     const stopFollow = async () => {
@@ -3601,7 +3606,7 @@ function openJournalModal() {
         if (following) { await stopFollow(); setStatus('Stopped following'); return; }
         following = true; followBtn.textContent = 'Stop';
         lines.length = 0; render();
-        setStatus('Following… (newest on top)');
+        setStatus('Following…');
         try {
             await core.machine.journalFollow(opts());
         } catch {
@@ -3610,8 +3615,8 @@ function openJournalModal() {
             return;
         }
         unsub = core.machine.onJournalLine((line) => {
-            lines.unshift(line);
-            if (lines.length > 2000) lines.pop();
+            lines.push(line); // the terminal appends at the bottom
+            if (lines.length > 2000) lines.shift();
             render();
         });
     };

@@ -936,15 +936,30 @@ function mockFactoryJs() {
                 const __priMin = { all: 7, info: 6, notice: 5, warning: 4, err: 3 }; // keep severity <= this number
                 // parse the severity of a canned line (the 'ERROR' token = err).
                 const __pri = (l) => /ERROR/.test(l) ? 3 : (/Starting|Started|Succeeded/.test(l) ? 6 : 5);
+                // The match text is a journalctl MATCH EXPRESSION passed verbatim:
+                // words are ANDed (substring, case-insensitive here), '+' separates
+                // OR clauses — a LEADING '+' is invalid (journalctl errors, the app
+                // surfaces it + stays usable: the round-M stuck-busy regression).
+                const __matchOk = (l, expr) => {
+                    if (!expr) return true;
+                    if (expr.trim().startsWith('+')) throw new Error('"+" can only be used between terms');
+                    const lower = l.toLowerCase();
+                    return expr.split('+').some((clause) => clause.trim().split(/\s+/).filter(Boolean).every((w) => lower.includes(w.toLowerCase())));
+                };
                 const __filter = (opts) => J_LINES
                     .filter((l) => (opts.unit ? l.split(' ')[2].startsWith(opts.unit + '[') : true))
-                    .filter((l) => (opts.match ? l.toLowerCase().includes(String(opts.match).toLowerCase()) : true))
+                    .filter((l) => __matchOk(l, opts.match))
                     .filter((l) => __pri(l) <= __priMin[opts.pri || 'all']);
                 return {
                     async journalTail(opts) {
                         __m.journalCalls += 1;
                         const o = opts || {};
-                        if (o.unit === 'definitely-not-a-unit') throw new Error('No such unit');
+                        // HONEST: the real journalTail RESOLVES { ok:false, error }
+                        // on a journalctl failure (it never throws) — the app's
+                        // early-return error path is what the round-M stuck-busy
+                        // regression lives on, so the mock must resolve too.
+                        if (o.unit === 'definitely-not-a-unit') return { ok: false, lines: [], error: 'No such unit' };
+                        if (o.match && String(o.match).trim().startsWith('+')) return { ok: false, lines: [], error: 'journalctl: "\"+"\"" can only be used between terms' };
                         // HONEST shape: main.js (no --reverse) returns the newest N
                         // entries in CHRONOLOGICAL (oldest-first) order; the
                         // renderer reverses them for display.
@@ -5663,7 +5678,8 @@ function mockFactoryJs() {
             head: (modal && (modal.querySelector('.ucm-modal__head .p-heading--5') || {}).textContent) || null,
             lines: pre ? pre.textContent : null,
             lineCount: pre ? pre.textContent.split('\n').filter((l) => l).length : 0,
-            newestOnTop: pre ? (pre.textContent.split('\n').filter(Boolean)[0] || '').includes('Clock change detected') : null,
+            firstLine: pre ? (pre.textContent.split('\n').filter(Boolean)[0] || '') : null,
+            lastLine: pre ? (pre.textContent.split('\n').filter(Boolean).pop() || '') : null,
             status: status.textContent || null,
             followLabel: (modal && (modal.querySelector('.ucm-modal__head') && document.querySelector('.ucm-journal__filters .p-button--base')) || {}).textContent || null,
         };
@@ -5671,7 +5687,10 @@ function mockFactoryJs() {
     if (!j1.present) console.log('PAGE ERROR: the journal modal must open (round L)');
     if (j1.head !== 'System journal') console.log('PAGE ERROR: the journal modal head is wrong (got ' + JSON.stringify(j1.head) + ') (round L)');
     if (!(j1.lineCount >= 5)) console.log('PAGE ERROR: the journal must show the canned tail entries (got ' + j1.lineCount + ' lines) (round L)');
-    if (j1.newestOnTop !== true) console.log('PAGE ERROR: the journal must show the NEWEST entry first (got first line: ' + JSON.stringify((j1.lines || '').slice(0, 80)) + ') (round L)');
+    // round M: TERMINAL order — the oldest first, the NEWEST at the bottom
+    // (like journalctl in a terminal; the follow mode appends at the bottom).
+    if (!/Starting Daily apt download/.test(j1.firstLine || '')) console.log('PAGE ERROR: the journal must show the OLDEST entry first (terminal order; got ' + JSON.stringify(j1.firstLine) + ') (round M)');
+    if (!/Clock change detected/.test(j1.lastLine || '')) console.log('PAGE ERROR: the journal must show the NEWEST entry last (terminal order; got ' + JSON.stringify(j1.lastLine) + ') (round M)');
     if (!/7 entries/.test(j1.status || '')) console.log('PAGE ERROR: the journal status must report the entry count (got ' + JSON.stringify(j1.status) + ') (round L)');
 
     // filter: unit 'snapd' -> only the snapd lines (2)
@@ -5692,6 +5711,81 @@ function mockFactoryJs() {
     if (/CRON|systemd\[1\]/.test(j2.text || '')) console.log('PAGE ERROR: the unit filter must drop non-snapd lines (got: ' + JSON.stringify(j2.text) + ') (round L)');
     if (!/2 entries/.test(j2.status || '')) console.log('PAGE ERROR: the filtered count must be 2 (got ' + JSON.stringify(j2.status) + ') (round L)');
 
+    // round M: the MATCH TEXT is a journalctl match EXPRESSION (passed verbatim
+    // — words ANDed, '+' = OR; a leading '+' is invalid and must be surfaced
+    // WITHOUT wedging the controls).
+    await page.evaluate(() => {
+        const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        inp.value = ''; inp.dispatchEvent(new Event('change'));
+        const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
+        m.value = 'CRON'; m.dispatchEvent(new Event('change'));
+    });
+    await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
+    await page.keyboard.press('Enter');
+    await new Promise((r) => setTimeout(r, 500));
+    const jMatch1 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { text: pre ? pre.textContent : null, status: status ? status.textContent : null };
+    });
+    if (!/CRON/.test(jMatch1.text || '')) console.log('PAGE ERROR: a match word must filter the entries (got ' + JSON.stringify(jMatch1.text) + ') (round M)');
+    if (!/1 entries/.test(jMatch1.status || '')) console.log('PAGE ERROR: the CRON match must hit exactly 1 canned line (got ' + JSON.stringify(jMatch1.status) + ') (round M)');
+    // OR: 'snapd + CRON' = 4 lines (the mock's substring model: 3 lines contain
+    // "snapd" — incl. the "snapd.service: Succeeded" line — + 1 CRON)
+    await page.evaluate(() => {
+        const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
+        m.value = 'snapd + CRON';
+    });
+    await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
+    await page.keyboard.press('Enter');
+    await new Promise((r) => setTimeout(r, 500));
+    const jMatch2 = await page.evaluate(() => {
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { status: status ? status.textContent : null };
+    });
+    if (!/4 entries/.test(jMatch2.status || '')) console.log('PAGE ERROR: the OR expression (snapd + CRON) must hit 4 lines (got ' + JSON.stringify(jMatch2.status) + ') (round M)');
+    // AND: 'snapd foo' hits nothing
+    await page.evaluate(() => {
+        const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
+        m.value = 'snapd foo';
+    });
+    await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
+    await page.keyboard.press('Enter');
+    await new Promise((r) => setTimeout(r, 500));
+    const jMatch3 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        return { empty: pre ? pre.textContent : null };
+    });
+    if (jMatch3.empty !== '(no matching entries)') console.log('PAGE ERROR: an AND match with no hits must show the empty state (got ' + JSON.stringify(jMatch3.empty) + ') (round M)');
+    // the STUCK-BUSY regression (round M, bug 3): a REJECTED expression (leading '+')
+    // must surface the error AND leave the controls WORKING (the round-L bug
+    // returned before clearing the busy flag — the buttons were dead until the
+    // modal was re-opened).
+    await page.evaluate(() => {
+        const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
+        m.value = '+bad';
+    });
+    await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
+    await page.keyboard.press('Enter');
+    await new Promise((r) => setTimeout(r, 400));
+    const jBad = await page.evaluate(() => {
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { status: status ? status.textContent : null };
+    });
+    if (!/Could not read the journal/.test(jBad.status || '')) console.log('PAGE ERROR: an invalid match expression must surface the journalctl error (got ' + JSON.stringify(jBad.status) + ') (round M)');
+    // clear + reload — the controls must be ALIVE again without a re-open
+    await page.evaluate(() => {
+        const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
+        m.value = '';
+    });
+    await page.click('.ucm-journal__filters button'); // Refresh (the first button)
+    await new Promise((r) => setTimeout(r, 500));
+    const jBack = await page.evaluate(() => {
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { status: status ? status.textContent : null };
+    });
+    if (!/7 entries/.test(jBack.status || '')) console.log('PAGE ERROR: after a rejected query the controls must still work (no re-open needed; got ' + JSON.stringify(jBack.status) + ') (round M)');
+
     // clear the unit filter, then FOLLOW (streams 2 lines)
     await page.evaluate(() => {
         const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
@@ -5710,6 +5804,7 @@ function mockFactoryJs() {
     });
     if (!j3.hasFollowLine) console.log('PAGE ERROR: follow mode must stream the new journal lines (round L)');
     if (!/Following/.test(j3.status || '')) console.log('PAGE ERROR: the follow status must be live (got ' + JSON.stringify(j3.status) + ') (round L)');
+    if (/(newest on top)/.test(j3.status || '')) console.log('PAGE ERROR: the follow status must not restate the (removed) newest-on-top order (got ' + JSON.stringify(j3.status) + ') (round M)');
     if (j3.followLabel !== true) console.log('PAGE ERROR: the Follow button must toggle to Stop while following (round L)');
     // Stop following (by text — the button list is [Refresh, Follow/Stop])
     await page.evaluate(() => {

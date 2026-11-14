@@ -1800,10 +1800,10 @@ function journalPriorIndex(p) {
  *   what fills the modal; the renderer reverses for display. */
 function journalArgs(opts) {
     const o = opts || {};
-    // No --reverse: -n N returns the NEWEST N entries in normal (chronological,
-    // oldest-first) order; the renderer reverses them for display (newest on top).
+    // -n N returns the NEWEST N entries in CHRONOLOGICAL (oldest-first) order —
+    // the terminal's order (newest at the bottom); the renderer keeps it as-is.
     // (No --no-legend: not available on every systemd — journalTail drops the
-    // legend line itself; it always ends ':' and carries no ' - ' field gap.)
+    // legend line itself.)
     const args = ['--no-pager', '--output=short-iso'];
     const n = o.lines != null ? Math.max(1, Math.min(2000, parseInt(o.lines, 10) || 200)) : 200;
     args.push('-n', String(n));
@@ -1811,7 +1811,16 @@ function journalArgs(opts) {
     const pri = journalPriorIndex(o.pri);
     if (pri > 0) args.push('-p', JOURNAL_PRIORITIES[pri]);
     if (o.unit) args.push('-u', String(o.unit));
-    if (o.match) args.push('+', String(o.match));
+    if (o.match) {
+        // The match text is a journalctl MATCH EXPRESSION, passed VERBATIM as a
+        // single argv (journalctl.c parse_argv: the first non-option is matches).
+        // Grammar: position 0 = AND, position 1 ('+') = OR — a LEADING '+' is
+        // invalid ("+ can only be used between terms"), so we never prepend one;
+        // 'a b' = both words, 'a + b' = a OR b, 'MESSAGE=x' is a field term.
+        // (journalctl parses the whole expression; execFile has no shell, so
+        // spaces are fine inside the one argument.)
+        args.push(String(o.match));
+    }
     return args;
 }
 
