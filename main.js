@@ -1754,6 +1754,262 @@ function localPagesAllowSelfSignedCert(details) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 8f. System page (round L): journal + refresh schedule + power
+ *
+ * Three backends, all console-privileged (the page sits behind the
+ * local-admin gate like every other page):
+ *   1. SYSTEM JOURNAL  - reads /var/log via the log-observe interface,
+ *     which grants journalctl execution + /run/log/journal/** (source-
+ *     verified: snapd interfaces/builtin/log_observe.go, 8d4d073). Same
+ *     house idiom as ip/resolvctl (sanctioned tool, no new grant).
+ *   2. REFRESH SCHEDULE - the core 'refresh.schedule' option (legacy
+ *     time-window grammar: HH:MM-HH:MM windows separated by '/', e.g.
+ *     "02:00-06:00"). snapd validates via timeutil.ParseLegacySchedule
+ *     (validTime = ^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$;
+ *     24:00 = end-of-day). Empty = unset = the built-in default (24/7,
+ *     every 4h: defaultRefreshScheduleStr "00:00~24:00/4"). Written via
+ *     the existing core config bridge (async snapd change).
+ *   3. POWER / SCHEDULED SHUTDOWN - org.freedesktop.login1.Manager over
+ *     the system bus via dbus-next (the shutdown interface is D-BUS
+ *     ONLY - source-verified, no systemctl/poweroff allowed). Signatures
+ *     verified by live introspection on systemd 255 (== Ubuntu Core 24):
+ *       Reboot(b) / PowerOff(b)            b = polkit "interactive" flag
+ *       ScheduleShutdown(s, t)             s = mode "reboot"|"poweroff"|
+ *                                           "halt"; t = ABSOLUTE
+ *                                           CLOCK_REALTIME in USEC
+ *       CancelScheduledShutdown() -> b
+ *       property ScheduledShutdown (st)    "" + UINT64_MAX when none
+ *     Logind persists the schedule to /run/systemd/shutdown/scheduled
+ *     (survives app restarts) and creates /run/nologin 5 minutes before
+ *     the action.
+ * ------------------------------------------------------------------ */
+
+/* ---- 1. system journal (journalctl) -------------------------------- */
+
+const JOURNAL_PRIORITIES = ['debug', 'info', 'notice', 'warning', 'err'];
+
+function journalPriorIndex(p) {
+    if (p == null) return 0;
+    const i = JOURNAL_PRIORITIES.indexOf(String(p));
+    return i < 0 ? 0 : i;
+}
+
+/** Build the journalctl argv for the requested view. Pure (unit-tested).
+ *   opts: { unit?, match?, pri?, lines?, follow? }
+ *   Lines are read NEWEST-FIRST (--reverse) so the tail of the journal is
+ *   what fills the modal; the renderer reverses for display. */
+function journalArgs(opts) {
+    const o = opts || {};
+    // No --reverse: -n N returns the NEWEST N entries in normal (chronological,
+    // oldest-first) order; the renderer reverses them for display (newest on top).
+    // (No --no-legend: not available on every systemd — journalTail drops the
+    // legend line itself; it always ends ':' and carries no ' - ' field gap.)
+    const args = ['--no-pager', '--output=short-iso'];
+    const n = o.lines != null ? Math.max(1, Math.min(2000, parseInt(o.lines, 10) || 200)) : 200;
+    args.push('-n', String(n));
+    if (o.follow) args.push('-f');
+    const pri = journalPriorIndex(o.pri);
+    if (pri > 0) args.push('-p', JOURNAL_PRIORITIES[pri]);
+    if (o.unit) args.push('-u', String(o.unit));
+    if (o.match) args.push('+', String(o.match));
+    return args;
+}
+
+/* Injectable binary path (the integration test swaps in a stub script). */
+let __journalBinary = null;
+function __setJournalBinary(p) { __journalBinary = p || null; }
+function journalBinary() { return __journalBinary || 'journalctl'; }
+
+/* A running follow (journalctl -f) child. One at a time; killed on a new
+   follow, on stop, and when the main window closes. */
+let __journalFollow = null;
+function journalFollowKill() {
+    if (__journalFollow) {
+        try { __journalFollow.kill('SIGTERM'); } catch { /* already gone */ }
+        __journalFollow = null;
+    }
+}
+
+async function journalTail(opts) {
+    const { execFile } = require('child_process');
+    return new Promise((resolve) => {
+        let settled = false;
+        const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+        try {
+            execFile(journalBinary(), journalArgs(opts), { encoding: 'utf8', timeout: 8000 },
+                (err, stdout, stderr) => {
+                    // err = a non-zero exit (unknown unit, unreadable journal)
+                    // or the 8s timeout kill; err=null with empty stdout = an
+                    // empty match (fine).
+                    const error = err ? String(err.message || err) : (stderr ? String(stderr) : '');
+                    // Drop the journal LEGEND line ('-- Journal begins at ... --') -
+                    // it models the --no-legend flag, which is not portable across
+                    // systemd versions. A real entry never starts with '--'.
+                    const lines = String(stdout || '').split('\n').filter((l) => l.length && !l.startsWith('--'));
+                    done({ ok: !err, lines: lines, error: error });
+                });
+        } catch (e) {
+            done({ ok: false, lines: [], error: String((e && e.message) || e) });
+        }
+    });
+}
+
+function journalFollow(opts, onLine, onDone) {
+    journalFollowKill();
+    const { spawn } = require('child_process');
+    let child;
+    try {
+        child = spawn(journalBinary(), journalArgs(Object.assign({}, opts, { follow: true })), { encoding: 'utf8' });
+    } catch (e) {
+        if (onDone) onDone(String((e && e.message) || e));
+        return;
+    }
+    let buf = '';
+    child.stdout.on('data', (d) => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, i);
+            buf = buf.slice(i + 1);
+            if (line.length && onLine) onLine(line);
+        }
+    });
+    child.on('error', (e) => { if (onDone) onDone(String((e && e.message) || e)); });
+    child.on('close', (code) => { buf = ''; if (onDone) onDone(null, code); });
+    __journalFollow = child;
+    return child;
+}
+
+/* ---- 2. snapd refresh schedule (refresh.schedule) ------------------- */
+
+// Mirrors snapd's timeutil validTime + ParseLegacySchedule grammar exactly:
+// each window is HH:MM-HH:MM (hours 0-23, minutes 0-59, "24:00" allowed as
+// an END bound); windows are separated by '/'.
+const RE_LEGACY_CLOCK = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
+function legacyClockHour(s) {
+    if (s === '24:00') return 24;
+    const m = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$/.exec(s);
+    if (!m) return null;
+    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10); // minutes-of-day
+}
+function validRefreshSchedule(s) {
+    if (typeof s !== 'string') return false;
+    s = s.trim();
+    if (s === '') return true; // empty = unset (the built-in default)
+    if (s === 'managed') return false; // reserved for refresh-managing snaps
+    for (const win of s.split('/')) {
+        const parts = win.split('-');
+        if (parts.length !== 2) return false;
+        const a = legacyClockHour(parts[0]);
+        const b = legacyClockHour(parts[1]);
+        if (a == null || b == null) return false;
+        if (parts[0] === '24:00') return false; // 24:00 is a valid END only
+    }
+    return true;
+}
+
+/* Read the CURRENT refresh.schedule (the whole core doc, shape-robust: the
+   full-doc and the { 'refresh.schedule': v } single-key shapes both work). */
+function refreshScheduleFromDoc(doc) {
+    if (!doc || typeof doc !== 'object') return null;
+    // The doc shape is flexible: the whole core doc stores a dotted key as a
+    // NESTED path (round 48f: snapd stores config as nested JSON), a single-key
+    // GET returns { 'refresh.schedule': v }, and the netplan-merged doc nests
+    // under network. Walk all three.
+    if (typeof doc['refresh.schedule'] === 'string') return doc['refresh.schedule'];
+    if (doc.refresh && typeof doc.refresh === 'object' && typeof doc.refresh.schedule === 'string') return doc.refresh.schedule;
+    if (doc.network && typeof doc.network === 'object' && typeof doc.network['refresh.schedule'] === 'string') return doc.network['refresh.schedule'];
+    return null;
+}
+
+async function refreshScheduleRead() {
+    const doc = await getSnapConfig('core');
+    return refreshScheduleFromDoc(doc);
+}
+
+async function refreshScheduleWrite(value) {
+    // '' = clear the option (snapd's Set drops empty-string scalars -> the
+    // built-in default applies again).
+    return setSnapConfig('core', { 'refresh.schedule': value });
+}
+
+/* ---- 3. power / scheduled shutdown (login1 over D-Bus) --------------- */
+
+let __login1Transport = null;
+function __setLogin1Transport(fn) { __login1Transport = fn; }
+function login1Transport(spec) {
+    if (__login1Transport) return __login1Transport(spec);
+    const { systemBus, Message, MessageType } = require('dbus-next');
+    const bus = systemBus();
+    const msg = new Message(Object.assign({}, spec, { type: MessageType.METHOD_CALL }));
+    return bus.call(msg).then((r) => (r && r.body) || []);
+}
+
+const LOGIN1_DEST = 'org.freedesktop.login1';
+const LOGIN1_PATH = '/org/freedesktop/login1';
+const LOGIN1_IFACE = 'org.freedesktop.login1.Manager';
+const POWER_ACTIONS = ['reboot', 'poweroff'];
+
+// Reboot/PowerOff take ONE boolean: the polkit "interactive" flag. A
+// privileged snap calls it NON-interactively (false) - no auth prompt.
+async function powerAction(action) {
+    const a = String(action || '').toLowerCase();
+    if (!POWER_ACTIONS.includes(a)) throw new Error('invalid power action: ' + action);
+    const member = a === 'reboot' ? 'Reboot' : 'PowerOff';
+    await login1Transport({ destination: LOGIN1_DEST, path: LOGIN1_PATH,
+        interface: LOGIN1_IFACE, member: member, signature: 'b', body: [false] });
+}
+
+/** The ScheduleShutdown 'when' value: an ABSOLUTE CLOCK_REALTIME timestamp
+ *   in MICROSECONDS (systemd 255, verified: the timer is armed on
+ *   CLOCK_REALTIME). from = Date.now() (ms) -> usec. */
+function shutdownWhenUsec(fromMs) {
+    const ms = Math.round(Number(fromMs));
+    if (!Number.isFinite(ms)) throw new Error('invalid shutdown time');
+    return Math.round(ms * 1000);
+}
+
+async function powerSchedule(action, whenMs) {
+    const a = String(action || '').toLowerCase();
+    if (!POWER_ACTIONS.includes(a)) throw new Error('invalid power action: ' + action);
+    const usec = shutdownWhenUsec(whenMs);
+    await login1Transport({ destination: LOGIN1_DEST, path: LOGIN1_PATH,
+        interface: LOGIN1_IFACE, member: 'ScheduleShutdown', signature: 'st', body: [a, usec] });
+    return powerScheduledRead();
+}
+
+async function powerCancelScheduled() {
+    const body = await login1Transport({ destination: LOGIN1_DEST, path: LOGIN1_PATH,
+        interface: LOGIN1_IFACE, member: 'CancelScheduledShutdown', signature: '', body: [] });
+    return { cancelled: !!unwrapVariant(body && body[0]) };
+}
+
+// The ScheduledShutdown property is a STRUCT (st) [mode, usec]; dbus-next
+// surfaces it as a 2-element array. logind's "none" sentinel is UINT64_MAX
+// (1.844e19, busctl shows 18446744073709551615) — it arrives PRECISION-LOST
+// through dbus-next's uint64->number decode, so "near the top of the number
+// range" means none. A real schedule timestamp is ~1e15 usec (year ~58k AD
+// is 1.8e18, so 1.5e19 leaves 100x headroom above any real time).
+function powerScheduledParse(val) {
+    let arr = val;
+    if (arr && typeof arr === 'object' && !Array.isArray(arr) && 'value' in arr && 'signature' in arr) arr = arr.value;
+    if (arr && arr.mode != null) arr = [arr.mode, arr.usec != null ? arr.usec : arr.timeout];
+    if (!Array.isArray(arr) || arr.length < 2) return { active: false, action: null, usec: null };
+    const mode = String(arr[0] || '');
+    const usecRaw = Number(arr[1]);
+    const active = mode.length > 0 && Number.isFinite(usecRaw) && usecRaw > 0 && usecRaw < 1.5e19;
+    return { active: active, action: active ? mode : null, usec: active ? usecRaw : null };
+}
+
+async function powerScheduledRead() {
+    const body = await login1Transport({ destination: LOGIN1_DEST, path: LOGIN1_PATH,
+        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
+        body: [LOGIN1_IFACE, 'ScheduledShutdown'] });
+    return powerScheduledParse(body && body[0]);
+}
+
+
+/* ------------------------------------------------------------------ *
  * 9. Interfaces (plug/slot control)
  * ------------------------------------------------------------------ */
 
@@ -2035,6 +2291,12 @@ const api = {
     getSnapConfig, getNetplan, listInterfaces, confInferType,
     timesyncStatus, timesyncSetEnabled, timesyncSetServer,
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
+    // round L: System page (journal / refresh schedule / power)
+    journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
+    __setJournalBinary,
+    refreshScheduleRead, refreshScheduleWrite, validRefreshSchedule, refreshScheduleFromDoc,
+    powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
+    powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
     getNetDevices, netApplyDevice, buildNetDeviceDef, mergeNetplanDevices,
     listNetDevices, netLinkType, netGlobMatch, netDefMatches, __setNetLive,
@@ -2245,6 +2507,8 @@ function initElectron() {
         win.once('ready-to-show', () => win.show());
         win.loadFile(path.join(__dirname, 'ui', 'index.html'));
         win.on('closed', () => { mainWin = null; });
+        // round L: a running journal follow (-f child) dies with the window.
+        win.on('closed', journalFollowKill);
         mainWin = win;
 
         // ---- test-only hook (UCM_E2E=1): report renderer bootstrap state, then quit.
@@ -2325,6 +2589,42 @@ function initElectron() {
                             probe.lp = await win.webContents.executeJavaScript(LP_PROBE, false);
                         } catch (err) {
                             probe.lp = { ok: false, error: String((err && err.message) || err) };
+                        }
+
+                        // ---- round L: the SYSTEM page E2E. READ-ONLY by
+                        //      design: the probe reads the REAL journal (the
+                        //      log-observe grant) + the REAL login1
+                        //      ScheduledShutdown property (the shutdown
+                        //      grant's D-Bus surface) — it NEVER calls
+                        //      power()/powerSchedule() (a real PowerOff would
+                        //      kill the suite).
+                        const SYS_PROBE = `
+                            (async () => {
+                                const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+                                try {
+                                    const core = window.ucmCore;
+                                    const sy = {};
+                                    try {
+                                        const jt = await core.machine.journalTail({ lines: 20 });
+                                        sy.journal = jt ? { ok: jt.ok, n: (jt.lines || []).length, first: (jt.lines && jt.lines.length) ? jt.lines[0].slice(0, 60) : null, error: jt.error || null } : null;
+                                    } catch (e) { sy.journal = { ok: false, error: String(e.message || e) }; }
+                                    try {
+                                        const ps = await core.machine.powerScheduled();
+                                        sy.scheduled = ps ? { active: ps.active, action: ps.action, usec: ps.usec } : null;
+                                    } catch (e) { sy.scheduled = { error: String(e.message || e) }; }
+                                    document.querySelector('.ucm-side a[data-view="system"]').click();
+                                    await wait(1500);
+                                    sy.viewActive = !document.querySelector('#view-system').classList.contains('ucm-hidden');
+                                    sy.cards = Array.from(document.querySelectorAll('#view-system .p-card .p-heading--5')).map((h) => h.textContent.trim());
+                                    return { ok: true, sy };
+                                } catch (e) {
+                                    return { ok: false, error: String((e && e.message) || e) };
+                                }
+                            })()`;
+                        try {
+                            probe.sys = await win.webContents.executeJavaScript(SYS_PROBE, false);
+                        } catch (err) {
+                            probe.sys = { ok: false, error: String((err && err.message) || err) };
                         }
                     }
                     console.log('UCM_E2E_RESULT ' + JSON.stringify(probe));
@@ -2432,6 +2732,58 @@ function initElectron() {
     ipcMain.handle('net:clear-seed', guard(() => { requireAuth(); return clearNetSeedBoilerplate(); }));
     ipcMain.handle('net:forwarding-status', guard(() => ipfwdStatus()));
     ipcMain.handle('net:forwarding-set', guard((b) => { requireAuth(); return ipfwdSet(b); }));
+
+    // ---- round L: System page (console-privileged like every other page) ----
+    // Journal (log-observe): the tail is read on demand; a follow streams
+    // journalctl -f lines to the renderer over 'system:journal-line'.
+    ipcMain.handle('system:journal-tail', guard(async (opts) => {
+        requireAuth();
+        const r = await journalTail(opts);
+        return r;
+    }));
+    ipcMain.handle('system:journal-follow', guard(async (opts) => {
+        requireAuth();
+        if (mainWin && !mainWin.isDestroyed()) {
+            journalFollow(opts,
+                (line) => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('system:journal-line', line); },
+                (err) => { journalFollowKill(); });
+        }
+        return { started: true };
+    }));
+    ipcMain.handle('system:journal-stop', guard(async () => {
+        requireAuth();
+        journalFollowKill();
+        return { stopped: true };
+    }));
+    // Refresh schedule (core config; async snapd change).
+    ipcMain.handle('system:refresh-read', guard(async () => {
+        requireAuth();
+        const value = await refreshScheduleRead();
+        return { value: value, valid: validRefreshSchedule(value == null ? '' : value) };
+    }));
+    ipcMain.handle('system:refresh-write', guard(async (value) => {
+        requireAuth();
+        return refreshScheduleWrite(value);
+    }));
+    // Power / scheduled shutdown (login1 over D-Bus; the shutdown interface
+    // is D-BUS ONLY - no shell-out to poweroff/systemctl).
+    ipcMain.handle('system:power', guard(async (action) => {
+        requireAuth();
+        await powerAction(action);
+        return { started: true };
+    }));
+    ipcMain.handle('system:power-schedule', guard(async (action, whenMs) => {
+        requireAuth();
+        return powerSchedule(action, whenMs);
+    }));
+    ipcMain.handle('system:power-cancel-scheduled', guard(async () => {
+        requireAuth();
+        return powerCancelScheduled();
+    }));
+    ipcMain.handle('system:power-scheduled', guard(async () => {
+        requireAuth();
+        return powerScheduledRead();
+    }));
     ipcMain.handle('ifaces:list', guard(() => listInterfaces()));
     ipcMain.handle('ifaces:connect', guard((plug, slot) => { requireAuth(); return connectInterface(plug, slot); }));
     ipcMain.handle('ifaces:disconnect', guard((plug, slot) => { requireAuth(); return disconnectInterface(plug, slot); }));

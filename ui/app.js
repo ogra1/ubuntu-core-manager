@@ -125,6 +125,9 @@ const state = {
     // round I: local pages (embedded localhost web UIs). [] seeds the FIRST
     // paint before core.auth.status() lands the real list.
     localPages: [],
+    // round L: the System page's power card (the live scheduled shutdown,
+    // read from logind on view entry; {active, action, usec}).
+    scheduled: null,
     // optional store auth
     storeAuthenticated: false,
     storeUsername: null,
@@ -150,8 +153,8 @@ const state = {
     dashPoll: null,
 };
 
-const VIEWS = ['dashboard', 'network', 'snaps', 'interfaces', 'settings'];
-const VIEW_TITLES = { dashboard: 'Dashboard', network: 'Network configuration', snaps: 'Snap packages', interfaces: 'Snap interfaces', settings: 'Settings' };
+const VIEWS = ['dashboard', 'network', 'snaps', 'interfaces', 'settings', 'system'];
+const VIEW_TITLES = { dashboard: 'Dashboard', network: 'Network configuration', snaps: 'Snap packages', interfaces: 'Snap interfaces', settings: 'Settings', system: 'System' };
 
 /* --------------------------- three-gate routing -------------------------- */
 /*   !initialized  -> #setupView  (create the local password; offline)
@@ -203,6 +206,7 @@ function switchView(name) {
         snaps: loadSnaps,
         interfaces: loadInterfaces,
         settings: loadSettings,
+        system: loadSystem,
     };
     if (loaders[name]) loaders[name]();
     // round I: a local-page view has NO loader — the <webview> is already in
@@ -3419,6 +3423,286 @@ function renderLocalPagesCard() {
 // (re)render the card list — called from loadSettings + after each edit.
 function renderLocalPagesAll() { renderLocalPagesCard(); }
 
+/* ==========================================================================
+ * round L: the SYSTEM page — journal + refresh schedule + power
+ * ========================================================================== */
+
+const SYS_JOURNAL_PRIOS = [
+    ['all', 'All'], ['info', 'Info +'], ['notice', 'Notice +'], ['warning', 'Warning +'], ['err', 'Errors only'],
+];
+
+function sysSetFieldErr(inp, msgEl, text) {
+    const group = inp && inp.closest('.p-form__group');
+    // The refresh/schedule rows are NOT p-form__groups (the card uses plain
+    // divs) — toggle an is-error class on the input itself + set the message.
+    if (inp) inp.classList.toggle('is-error', !!text);
+    if (msgEl) msgEl.textContent = text || '';
+}
+
+async function loadSystem() {
+    // Refresh schedule (core config; the shape-robust read lives in main.js).
+    const inp = $('#refreshInput'); const now = $('#refreshNow'); const msg = $('#refreshMsg');
+    if (inp) inp.disabled = true;
+    let rs = null;
+    try { rs = await core.machine.refreshRead(); }
+    catch (e) { toastErr(e); if (now) now.textContent = 'Not available yet'; }
+    if (rs) {
+        const v = rs.value == null ? '' : String(rs.value);
+        if (now) now.textContent = v === '' ? 'Default (24/7, every 4 hours)' : v;
+        if (inp) { inp.value = v; sysSetFieldErr(inp, msg, ''); }
+        // A stored value snapd would REJECT (e.g. set by an older path) must
+        // not silently show as current — flag it.
+        if (now && v !== '' && rs.valid === false) now.textContent = v + '  (invalid — not applied by snapd)';
+    }
+    if (inp) inp.disabled = false;
+    // Power: the live scheduled shutdown from logind ("" + max usec = none).
+    let psched = null;
+    try { psched = await core.machine.powerScheduled(); }
+    catch (e) { /* logind unreachable (plug not connected) — the card shows
+                   nothing scheduled; the actions will toast the D-Bus error */ }
+    state.scheduled = psched && psched.active ? { action: psched.action, usec: psched.usec } : null;
+    renderScheduled();
+    const when = $('#schedWhen');
+    if (when && !when.value) {
+        const t = new Date(Date.now() + 15 * 60000);
+        t.setSeconds(0, 0);
+        const pad = (x) => String(x).padStart(2, '0');
+        when.value = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate())
+            + 'T' + pad(t.getHours()) + ':' + pad(t.getMinutes());
+    }
+}
+
+function renderScheduled() {
+    const row = $('#scheduledRow'); const msg = $('#scheduledMsg'); const btn = $('#scheduledCancelBtn');
+    if (!row) return;
+    const sc = state.scheduled;
+    row.classList.toggle('ucm-hidden', !sc);
+    if (sc) {
+        const when = new Date(sc.usec / 1000);
+        const verb = sc.action === 'reboot' ? 'Reboot' : 'Shut down';
+        const dt = when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' });
+        if (msg) msg.textContent = verb + ' is scheduled for ' + dt + '.';
+        if (btn) btn.disabled = false;
+    } else if (btn) { btn.disabled = true; }
+}
+
+async function doPower(action) {
+    const label = action === 'reboot' ? 'Reboot' : 'Shut down';
+    await core.machine.power(action);
+    toast('positive', label + ' started', 'The system is now ' + (action === 'reboot' ? 'rebooting' : 'shutting down') + '.');
+}
+
+// The power confirm (a PAGE-level confirm — the single integrated row idiom,
+// like confirmRemove/confirmDisable; the popup two-row layout is scoped to
+// .ucm-modal in the CSS). STATIC verb button (round 48i): the message names
+// the action, the button never repeats it. Esc cancels (the 48k document
+// listener removes the topmost .ucm-confirm).
+function confirmPower(action) {
+    const host = document.querySelector('#view-system .col-12');
+    if (!host) return;
+    if (host.querySelector('.ucm-confirm')) return;
+    const verb = action === 'reboot' ? 'Reboot' : 'Shut down';
+    const box = el('div', {
+        class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
+    });
+    const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
+    const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: verb + ' the system now?' });
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: verb + '?' });
+    b.onclick = async () => {
+        b.classList.add('is-disabled');
+        try { await doPower(action); } catch (e) { toastErr(e); }
+        finally { box.remove(); }
+    };
+    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancel.onclick = () => box.remove();
+    box.append(icon, msg, b, cancel);
+    host.appendChild(box);
+    b.focus();
+}
+
+function openJournalModal() {
+    if (document.querySelector('.ucm-modal')) return; // one modal at a time
+    let unsub = null;
+    let following = false;
+    let busy = false;
+    const lines = [];            // newest-first (display order)
+    const box = el('div', { class: 'ucm-modal ucm-modal--journal' });
+    const onKey = (e) => { if (e.key === 'Escape') stopFollow().then(closeModal); };
+    const closeModal = () => {
+        stopFollow();
+        if (unsub) { try { unsub(); } catch { /* already gone */ } unsub = null; }
+        document.removeEventListener('keydown', onKey);
+        box.remove();
+    };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    document.addEventListener('keydown', onKey);
+
+    const inner = el('div', { class: 'ucm-modal__card' });
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
+        el('i', { class: 'p-icon--close ucm-info__close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'System journal', style: 'margin:0;' }),
+        close));
+
+    // --- the filter row (unit + match + priority + follow + refresh) ------
+    const filters = el('div', { class: 'ucm-journal__filters' });
+    const unitInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'unit (e.g. snapd)', 'aria-label': 'Filter by unit', spellcheck: 'false' });
+    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text', 'aria-label': 'Match text', spellcheck: 'false' });
+    const prioSel = el('select', { class: 'ucm-kv--select', 'aria-label': 'Minimum priority' });
+    for (const [v, label] of SYS_JOURNAL_PRIOS) prioSel.append(el('option', { value: v, text: label }));
+    const followBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Follow' });
+    const refreshBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Refresh' });
+    const statusLine = el('span', { class: 'ucm-journal__status ucm-muted', text: 'Loading…' });
+    filters.append(unitInp, matchInp, prioSel, refreshBtn, followBtn, statusLine);
+
+    const pre = el('pre', { class: 'ucm-journal__lines' });
+    const bodyBox = el('div', { class: 'ucm-modal__body' });
+    bodyBox.append(filters, pre);
+    inner.append(bodyBox);
+    box.append(backdrop, inner);
+    document.body.append(box);
+    close.focus();
+
+    const opts = () => ({
+        unit: unitInp.value.trim(),
+        match: matchInp.value.trim(),
+        pri: prioSel.value === 'all' ? null : prioSel.value,
+        lines: 200,
+    });
+    const render = () => {
+        pre.textContent = lines.length ? lines.join('\n') : '(no matching entries)';
+    };
+    const setStatus = (t) => { if (statusLine) statusLine.textContent = t; };
+
+    const loadTail = async () => {
+        if (busy) return;
+        busy = true; setStatus('Loading…');
+        try {
+            const r = await core.machine.journalTail(opts());
+            if (!r || r.ok === false) { setStatus('Could not read the journal: ' + (r ? r.error : '')); return; }
+            lines.length = 0;
+            for (const l of (r.lines || []).slice().reverse()) lines.push(l); // newest on top
+            render();
+            setStatus(lines.length + ' entries');
+        } catch (e) { toastErr(e); setStatus('Could not read the journal'); }
+        busy = false;
+    };
+
+    const stopFollow = async () => {
+        if (!following) return;
+        following = false;
+        followBtn.textContent = 'Follow';
+        try { await core.machine.journalStop(); } catch { /* best effort */ }
+    };
+
+    followBtn.onclick = async () => {
+        if (busy) return;
+        if (following) { await stopFollow(); setStatus('Stopped following'); return; }
+        following = true; followBtn.textContent = 'Stop';
+        lines.length = 0; render();
+        setStatus('Following… (newest on top)');
+        try {
+            await core.machine.journalFollow(opts());
+        } catch {
+            following = false; followBtn.textContent = 'Follow';
+            setStatus('Could not start following');
+            return;
+        }
+        unsub = core.machine.onJournalLine((line) => {
+            lines.unshift(line);
+            if (lines.length > 2000) lines.pop();
+            render();
+        });
+    };
+    refreshBtn.onclick = () => loadTail();
+    // Enter in the filter inputs = reload (the affordance a text field gives).
+    for (const f of [unitInp, matchInp]) {
+        f.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); loadTail(); } });
+    }
+    prioSel.addEventListener('change', () => loadTail());
+
+    loadTail(); // first fill (async; its own busy flag guards against re-entry)
+}
+
+async function applyRefreshSchedule() {
+    const inp = $('#refreshInput'); const msg = $('#refreshMsg'); const btn = $('#refreshApplyBtn');
+    if (!inp) return;
+    const value = inp.value.trim();
+    if (!validRefreshScheduleUi(value)) {
+        sysSetFieldErr(inp, msg, 'Not a valid window — use HH:MM-HH:MM (24:00 as an end), windows separated by /');
+        return;
+    }
+    sysSetFieldErr(inp, msg, '');
+    btn.disabled = true;
+    let change = null;
+    try {
+        change = (await core.machine.refreshWrite(value)) || null;
+        const now = $('#refreshNow');
+        if (now) now.textContent = value === '' ? 'Default (24/7, every 4 hours)' : value;
+        toast('positive', 'Refresh schedule updated', value === '' ? 'snapd now uses its default schedule.' : 'snapd now refreshes within this window.');
+    } catch (e) { toastErr(e); }
+    finally {
+        btn.disabled = false;
+        if (change) {
+            const done = await waitChangeSettled(change);
+            if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') {
+                toast('negative', 'Refresh schedule not applied', 'The previous schedule is still in effect.');
+            }
+        }
+    }
+}
+
+// Mirrors main.js validRefreshSchedule (which mirrors snapd's
+// timeutil.ParseLegacySchedule grammar). The renderer must reject BEFORE the
+// IPC (the house rule: UI validation first, snapd is the final authority).
+const RE_SYS_CLOCK = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
+function validRefreshScheduleUi(v) {
+    if (typeof v !== 'string') return false;
+    v = v.trim();
+    if (v === '') return true;
+    if (v === 'managed') return false;
+    for (const win of v.split('/')) {
+        const parts = win.split('-');
+        if (parts.length !== 2) return false;
+        if (parts[0] === '24:00') return false; // a valid END only
+        if (!RE_SYS_CLOCK.test(parts[0]) || !RE_SYS_CLOCK.test(parts[1])) return false;
+    }
+    return true;
+}
+
+async function schedulePower() {
+    const action = ($('#schedAction') || {}).value || 'reboot';
+    const when = $('#schedWhen'); const msg = $('#schedMsg');
+    if (!when) return;
+    const t = Date.parse(when.value);
+    if (!Number.isFinite(t)) { sysSetFieldErr(when, msg, 'Pick a date and time.'); return; }
+    const now = Date.now();
+    if (t <= now) { sysSetFieldErr(when, msg, 'The time must be in the future.'); return; }
+    if (t > now + 7 * 24 * 3600 * 1000) { sysSetFieldErr(when, msg, 'The most you can schedule is 7 days ahead.'); return; }
+    sysSetFieldErr(when, msg, '');
+    const btn = $('#schedBtn'); btn.disabled = true;
+    try {
+        const res = await core.machine.powerSchedule(action, t);
+        state.scheduled = res && res.active ? { action: res.action, usec: res.usec } : null;
+        renderScheduled();
+        const verb = action === 'reboot' ? 'Reboot' : 'Shut down';
+        toast('positive', verb + ' scheduled', new Date(t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' }) + ' — logins are blocked from 5 minutes before.');
+    } catch (e) { toastErr(e); }
+    finally { btn.disabled = false; }
+}
+
+async function cancelScheduled() {
+    const btn = $('#scheduledCancelBtn'); if (btn) btn.disabled = true;
+    try {
+        await core.machine.powerCancelScheduled();
+        state.scheduled = null;
+        renderScheduled();
+        toast('positive', 'Scheduled power action cancelled', '');
+    } catch (e) { toastErr(e); }
+    finally { if (btn) btn.disabled = false; }
+}
+
 function wire() {
     const netAdd = $('#netAddDevice');
     if (netAdd) netAdd.addEventListener('click', () => netAddBridge());
@@ -3498,6 +3782,31 @@ function wire() {
 
     // interfaces: no page-level Refresh (round 39) — the view
     // reloads on entry, like the dashboard cards reload on their 20 s poll.
+
+    // ---- round L: the System page (journal / refresh / power) ------------
+    const jOpen = $('#journalOpenBtn');
+    if (jOpen) jOpen.addEventListener('click', () => openJournalModal());
+    const rApply = $('#refreshApplyBtn');
+    if (rApply) rApply.addEventListener('click', () => applyRefreshSchedule());
+    const rDefault = $('#refreshDefaultBtn');
+    if (rDefault) rDefault.addEventListener('click', () => {
+        const inp = $('#refreshInput'); const msg = $('#refreshMsg');
+        if (inp) inp.value = '';
+        sysSetFieldErr(inp, msg, '');
+        applyRefreshSchedule();
+    });
+    const rebootBtn = $('#rebootNowBtn');
+    if (rebootBtn) rebootBtn.addEventListener('click', () => {
+        confirmPower('reboot');
+    });
+    const shutdownBtn = $('#shutdownNowBtn');
+    if (shutdownBtn) shutdownBtn.addEventListener('click', () => {
+        confirmPower('poweroff');
+    });
+    const schedBtn = $('#schedBtn');
+    if (schedBtn) schedBtn.addEventListener('click', () => schedulePower());
+    const cancelBtn = $('#scheduledCancelBtn');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => cancelScheduled());
 }
 
 /* -------------------------------- boot ----------------------------------- */

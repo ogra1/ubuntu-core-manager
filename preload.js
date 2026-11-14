@@ -168,6 +168,31 @@ const api = Object.freeze({
         setServer: invoke('timesync:set-server'),   // (string) — applies after a timesyncd restart
     }),
 
+    // ---- machine operations (round L: the System page) -------------------
+    // Console-privileged. 'system' above is the system-INFO namespace; this
+    // one is the system-OPERATIONS namespace (journal / refresh schedule /
+    // power) so the two never collide.
+    machine: Object.freeze({
+        // Journal (the log-observe interface grants journalctl execution).
+        journalTail: invoke('system:journal-tail'),      // ({unit?, match?, pri?, lines?}) -> { ok, lines[], error }
+        journalFollow: invoke('system:journal-follow'),  // (opts) -> { started } — streams to onJournalLine
+        journalStop: invoke('system:journal-stop'),      // -> { stopped }
+        onJournalLine: (cb) => {
+            const listener = (_e, line) => { try { cb(line); } catch { /* never break main push */ } };
+            ipcRenderer.on('system:journal-line', listener);
+            return () => ipcRenderer.removeListener('system:journal-line', listener);
+        },
+        // Snapd refresh schedule (core 'refresh.schedule' option; '' = default).
+        refreshRead: invoke('system:refresh-read'),      // -> { value:string|null, valid:boolean }
+        refreshWrite: invoke('system:refresh-write'),    // (value) -> async snapd change (wait + settle like other conf writes)
+        // Power (org.freedesktop.login1 over D-Bus — the shutdown interface
+        // is D-BUS ONLY; no shell-out).
+        power: invoke('system:power'),                   // ('reboot'|'poweroff') — immediate
+        powerSchedule: invoke('system:power-schedule'),  // (action, whenMs) — ScheduleShutdown (CLOCK_REALTIME usec)
+        powerCancelScheduled: invoke('system:power-cancel-scheduled'), // -> { cancelled:boolean }
+        powerScheduled: invoke('system:power-scheduled'), // -> { active, action, usec } ("" + max = none)
+    }),
+
     // ---- misc ------------------------------------------------------------
     ping: () => Promise.resolve('pong'),
 });

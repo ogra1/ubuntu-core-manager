@@ -132,6 +132,13 @@
                         <span class="ucm-nav-label">Settings</span>
                     </a>
                 </li>
+                <!-- round L: System page — below Settings, ABOVE the local-pages
+                     separator (renderLocalPages appends the sep+entries AFTER this). -->
+                <li class="p-side-navigation__item">
+                    <a class="p-side-navigation__link" href="#system" data-view="system">
+                        <span class="ucm-nav-label">System</span>
+                    </a>
+                </li>
             </ul>
         </nav>
 
@@ -461,6 +468,84 @@
                                 Wipe password &amp; return to setup
                             </button>
                         </form>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- round L: the System page (journal / refresh schedule / power). -->
+        <section class="ucm-view ucm-hidden" id="view-system" data-view="system">
+            <div class="row">
+                <div class="col-12">
+                    <div class="p-card ucm-sys">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">System journal</p></div>
+                        <div class="ucm-sys__body">
+                            <p class="ucm-lp__help">
+                                The system journal (<span class="mono">journalctl</span>), read with the
+                                <span class="mono">log-observe</span> interface. The latest entries are
+                                shown; filter by unit or text and raise the minimum priority.
+                            </p>
+                            <div class="ucm-sys__row">
+                                <button class="p-button ucm-sys__btn" type="button" id="journalOpenBtn">View system journal</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="p-card ucm-sys">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Snap refresh schedule</p></div>
+                        <div class="ucm-sys__body">
+                            <p class="ucm-lp__help">
+                                When snapd may install and refresh snaps. A window like
+                                <span class="mono">02:00-06:00</span> limits refreshes to that time of day;
+                                several windows can be separated with
+                                <span class="mono">/</span>. Leave empty to use the snapd default
+                                (24/7, every 4 hours).
+                            </p>
+                            <div class="ucm-sys__kvrow">
+                                <dt>Schedule</dt>
+                                <dd>
+                                    <span id="refreshNow" class="ucm-sys__now">Default (24/7, every 4 hours)</span>
+                                </dd>
+                            </div>
+                            <div class="ucm-sys__row ucm-sys__formrow">
+                                <label class="p-form__label" for="refreshInput">New schedule</label>
+                                <input class="p-form-validation__input ucm-sys__inp" type="text" id="refreshInput"
+                                       placeholder="e.g. 02:00-06:00 (empty = default)" spellcheck="false" autocomplete="off">
+                                <p class="p-form-validation__message" id="refreshMsg"></p>
+                            </div>
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="refreshApplyBtn">Apply schedule</button>
+                                <button class="p-button--base p-button ucm-sys__btn" type="button" id="refreshDefaultBtn">Use default</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="p-card ucm-sys">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">System power</p></div>
+                        <div class="ucm-sys__body">
+                            <p class="ucm-lp__help">
+                                Reboot or shut the system down now, or schedule it for later (the
+                                schedule is held by <span class="mono">systemd-logind</span> and survives a
+                                restart of this app; logins are blocked from 5 minutes before).
+                            </p>
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="rebootNowBtn">Reboot</button>
+                                <button class="p-button--negative ucm-sys__btn" type="button" id="shutdownNowBtn">Shut down</button>
+                            </div>
+                            <div id="scheduledRow" class="ucm-sys__scheduled ucm-hidden">
+                                <p class="ucm-sys__schedmsg" id="scheduledMsg"></p>
+                                <button class="p-button--base p-button ucm-sys__btn" type="button" id="scheduledCancelBtn">Cancel scheduled</button>
+                            </div>
+                            <div class="ucm-sys__row ucm-sys__schedform">
+                                <label class="p-form__label" for="schedAction">Scheduled action</label>
+                                <select class="ucm-kv--select" id="schedAction">
+                                    <option value="reboot">Reboot</option>
+                                    <option value="poweroff">Shut down</option>
+                                </select>
+                                <label class="p-form__label" for="schedWhen">Time</label>
+                                <input class="p-form-validation__input ucm-sys__inp" type="datetime-local" id="schedWhen">
+                                <p class="p-form-validation__message" id="schedMsg"></p>
+                                <button class="p-button ucm-sys__btn" type="button" id="schedBtn">Schedule</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

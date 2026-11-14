@@ -531,6 +531,11 @@ function ok(name, cond, extra = '') {
                 !!handlers['auth:set-lock-timeout']);
             ok('local-pages handler registered (round I, auth-gated)',
                 !!handlers['settings:set-local-pages']);
+            ok('system-page handlers registered (round L, auth-gated)',
+                !!handlers['system:journal-tail'] && !!handlers['system:journal-follow'] && !!handlers['system:journal-stop']
+                && !!handlers['system:refresh-read'] && !!handlers['system:refresh-write']
+                && !!handlers['system:power'] && !!handlers['system:power-schedule']
+                && !!handlers['system:power-cancel-scheduled'] && !!handlers['system:power-scheduled']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -1463,6 +1468,116 @@ function ok(name, cond, extra = '') {
         ok('setLocalPages([]) clears the list', rClear.list.length === 0 && readPref() !== null, JSON.stringify(rClear));
         delete process.env.UCM_LOCAL_PAGES_PREF;
         fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    console.log('\n[19] system page (round L: journal / refresh schedule / power)');
+    {
+        // ---- journal argv builder (pure) ----
+        const jArgs = (o) => m.journalArgs(o);
+        ok('journalArgs: the default tail (200 lines, no extras)',
+            JSON.stringify(jArgs({})) === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '200']));
+        ok('journalArgs: unit + match + priority + lines are all threaded',
+            JSON.stringify(jArgs({ unit: 'snapd', match: 'foo', pri: 'err', lines: 50 }))
+                === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '50', '-p', 'err', '-u', 'snapd', '+', 'foo']));
+        ok('journalArgs: follow adds -f', jArgs({ follow: true }).includes('-f') && jArgs({}).includes('-f') === false);
+        const nOf = (args) => args[args.indexOf('-n') + 1];
+        ok('journalArgs: the line count is clamped (0/junk -> the 200 default, >2000 capped)',
+            nOf(jArgs({ lines: 0 })) === '200' && nOf(jArgs({ lines: 99999 })) === '2000'
+            && nOf(jArgs({ lines: 'junk' })) === '200' && nOf(jArgs({ lines: 55 })) === '55');
+
+        // ---- journalTail e2e (an INJECTED fake journalctl binary — the house
+        //      ip/resolvctl-injection idiom; the real binary is the log-observe
+        //      grant, exercised on the VM, never here) ----
+        const JDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-j-'));
+        const goodStub = path.join(JDIR, 'journalctl-good');
+        fs.writeFileSync(goodStub, '#!/bin/sh\necho "2026-11-14T08:00:01Z host unit[1]: line one"\necho "2026-11-14T08:00:02Z host unit[1]: line two"\n', { mode: 0o755 });
+        m.__setJournalBinary(goodStub);
+        const jt = await m.journalTail({});
+        ok('journalTail: runs the injected binary and returns the lines', jt.ok === true && jt.lines.length === 2 && jt.lines[1] === '2026-11-14T08:00:02Z host unit[1]: line two', JSON.stringify(jt));
+        const badStub = path.join(JDIR, 'journalctl-bad');
+        fs.writeFileSync(badStub, '#!/bin/sh\necho "No such unit" >&2\nexit 1\n', { mode: 0o755 });
+        m.__setJournalBinary(badStub);
+        const jt2 = await m.journalTail({ unit: 'nope' });
+        ok('journalTail: a failing binary is a clean { ok:false, error } (never throws)', jt2.ok === false && jt2.lines.length === 0 && /No such unit/.test(jt2.error), JSON.stringify(jt2));
+        m.__setJournalBinary(null);
+        fs.rmSync(JDIR, { recursive: true, force: true });
+
+        // ---- the refresh.schedule validator (mirrors snapd's
+        //      timeutil.ParseLegacySchedule + validTime EXACTLY) ----
+        const vs = (v) => m.validRefreshSchedule(v);
+        ok('refresh schedule: empty (the default) is valid', vs('') === true);
+        ok('refresh schedule: single + multiple windows',
+            vs('02:00-06:00') === true && vs('00:00-24:00') === true && vs('9:00-15:00/21:00-22:00') === true);
+        ok('refresh schedule: the hour grammar (single digit, 0-padded, 24:00 END only)',
+            vs('0:30-23:59') === true && vs('24:00-06:00') === false && vs('25:00-06:00') === false && vs('02:60-06:00') === false);
+        ok('refresh schedule: malformed windows are rejected',
+            vs('2:00') === false && vs('02:00-06:00-08:00') === false && vs('02:00-') === false
+            && vs('/06:00') === false && vs('abc') === false && vs('managed') === false
+            && vs(null) === false && vs(5) === false);
+
+        // ---- the doc-shape-robust schedule read (round 48f nested JSON) ----
+        const rd = (d) => m.refreshScheduleFromDoc(d);
+        ok('refresh read: flat dotted key', rd({ 'refresh.schedule': '02:00-06:00' }) === '02:00-06:00');
+        ok('refresh read: the NESTED path (snapd stores dotted keys nested)', rd({ refresh: { schedule: '02:00-06:00' } }) === '02:00-06:00');
+        ok('refresh read: absent = null (the default state)', rd({ system: { hostname: 'x' } }) === null && rd(null) === null && rd({}) === null);
+
+        // ---- the (st) ScheduledShutdown parse ("" + max = none) ----
+        const ps = (v) => m.powerScheduledParse(v);
+        const none = ps(['', Number.MAX_SAFE_INTEGER]);
+        ok('scheduled: the empty + max-usec value is "none"', none.active === false && none.action === null);
+        const on = ps(['reboot', 1794625200000000]);
+        ok('scheduled: a real (mode, usec) pair is active', on.active === true && on.action === 'reboot' && on.usec === 1794625200000000);
+        const wrapped = ps({ signature: '(st)', value: ['poweroff', 123456789000000] });
+        ok('scheduled: the Variant-wrapped struct (as dbus-next returns it) unwraps', wrapped.active === true && wrapped.action === 'poweroff');
+        ok('scheduled: garbage never crashes (degrades to none)', ps(null).active === false && ps(['x']).active === false && ps({}).active === false);
+
+        // ---- the ScheduleShutdown 'when' value (CLOCK_REALTIME usec) ----
+        const when = m.shutdownWhenUsec(1794625200123);
+        ok('shutdown when: ms -> absolute CLOCK_REALTIME usec', when === 1794625200123000);
+        let badWhen = null;
+        try { m.shutdownWhenUsec('soon'); } catch (e) { badWhen = e; }
+        ok('shutdown when: a non-numeric time is rejected', !!badWhen && /invalid/i.test(badWhen.message));
+
+        // ---- the login1 D-Bus calls (INJECTED transport — the 49h
+        //      signature-verification idiom; the real calls run on the VM) ----
+        const calls = [];
+        let fakeSched = null; // the transport's live scheduled state (models logind)
+        m.__setLogin1Transport(async (spec) => {
+            calls.push(spec);
+            if (spec.member === 'ScheduleShutdown') { fakeSched = spec.body.slice(); return []; }
+            if (spec.member === 'CancelScheduledShutdown') {
+                const had = !!fakeSched;
+                fakeSched = null;
+                return [{ signature: 'b', value: had }];
+            }
+            if (spec.member === 'Get' && spec.body && spec.body[1] === 'ScheduledShutdown') {
+                return fakeSched ? [fakeSched] : ['', 18446744073709551616]; // the uint64-max sentinel, precision-lost
+            }
+            return [];
+        });
+        await m.powerAction('reboot');
+        ok('power: Reboot sends the "b" signature with interactive=false (the privileged-snap call)',
+            calls.length === 1 && calls[0].destination === 'org.freedesktop.login1'
+            && calls[0].interface === 'org.freedesktop.login1.Manager' && calls[0].member === 'Reboot'
+            && calls[0].signature === 'b' && JSON.stringify(calls[0].body) === JSON.stringify([false]), JSON.stringify(calls));
+        await m.powerAction('poweroff');
+        ok('power: PowerOff targets the PowerOff member', calls[1].member === 'PowerOff' && JSON.stringify(calls[1].body) === JSON.stringify([false]));
+        let badPower = null;
+        try { await m.powerAction('suspend'); } catch (e) { badPower = e; }
+        ok('power: an unoffered action is rejected BEFORE the bus', !!badPower && /invalid power action/.test(badPower.message), calls.length === 2 ? '' : 'sent a call');
+        const t0 = 1794625200123;
+        const sched = await m.powerSchedule('reboot', t0);
+        ok('schedule: ScheduleShutdown sends (mode, CLOCK_REALTIME usec)',
+            calls[2].member === 'ScheduleShutdown' && calls[2].signature === 'st'
+            && calls[2].body[0] === 'reboot' && calls[2].body[1] === t0 * 1000, JSON.stringify(calls[2]));
+        ok('schedule: the returned state reflects the new schedule', sched.active === true && sched.action === 'reboot' && sched.usec === t0 * 1000);
+        const cancelled = await m.powerCancelScheduled();
+        const cancelCall = calls.find((c) => c.member === 'CancelScheduledShutdown');
+        ok('cancel: CancelScheduledShutdown is a no-arg call returning {cancelled}',
+            cancelCall && cancelCall.signature === '' && cancelled.cancelled === true);
+        const none2 = await m.powerScheduledRead();
+        ok('scheduled read: the (st) property parses to none after the cancel', none2.active === false);
+        m.__setLogin1Transport(null);
     }
 
     const svgErr = (txt) => {

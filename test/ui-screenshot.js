@@ -913,6 +913,94 @@ function mockFactoryJs() {
                     return { id, change: id };
                 },
             },
+            // round L: the System page (journal / refresh schedule / power).
+            // MODELS the backends the way the other mocks model theirs: the
+            // journal as canned lines (a fake journalctl), the refresh schedule
+            // through the REAL __store core conf (the mock confSet writes it),
+            // the power card as recorded calls + a live scheduled state.
+            machine: (() => {
+                const __m = {
+                    journalCalls: 0, followCalls: 0, stopCalls: 0,
+                    powerCalls: [], scheduled: { active: false, action: null, usec: null },
+                };
+                const __mSubs = [];
+                const J_LINES = [
+                    '2026-11-14T08:00:01.123456Z core-kvm-01 systemd[1]: Starting Daily apt download activities...',
+                    '2026-11-14T08:00:02.234567Z core-kvm-01 snapd[1234]: INFO refresh schedule window reached',
+                    '2026-11-14T08:00:03.345678Z core-kvm-01 systemd[1]: snapd.service: Succeeded.',
+                    '2026-11-14T08:00:04.456789Z core-kvm-01 CRON[308272]: (root) CMD (command -v debian-sa1 > /dev/null && debian-sa1 1 1)',
+                    '2026-11-14T08:00:05.567890Z core-kvm-01 systemd[1]: Started Session 1 of root.',
+                    '2026-11-14T08:00:06.678901Z core-kvm-01 snapd[1234]: ERROR store access denied: invalid credentials',
+                    '2026-11-14T08:00:07.789012Z core-kvm-01 systemd[1]: systemd-resolved[56]: Clock change detected.',
+                ];
+                const __priMin = { all: 7, info: 6, notice: 5, warning: 4, err: 3 }; // keep severity <= this number
+                // parse the severity of a canned line (the 'ERROR' token = err).
+                const __pri = (l) => /ERROR/.test(l) ? 3 : (/Starting|Started|Succeeded/.test(l) ? 6 : 5);
+                const __filter = (opts) => J_LINES
+                    .filter((l) => (opts.unit ? l.split(' ')[2].startsWith(opts.unit + '[') : true))
+                    .filter((l) => (opts.match ? l.toLowerCase().includes(String(opts.match).toLowerCase()) : true))
+                    .filter((l) => __pri(l) <= __priMin[opts.pri || 'all']);
+                return {
+                    async journalTail(opts) {
+                        __m.journalCalls += 1;
+                        const o = opts || {};
+                        if (o.unit === 'definitely-not-a-unit') throw new Error('No such unit');
+                        // HONEST shape: main.js (no --reverse) returns the newest N
+                        // entries in CHRONOLOGICAL (oldest-first) order; the
+                        // renderer reverses them for display.
+                        const hits = __filter(o);
+                        return { ok: true, lines: hits, error: '' };
+                    },
+                    async journalFollow(opts) {
+                        __m.followCalls += 1;
+                        // stream a couple of lines after a short delay (models journalctl -f)
+                        setTimeout(() => {
+                            ['2026-11-14T08:01:00.000001Z core-kvm-01 systemd[1]: Journal follow line one.',
+                             '2026-11-14T08:01:01.000002Z core-kvm-01 snapd[1234]: follow line two'].forEach((l) => {
+                                __mSubs.forEach((f) => { try { f(l); } catch (e) {} });
+                            });
+                        }, 120);
+                        return { started: true };
+                    },
+                    async journalStop() { __m.stopCalls += 1; return { stopped: true }; },
+                    onJournalLine(cb) { __mSubs.push(cb); return () => { const i = __mSubs.indexOf(cb); if (i >= 0) __mSubs.splice(i, 1); }; },
+                    async refreshRead() {
+                        const doc = __store['core'] || JSON.parse(JSON.stringify(CONF['core'] || {}));
+                        let v = null;
+                        if (typeof doc['refresh.schedule'] === 'string') v = doc['refresh.schedule'];
+                        else if (doc.refresh && typeof doc.refresh.schedule === 'string') v = doc.refresh.schedule;
+                        const REC = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
+                        let valid = true;
+                        if (v) {
+                            if (v === 'managed') valid = false;
+                            else for (const w of v.split('/')) {
+                                const parts = w.split('-');
+                                if (parts.length !== 2 || parts[0] === '24:00' || !REC.test(parts[0]) || !REC.test(parts[1])) { valid = false; break; }
+                            }
+                        }
+                        return { value: v, valid };
+                    },
+                    async refreshWrite(value) {
+                        // the REAL path: the app writes through the core conf bridge
+                        // (async change + settle), so route it through the mock confSet —
+                        // the harness asserts the __store result, exactly like round 48b.
+                        return await core.snaps.confSet('core', { 'refresh.schedule': String(value) });
+                    },
+                    async power(action) { __m.powerCalls.push(action); return { started: true }; },
+                    async powerSchedule(action, whenMs) {
+                        __m.powerCalls.push('schedule:' + action);
+                        __m.scheduled = { active: true, action, usec: Math.round(whenMs * 1000) };
+                        return JSON.parse(JSON.stringify(__m.scheduled));
+                    },
+                    async powerCancelScheduled() {
+                        const had = __m.scheduled.active;
+                        __m.scheduled = { active: false, action: null, usec: null };
+                        return { cancelled: had };
+                    },
+                    async powerScheduled() { return JSON.parse(JSON.stringify(__m.scheduled)); },
+                    __machine: () => __m,
+                };
+            })(),
             ping: async () => 'pong',
         };
     })();
@@ -5518,6 +5606,268 @@ function mockFactoryJs() {
     // back to the dashboard for the rest of the run.
     await page.click('.ucm-side a[data-view="dashboard"]');
     await wait(300);
+    // ---- 5s. round L: the SYSTEM page — journal + refresh schedule + power.
+    // Runs in the authenticated LIGHT state (the light suite is the regression
+    // proof for the .is-dark rules added with this page). Self-contained: it
+    // navigates to #system itself and leaves the refresh schedule + power
+    // state pristine (default + nothing scheduled).
+    await page.click('.ucm-side a[data-view="system"]');
+    await new Promise((r) => setTimeout(r, 600));
+
+    const gS = await page.evaluate(() => {
+        const view = document.querySelector('#view-system');
+        const hidden = view ? view.classList.contains('ucm-hidden') : null;
+        const navLinks = Array.from(document.querySelectorAll('.ucm-side .p-side-navigation__list > .p-side-navigation__item')).map((li) => {
+            const a = li.querySelector('a[data-view]');
+            return a ? a.dataset.view : (li.querySelector('.ucm-side__sep') ? 'sep' : 'other');
+        });
+        const active = (document.querySelector('.ucm-side .p-side-navigation__link.is-active') || {}).dataset || {};
+        const cards = Array.from(document.querySelectorAll('#view-system .p-card .p-heading--5')).map((h) => h.textContent.trim());
+        const journalBtn = (document.querySelector('#journalOpenBtn') || {}).textContent || null;
+        const refreshNow = (document.querySelector('#refreshNow') || {}).textContent || null;
+        const refreshVal = (document.querySelector('#refreshInput') || {}).value;
+        const rebootBtn = (document.querySelector('#rebootNowBtn') || {}).textContent || null;
+        const shutdownBtn = (document.querySelector('#shutdownNowBtn') || {}).textContent || null;
+        const schedRowHidden = (document.querySelector('#scheduledRow') || {}).classList ? document.querySelector('#scheduledRow').classList.contains('ucm-hidden') : null;
+        const schedWhen = (document.querySelector('#schedWhen') || {}).value || null;
+        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen };
+    });
+    if (gS.hidden) console.log('PAGE ERROR: the system view must be visible after switching to it (round L)');
+    if (gS.activeView !== 'system') console.log('PAGE ERROR: the System nav link must be is-active on the system page (got ' + JSON.stringify(gS.activeView) + ') (round L)');
+    // nav ORDER: the six fixed entries, with System immediately after Settings;
+    // the local-pages sep/entries (if any) come AFTER System.
+    const fixedOrder = ['dashboard', 'network', 'snaps', 'interfaces', 'settings', 'system'];
+    const fixedSeen = gS.navLinks.filter((x) => fixedOrder.includes(x));
+    if (JSON.stringify(fixedSeen) !== JSON.stringify(fixedOrder))
+        console.log('PAGE ERROR: the fixed nav order is wrong / System is not directly below Settings (got ' + JSON.stringify(gS.navLinks) + ') (round L)');
+    if (gS.navLinks.indexOf('system') !== 5)
+        console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
+    if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'System power']))
+        console.log('PAGE ERROR: the system page must show exactly the 3 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L)');
+    if (gS.journalBtn !== 'View system journal') console.log('PAGE ERROR: the journal card button is wrong (got ' + JSON.stringify(gS.journalBtn) + ') (round L)');
+    if (gS.refreshNow !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: the refresh schedule must read the default state (got ' + JSON.stringify(gS.refreshNow) + ') (round L)');
+    if (gS.refreshVal !== '') console.log('PAGE ERROR: the schedule input must start empty (got ' + JSON.stringify(gS.refreshVal) + ') (round L)');
+    if (gS.rebootBtn !== 'Reboot' || gS.shutdownBtn !== 'Shut down') console.log('PAGE ERROR: the power buttons are wrong (got ' + JSON.stringify([gS.rebootBtn, gS.shutdownBtn]) + ') (round L)');
+    if (gS.schedRowHidden !== true) console.log('PAGE ERROR: the scheduled row must be hidden when nothing is scheduled (round L)');
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(gS.schedWhen || '')) console.log('PAGE ERROR: the schedule time input must be pre-filled with a datetime-local value (got ' + JSON.stringify(gS.schedWhen) + ') (round L)');
+
+    // ---- 5s-j: the journal modal (open + tail + filter + follow + close) ----
+    await page.click('#journalOpenBtn');
+    await new Promise((r) => setTimeout(r, 700));
+    const j1 = await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal.ucm-modal--journal');
+        const pre = modal && modal.querySelector('.ucm-journal__lines');
+        const status = modal && (modal.querySelector('.ucm-journal__status') || {});
+        return {
+            present: !!modal,
+            head: (modal && (modal.querySelector('.ucm-modal__head .p-heading--5') || {}).textContent) || null,
+            lines: pre ? pre.textContent : null,
+            lineCount: pre ? pre.textContent.split('\n').filter((l) => l).length : 0,
+            newestOnTop: pre ? (pre.textContent.split('\n').filter(Boolean)[0] || '').includes('Clock change detected') : null,
+            status: status.textContent || null,
+            followLabel: (modal && (modal.querySelector('.ucm-modal__head') && document.querySelector('.ucm-journal__filters .p-button--base')) || {}).textContent || null,
+        };
+    });
+    if (!j1.present) console.log('PAGE ERROR: the journal modal must open (round L)');
+    if (j1.head !== 'System journal') console.log('PAGE ERROR: the journal modal head is wrong (got ' + JSON.stringify(j1.head) + ') (round L)');
+    if (!(j1.lineCount >= 5)) console.log('PAGE ERROR: the journal must show the canned tail entries (got ' + j1.lineCount + ' lines) (round L)');
+    if (j1.newestOnTop !== true) console.log('PAGE ERROR: the journal must show the NEWEST entry first (got first line: ' + JSON.stringify((j1.lines || '').slice(0, 80)) + ') (round L)');
+    if (!/7 entries/.test(j1.status || '')) console.log('PAGE ERROR: the journal status must report the entry count (got ' + JSON.stringify(j1.status) + ') (round L)');
+
+    // filter: unit 'snapd' -> only the snapd lines (2)
+    await page.evaluate(() => {
+        const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        inp.value = 'snapd'; inp.dispatchEvent(new Event('change'));
+    });
+    // press Enter in the unit input to reload
+    await page.focus('.ucm-journal__filters input[aria-label="Filter by unit"]');
+    await page.keyboard.press('Enter');
+    await new Promise((r) => setTimeout(r, 500));
+    const j2 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        return { text: pre ? pre.textContent : null, status: status ? status.textContent : null };
+    });
+    if (!/refresh schedule window reached/.test(j2.text || '')) console.log('PAGE ERROR: the unit filter must keep the snapd lines (round L)');
+    if (/CRON|systemd\[1\]/.test(j2.text || '')) console.log('PAGE ERROR: the unit filter must drop non-snapd lines (got: ' + JSON.stringify(j2.text) + ') (round L)');
+    if (!/2 entries/.test(j2.status || '')) console.log('PAGE ERROR: the filtered count must be 2 (got ' + JSON.stringify(j2.status) + ') (round L)');
+
+    // clear the unit filter, then FOLLOW (streams 2 lines)
+    await page.evaluate(() => {
+        const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
+        inp.value = ''; inp.dispatchEvent(new Event('change'));
+    });
+    await page.evaluate(() => {
+        const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Follow');
+        if (b) b.click();
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    const j3 = await page.evaluate(() => {
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
+        const btns = Array.from(document.querySelectorAll('.ucm-journal__filters button')).map((b) => b.textContent);
+        return { hasFollowLine: /Journal follow line one/.test(pre ? pre.textContent : ''), status: status ? status.textContent : null, followLabel: btns.includes('Stop') };
+    });
+    if (!j3.hasFollowLine) console.log('PAGE ERROR: follow mode must stream the new journal lines (round L)');
+    if (!/Following/.test(j3.status || '')) console.log('PAGE ERROR: the follow status must be live (got ' + JSON.stringify(j3.status) + ') (round L)');
+    if (j3.followLabel !== true) console.log('PAGE ERROR: the Follow button must toggle to Stop while following (round L)');
+    // Stop following (by text — the button list is [Refresh, Follow/Stop])
+    await page.evaluate(() => {
+        const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Stop');
+        if (b) b.click();
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const j3b = await page.evaluate(() => {
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return { stopCalls: m ? m.stopCalls : null, followCalls: m ? m.followCalls : null, journalCalls: m ? m.journalCalls : null };
+    });
+    if (j3b.stopCalls < 1) console.log('PAGE ERROR: stopping the follow must call journalStop (got ' + JSON.stringify(j3b.stopCalls) + ') (round L)');
+    if (j3b.followCalls < 1) console.log('PAGE ERROR: follow mode must have started (got ' + JSON.stringify(j3b.followCalls) + ') (round L)');
+    // close the modal (the X button; the Esc path is the 6b lock test's domain)
+    await page.click('.ucm-modal--journal .ucm-modal__head button[aria-label="Close"]');
+    await new Promise((r) => setTimeout(r, 250));
+    const j4 = await page.evaluate(() => ({ modalGone: !document.querySelector('.ucm-modal--journal') }));
+    if (!j4.modalGone) console.log('PAGE ERROR: the journal modal must close (round L)');
+
+    // ---- 5s-r: the refresh schedule (apply + invalid + default) ----
+    // invalid input is rejected BEFORE the IPC (no change, error shown)
+    await page.evaluate(() => {
+        const inp = document.querySelector('#refreshInput');
+        inp.value = '25:00-06:00';
+    });
+    await page.click('#refreshApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const r1 = await page.evaluate(() => {
+        const inp = document.querySelector('#refreshInput');
+        const msg = document.querySelector('#refreshMsg');
+        const m = window.__mockCore && window.__mockCore.__machine ? null : null;
+        return {
+            invalidShown: inp ? inp.classList.contains('is-error') : null,
+            msg: msg ? msg.textContent : null,
+            now: (document.querySelector('#refreshNow') || {}).textContent,
+        };
+    });
+    if (r1.invalidShown !== true) console.log('PAGE ERROR: an invalid window (25:00 hour) must be flagged in the UI (round L)');
+    if (!/HH:MM-HH:MM/.test(r1.msg || '')) console.log('PAGE ERROR: the invalid-schedule message must name the grammar (got ' + JSON.stringify(r1.msg) + ') (round L)');
+    if (r1.now !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: a rejected schedule must not change the current value (got ' + JSON.stringify(r1.now) + ') (round L)');
+
+    // a valid window: apply -> the store flips + the current value updates
+    await page.evaluate(() => {
+        const inp = document.querySelector('#refreshInput');
+        inp.value = '02:00-06:00';
+    });
+    await page.click('#refreshApplyBtn');
+    await new Promise((r) => setTimeout(r, 700)); // the async change settles (250ms)
+    const r2 = await page.evaluate(() => {
+        const store = window.__mockCore ? null : null;
+        const now = (document.querySelector('#refreshNow') || {}).textContent;
+        const inputVal = (document.querySelector('#refreshInput') || {}).value;
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        return { now, inputVal, toasts };
+    });
+    if (r2.now !== '02:00-06:00') console.log('PAGE ERROR: the applied schedule must become the current value (got ' + JSON.stringify(r2.now) + ') (round L)');
+    if (!r2.toasts.includes('Refresh schedule updated')) console.log('PAGE ERROR: the schedule apply must toast (got ' + JSON.stringify(r2.toasts) + ') (round L)');
+    // the STORED core conf must carry it (the real write path)
+    const r2read = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rs = await core.machine.refreshRead();
+        return { value: rs ? rs.value : null, valid: rs ? rs.valid : null };
+    });
+    if (r2read.value !== '02:00-06:00' || r2read.valid !== true) console.log('PAGE ERROR: the schedule must be persisted to the core conf (got ' + JSON.stringify(r2read) + ') (round L)');
+
+    // "Use default" -> clears the option -> the default text returns
+    await page.click('#refreshDefaultBtn');
+    await new Promise((r) => setTimeout(r, 700));
+    const r3 = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rs = await core.machine.refreshRead();
+        return { now: (document.querySelector('#refreshNow') || {}).textContent, val: rs ? rs.value : null, input: (document.querySelector('#refreshInput') || {}).value };
+    });
+    if (r3.now !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: "Use default" must restore the default text (got ' + JSON.stringify(r3.now) + ') (round L)');
+    if (r3.val !== null && r3.val !== '') console.log('PAGE ERROR: "Use default" must clear the stored option (got ' + JSON.stringify(r3.val) + ') (round L)');
+    if (r3.input !== '') console.log('PAGE ERROR: "Use default" must clear the input (got ' + JSON.stringify(r3.input) + ') (round L)');
+
+    // ---- 5s-p: power (confirm + immediate + scheduled + cancel) ----
+    await page.click('#rebootNowBtn');
+    await new Promise((r) => setTimeout(r, 250));
+    const p1 = await page.evaluate(() => {
+        const box = document.querySelector('#view-system .col-12 .ucm-confirm');
+        const btns = box ? Array.from(box.querySelectorAll('button')).map((b) => b.textContent) : null;
+        const msg = box ? (box.querySelector('.ucm-confirm__msg') || {}).textContent : null;
+        return { present: !!box, btns, msg };
+    });
+    if (!p1.present) console.log('PAGE ERROR: the reboot action must open a confirm (round L)');
+    if (JSON.stringify(p1.btns) !== JSON.stringify(['Reboot?', 'Cancel'])) console.log('PAGE ERROR: the reboot confirm buttons must be the static verbs (got ' + JSON.stringify(p1.btns) + ') (round L)');
+    if (p1.msg !== 'Reboot the system now?') console.log('PAGE ERROR: the reboot confirm message is wrong (got ' + JSON.stringify(p1.msg) + ') (round L)');
+    await page.evaluate(() => {
+        const box = document.querySelector('#view-system .col-12 .ucm-confirm');
+        box.querySelector('.p-button--negative').click();
+    });
+    // the SHUTDOWN confirm (the negative button on the power card) — pin its
+    // static verb too (the round-48i rule: button = verb, message names it).
+    await page.click('#shutdownNowBtn');
+    await new Promise((r) => setTimeout(r, 250));
+    const p1b = await page.evaluate(() => {
+        const box = document.querySelector('#view-system .col-12 .ucm-confirm');
+        const btns = box ? Array.from(box.querySelectorAll('button')).map((b) => b.textContent) : null;
+        const msg = box ? (box.querySelector('.ucm-confirm__msg') || {}).textContent : null;
+        return { present: !!box, btns, msg };
+    });
+    if (JSON.stringify(p1b.btns) !== JSON.stringify(['Shut down?', 'Cancel'])) console.log('PAGE ERROR: the shutdown confirm buttons must be the static verbs (got ' + JSON.stringify(p1b.btns) + ') (round L)');
+    if (p1b.msg !== 'Shut down the system now?') console.log('PAGE ERROR: the shutdown confirm message is wrong (got ' + JSON.stringify(p1b.msg) + ') (round L)');
+    await page.evaluate(() => {
+        const box = document.querySelector('#view-system .col-12 .ucm-confirm');
+        box.querySelector('.p-button--base').click();
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 400));
+    const p2 = await page.evaluate(() => {
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        return { calls: m ? m.powerCalls : null, toasts, confirmGone: !document.querySelector('#view-system .col-12 .ucm-confirm') };
+    });
+    if (JSON.stringify(p2.calls) !== JSON.stringify(['reboot'])) console.log('PAGE ERROR: confirming must send exactly the reboot action (got ' + JSON.stringify(p2.calls) + ') (round L)');
+    if (!p2.toasts.includes('Reboot started')) console.log('PAGE ERROR: the reboot confirm must toast (got ' + JSON.stringify(p2.toasts) + ') (round L)');
+    if (!p2.confirmGone) console.log('PAGE ERROR: the confirm must close after the action (round L)');
+
+    // SCHEDULE a shutdown (set the time input to now+1h, pick poweroff)
+    await page.evaluate(() => {
+        const when = document.querySelector('#schedWhen');
+        const t = new Date(Date.now() + 3600 * 1000);
+        const pad = (x) => String(x).padStart(2, '0');
+        when.value = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()) + 'T' + pad(t.getHours()) + ':' + pad(t.getMinutes());
+        document.querySelector('#schedAction').value = 'poweroff';
+    });
+    await page.click('#schedBtn');
+    await new Promise((r) => setTimeout(r, 400));
+    const p3 = await page.evaluate(() => {
+        const row = document.querySelector('#scheduledRow');
+        return {
+            visible: row ? !row.classList.contains('ucm-hidden') : null,
+            msg: (document.querySelector('#scheduledMsg') || {}).textContent,
+            toasts: Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || '')),
+        };
+    });
+    if (p3.visible !== true) console.log('PAGE ERROR: scheduling must reveal the scheduled row (round L)');
+    if (!/Shut down is scheduled for/.test(p3.msg || '')) console.log('PAGE ERROR: the scheduled row must name the action + time (got ' + JSON.stringify(p3.msg) + ') (round L)');
+    if (!p3.toasts.includes('Shut down scheduled')) console.log('PAGE ERROR: scheduling must toast (got ' + JSON.stringify(p3.toasts) + ') (round L)');
+    // an already-scheduled state: scheduling again overwrites (logind semantics)
+    // CANCEL it
+    await page.click('#scheduledCancelBtn');
+    await new Promise((r) => setTimeout(r, 400));
+    const p4 = await page.evaluate(() => {
+        const row = document.querySelector('#scheduledRow');
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return { visible: row ? !row.classList.contains('ucm-hidden') : null, calls: m ? m.powerCalls : null };
+    });
+    if (p4.visible !== false) console.log('PAGE ERROR: cancelling must hide the scheduled row (round L)');
+    const schedCall = p4.calls ? p4.calls.filter((c) => String(c).startsWith('schedule:')) : [];
+    if (schedCall.length !== 1 || schedCall[0] !== 'schedule:poweroff') console.log('PAGE ERROR: the schedule must send the chosen action (got ' + JSON.stringify(p4.calls) + ') (round L)');
+
+    // back to the dashboard (leaves the run state pristine for the dark sections)
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await new Promise((r) => setTimeout(r, 400));
+
     // ---- 6a. round D (dark polish): pin all 5 reported dark-mode issues through
     // the REAL theme path. The run is in the default LIGHT state here (round C's
     // 2d reverted it), so the first read is the light-regression proof (every

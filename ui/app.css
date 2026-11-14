@@ -1541,3 +1541,49 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .is-dark .ucm-webview__fallback { background: #202020; color: #e8e8e8; }
 .is-dark .ucm-webview__fb-url { color: #a8a8a8; }
 .is-dark .ucm-webview__fb-hint { color: #8c8c8c; }
+
+/* ==========================================================================
+ * round L: the SYSTEM page (journal / refresh schedule / power)
+ * ========================================================================== */
+.ucm-sys__row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-top: .9rem; }
+.ucm-sys__row button { margin-bottom: 0; } /* the bundle .p-button 18.88px phantom (round 7/50 class) */
+.ucm-sys__actions { display: flex; gap: .6rem; margin-top: 1rem; }
+.ucm-sys__actions button { margin-bottom: 0; }
+.ucm-sys__now { font-family: "Ubuntu Mono variable", monospace; font-size: .85rem; }
+/* the "Schedule" row — a .ucm-kv-shaped row WITHOUT the .ucm-kv container
+   (whose >div grid rule would fight the form row's own grid). */
+.ucm-sys__kvrow { display: grid; grid-template-columns: 12rem 1fr; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid #f0f0f0; }
+.ucm-sys__kvrow dt { margin: 0; color: #555; font-size: .9rem; }
+.ucm-sys__kvrow dd { margin: 0; font-size: .95rem; word-break: break-word; }
+.ucm-sys__formrow { display: grid; grid-template-columns: 7rem 20rem; column-gap: .75rem; align-items: center; margin-top: .9rem; }
+.ucm-sys__formrow .p-form__label { grid-column: 1; padding: 0; margin: 0; } /* bundle label phantom (round 40/50 class) */
+.ucm-sys__formrow .ucm-sys__inp { grid-column: 2; width: 100%; margin-bottom: 0; }
+.ucm-sys__formrow .p-form-validation__message { grid-column: 1 / -1; margin: 0 0 0; font-size: .8rem; }
+.ucm-sys__schedform { display: grid; grid-template-columns: auto 11rem auto 15rem auto; column-gap: .75rem; align-items: center; margin-top: 1rem; }
+.ucm-sys__schedform .p-form__label { padding: 0; margin: 0; font-size: .9rem; color: #555; }
+.ucm-sys__schedform .ucm-kv--select, .ucm-sys__schedform .ucm-sys__inp { margin-bottom: 0; width: 100%; }
+.ucm-sys__schedform button { margin-bottom: 0; }
+.ucm-sys__schedform .p-form-validation__message { grid-column: 1 / -1; margin: .3rem 0 0; font-size: .8rem; }
+/* the scheduled-shutdown notice (the round-D caution palette) */
+.ucm-sys__scheduled { margin-top: 1rem; padding: .8rem 1rem; display: flex; align-items: center; gap: .75rem;
+    background: rgba(249,155,17,.10); border: 1px solid rgba(249,155,17,.45); border-radius: .25rem; }
+.ucm-sys__schedmsg { margin: 0; flex: 1; font-size: .9rem; color: #8a5a00; }
+.ucm-sys__scheduled button { margin-bottom: 0; }
+/* the journal modal (a WIDER card: short-iso lines run ~120 chars) */
+.ucm-modal--journal .ucm-modal__card { max-width: 72rem; }
+.ucm-journal__filters { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.ucm-journal__filters input { width: 13rem; margin-bottom: 0; }
+.ucm-journal__filters select { margin-bottom: 0; }
+.ucm-journal__status { margin-left: auto; font-size: .8rem; white-space: nowrap; }
+/* the entries pane: a TERMINAL surface — deliberately theme-independent
+   (the sidebar-rail logic): dark on dark in both themes reads as "console". */
+.ucm-journal__lines { margin: 0; padding: .8rem 1rem; background: #1a1a1a; color: #e8e8e8;
+    font-family: "Ubuntu Mono variable", monospace; font-size: .72rem; line-height: 1.55;
+    max-height: calc(100vh - 16rem); overflow: auto; white-space: pre-wrap; word-break: break-word;
+    border-radius: .25rem; }
+/* dark mode: only the app-chrome carriers the bundle doesn't flip */
+.is-dark .ucm-sys__kvrow { border-bottom-color: #3a3a3a; }
+.is-dark .ucm-sys__kvrow dt { color: #a8a8a8; }
+.is-dark .ucm-sys__schedform .p-form__label { color: #a8a8a8; }
+.is-dark .ucm-sys__scheduled { background: hsla(27,100%,50%,.2); border-color: #c48831; }
+.is-dark .ucm-sys__schedmsg { color: #f0c674; }

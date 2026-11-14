@@ -136,6 +136,20 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
         lp.ok === true && lp.r2 && lp.r2.wv === true && (lp.r2.url === LP_SSL_URL || lp.r2.url === LP_SSL_URL + '/') && lp.r2.title === 'UCM E2E TLS Guest' && lp.r2.active === true,
         JSON.stringify(lp.r2));
 
+    // ---- round L: the SYSTEM page (the REAL journal + the REAL login1
+    // read). READ-ONLY: the probe never triggers a power action.
+    const sy = p.sys || {};
+    ok('the system page shows its 3 cards in the real app (nav + loaders wired)',
+        sy.ok === true && sy.sy && sy.sy.viewActive === true
+        && JSON.stringify(sy.sy.cards) === JSON.stringify(['System journal', 'Snap refresh schedule', 'System power']),
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.error));
+    ok('the REAL journal (journalctl via log-observe) returns real lines',
+        sy.ok === true && sy.sy && sy.sy.journal && sy.sy.journal.ok === true && sy.sy.journal.n > 0,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.journal) : sy.error));
+    ok('the REAL login1 ScheduledShutdown read works (D-Bus; nothing scheduled here)',
+        sy.ok === true && sy.sy && sy.sy.scheduled && !sy.sy.scheduled.error && sy.sy.scheduled.active === false,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.scheduled) : sy.error));
+
     console.log(`\n================= ${passed} passed, ${failed} failed =================`);
     try { LP_SERVER.close(); LP_SSL.close(); fs.rmSync(STATE, { recursive: true, force: true }); fs.rmSync(TLS_DIR, { recursive: true, force: true }); fs.unlinkSync(SOCK); } catch {}
     process.exit(failed ? 1 : 0);

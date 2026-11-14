@@ -39,6 +39,8 @@ apps:
       - timeserver-control
       - network-control
       - network-setup-control
+      - shutdown
+      - log-observe
 
 parts:
   app:
