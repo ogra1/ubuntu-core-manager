@@ -1812,14 +1812,15 @@ function journalArgs(opts) {
     if (pri > 0) args.push('-p', JOURNAL_PRIORITIES[pri]);
     if (o.unit) args.push('-u', String(o.unit));
     if (o.match) {
-        // The match text is a journalctl MATCH EXPRESSION, passed VERBATIM as a
-        // single argv (journalctl.c parse_argv: the first non-option is matches).
-        // Grammar: position 0 = AND, position 1 ('+') = OR — a LEADING '+' is
-        // invalid ("+ can only be used between terms"), so we never prepend one;
-        // 'a b' = both words, 'a + b' = a OR b, 'MESSAGE=x' is a field term.
-        // (journalctl parses the whole expression; execFile has no shell, so
-        // spaces are fine inside the one argument.)
-        args.push(String(o.match));
+        // The match text is a journalctl GREP PATTERN (-g/--grep, v255): it is
+        // matched against the MESSAGE field (PCRE2, case-insensitive by
+        // default) — the manpage's "grep features" option. It is NOT a
+        // positional MATCH: bare words are invalid there (a positional match
+        // needs the FIELD=value form — 'journalctl systemd' -> "Failed to add
+        // match: Invalid argument"), which is exactly the error a free-typed
+        // pattern produced. With -g, -n N: v255 seeks internally reversed but
+        // PRINTS oldest-first (verified live) — the terminal order is kept.
+        args.push('-g', String(o.match));
     }
     return args;
 }

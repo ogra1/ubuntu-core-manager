@@ -936,20 +936,22 @@ function mockFactoryJs() {
                 const __priMin = { all: 7, info: 6, notice: 5, warning: 4, err: 3 }; // keep severity <= this number
                 // parse the severity of a canned line (the 'ERROR' token = err).
                 const __pri = (l) => /ERROR/.test(l) ? 3 : (/Starting|Started|Succeeded/.test(l) ? 6 : 5);
-                // The match text is a journalctl MATCH EXPRESSION passed verbatim:
-                // words are ANDed (substring, case-insensitive here), '+' separates
-                // OR clauses — a LEADING '+' is invalid (journalctl errors, the app
-                // surfaces it + stays usable: the round-M stuck-busy regression).
-                const __matchOk = (l, expr) => {
-                    if (!expr) return true;
-                    if (expr.trim().startsWith('+')) throw new Error('"+" can only be used between terms');
-                    const lower = l.toLowerCase();
-                    return expr.split('+').some((clause) => clause.trim().split(/\s+/).filter(Boolean).every((w) => lower.includes(w.toLowerCase())));
+                // The match text is a journalctl GREP PATTERN (-g, v255): a
+                // case-insensitive PCRE2 on the MESSAGE. The mock emulates it as a
+                // case-insensitive RegExp over the whole line (an invalid pattern
+                // is a failed tail: { ok:false, error } - the round-M stuck-busy
+                // regression lives on that exact path).
+                const __filter = (opts) => {
+                    let re = null;
+                    if (opts.match) {
+                        try { re = new RegExp(opts.match, 'i'); }
+                        catch (e) { return { error: 'regex compilation error: ' + e.message }; }
+                    }
+                    return J_LINES
+                        .filter((l) => (opts.unit ? l.split(' ')[2].startsWith(opts.unit + '[') : true))
+                        .filter((l) => (re ? re.test(l) : true))
+                        .filter((l) => __pri(l) <= __priMin[opts.pri || 'all']);
                 };
-                const __filter = (opts) => J_LINES
-                    .filter((l) => (opts.unit ? l.split(' ')[2].startsWith(opts.unit + '[') : true))
-                    .filter((l) => __matchOk(l, opts.match))
-                    .filter((l) => __pri(l) <= __priMin[opts.pri || 'all']);
                 return {
                     async journalTail(opts) {
                         __m.journalCalls += 1;
@@ -959,11 +961,12 @@ function mockFactoryJs() {
                         // early-return error path is what the round-M stuck-busy
                         // regression lives on, so the mock must resolve too.
                         if (o.unit === 'definitely-not-a-unit') return { ok: false, lines: [], error: 'No such unit' };
-                        if (o.match && String(o.match).trim().startsWith('+')) return { ok: false, lines: [], error: 'journalctl: "\"+"\"" can only be used between terms' };
+
                         // HONEST shape: main.js (no --reverse) returns the newest N
                         // entries in CHRONOLOGICAL (oldest-first) order; the
                         // renderer reverses them for display.
                         const hits = __filter(o);
+                        if (hits && hits.error) return { ok: false, lines: [], error: hits.error };
                         return { ok: true, lines: hits, error: '' };
                     },
                     async journalFollow(opts) {
@@ -5711,9 +5714,10 @@ function mockFactoryJs() {
     if (/CRON|systemd\[1\]/.test(j2.text || '')) console.log('PAGE ERROR: the unit filter must drop non-snapd lines (got: ' + JSON.stringify(j2.text) + ') (round L)');
     if (!/2 entries/.test(j2.status || '')) console.log('PAGE ERROR: the filtered count must be 2 (got ' + JSON.stringify(j2.status) + ') (round L)');
 
-    // round M: the MATCH TEXT is a journalctl match EXPRESSION (passed verbatim
-    // — words ANDed, '+' = OR; a leading '+' is invalid and must be surfaced
-    // WITHOUT wedging the controls).
+    // round N: the MATCH TEXT is a journalctl GREP PATTERN (-g): matched
+    // against the MESSAGE (the mock: a case-insensitive regex over the line).
+    // A plain word, an OR ('|'), and an INVALID pattern (which must surface
+    // the error WITHOUT wedging the controls - the round-M stuck-busy path).
     await page.evaluate(() => {
         const inp = document.querySelector('.ucm-journal__filters input[aria-label="Filter by unit"]');
         inp.value = ''; inp.dispatchEvent(new Event('change'));
@@ -5728,13 +5732,12 @@ function mockFactoryJs() {
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
         return { text: pre ? pre.textContent : null, status: status ? status.textContent : null };
     });
-    if (!/CRON/.test(jMatch1.text || '')) console.log('PAGE ERROR: a match word must filter the entries (got ' + JSON.stringify(jMatch1.text) + ') (round M)');
-    if (!/1 entries/.test(jMatch1.status || '')) console.log('PAGE ERROR: the CRON match must hit exactly 1 canned line (got ' + JSON.stringify(jMatch1.status) + ') (round M)');
-    // OR: 'snapd + CRON' = 4 lines (the mock's substring model: 3 lines contain
-    // "snapd" — incl. the "snapd.service: Succeeded" line — + 1 CRON)
+    if (!/CRON/.test(jMatch1.text || '')) console.log('PAGE ERROR: a grep pattern must filter the entries (got ' + JSON.stringify(jMatch1.text) + ') (round N)');
+    if (!/1 entries/.test(jMatch1.status || '')) console.log('PAGE ERROR: the CRON pattern must hit exactly 1 canned line (got ' + JSON.stringify(jMatch1.status) + ') (round N)');
+    // OR via the regex alternation: 'CRON|denied' = 2 lines
     await page.evaluate(() => {
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
-        m.value = 'snapd + CRON';
+        m.value = 'CRON|denied';
     });
     await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
     await page.keyboard.press('Enter');
@@ -5743,27 +5746,13 @@ function mockFactoryJs() {
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
         return { status: status ? status.textContent : null };
     });
-    if (!/4 entries/.test(jMatch2.status || '')) console.log('PAGE ERROR: the OR expression (snapd + CRON) must hit 4 lines (got ' + JSON.stringify(jMatch2.status) + ') (round M)');
-    // AND: 'snapd foo' hits nothing
+    if (!/2 entries/.test(jMatch2.status || '')) console.log('PAGE ERROR: the OR pattern (CRON|denied) must hit 2 lines (got ' + JSON.stringify(jMatch2.status) + ') (round N)');
+    // an INVALID pattern (a lone '('): journalctl rejects it -> the error is
+    // surfaced AND the controls stay ALIVE (no re-open needed - the round-M
+    // stuck-busy regression, now via the pattern-error path).
     await page.evaluate(() => {
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
-        m.value = 'snapd foo';
-    });
-    await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
-    await page.keyboard.press('Enter');
-    await new Promise((r) => setTimeout(r, 500));
-    const jMatch3 = await page.evaluate(() => {
-        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
-        return { empty: pre ? pre.textContent : null };
-    });
-    if (jMatch3.empty !== '(no matching entries)') console.log('PAGE ERROR: an AND match with no hits must show the empty state (got ' + JSON.stringify(jMatch3.empty) + ') (round M)');
-    // the STUCK-BUSY regression (round M, bug 3): a REJECTED expression (leading '+')
-    // must surface the error AND leave the controls WORKING (the round-L bug
-    // returned before clearing the busy flag — the buttons were dead until the
-    // modal was re-opened).
-    await page.evaluate(() => {
-        const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
-        m.value = '+bad';
+        m.value = '(';
     });
     await page.focus('.ucm-journal__filters input[aria-label="Match text"]');
     await page.keyboard.press('Enter');
@@ -5772,8 +5761,8 @@ function mockFactoryJs() {
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
         return { status: status ? status.textContent : null };
     });
-    if (!/Could not read the journal/.test(jBad.status || '')) console.log('PAGE ERROR: an invalid match expression must surface the journalctl error (got ' + JSON.stringify(jBad.status) + ') (round M)');
-    // clear + reload — the controls must be ALIVE again without a re-open
+    if (!/Could not read the journal/.test(jBad.status || '')) console.log('PAGE ERROR: an invalid grep pattern must surface the journalctl error (got ' + JSON.stringify(jBad.status) + ') (round N)');
+    // clear + Reload - the controls must be ALIVE again without a re-open
     await page.evaluate(() => {
         const m = document.querySelector('.ucm-journal__filters input[aria-label="Match text"]');
         m.value = '';
@@ -5784,7 +5773,7 @@ function mockFactoryJs() {
         const status = document.querySelector('.ucm-modal--journal .ucm-journal__status');
         return { status: status ? status.textContent : null };
     });
-    if (!/7 entries/.test(jBack.status || '')) console.log('PAGE ERROR: after a rejected query the controls must still work (no re-open needed; got ' + JSON.stringify(jBack.status) + ') (round M)');
+    if (!/7 entries/.test(jBack.status || '')) console.log('PAGE ERROR: after a rejected pattern the controls must still work (no re-open needed; got ' + JSON.stringify(jBack.status) + ') (round N)');
 
     // clear the unit filter, then FOLLOW (streams 2 lines)
     await page.evaluate(() => {

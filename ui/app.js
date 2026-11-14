@@ -3548,7 +3548,7 @@ function openJournalModal() {
     // --- the filter row (unit + match + priority + follow + refresh) ------
     const filters = el('div', { class: 'ucm-journal__filters' });
     const unitInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'unit (e.g. snapd)', 'aria-label': 'Filter by unit', spellcheck: 'false' });
-    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (words are ANDed, + is OR)', 'aria-label': 'Match text', spellcheck: 'false' });
+    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (a grep pattern on the message, e.g. snapd.*denied)', 'aria-label': 'Match text', spellcheck: 'false' });
     const prioSel = el('select', { class: 'ucm-kv--select', 'aria-label': 'Minimum priority' });
     for (const [v, label] of SYS_JOURNAL_PRIOS) prioSel.append(el('option', { value: v, text: label }));
     const followBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Follow' });

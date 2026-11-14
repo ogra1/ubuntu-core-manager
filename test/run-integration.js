@@ -1476,14 +1476,12 @@ function ok(name, cond, extra = '') {
         const jArgs = (o) => m.journalArgs(o);
         ok('journalArgs: the default tail (200 lines, no extras)',
             JSON.stringify(jArgs({})) === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '200']));
-        ok('journalArgs: unit + match + priority + lines are all threaded (match = ONE verbatim argv)',
+        ok('journalArgs: unit + match + priority + lines are all threaded (match = a GREP pattern via -g, round N)',
             JSON.stringify(jArgs({ unit: 'snapd', match: 'foo bar', pri: 'err', lines: 50 }))
-                === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '50', '-p', 'err', '-u', 'snapd', 'foo bar']));
-        ok('journalArgs: a LEADING + is never injected (round M: \"+\" can only be used between terms)',
-            !jArgs({ match: '+x' }).slice(0, -1).includes('+')
-            && jArgs({ match: 'a + b' })[jArgs({ match: 'a + b' }).length - 1] === 'a + b'
-            && jArgs({ match: '+x' })[jArgs({ match: '+x' }).length - 1] === '+x'
-            && !jArgs({ unit: 'u', match: 'm' }).includes('+'));
+                === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '50', '-p', 'err', '-u', 'snapd', '-g', 'foo bar']));
+        ok('journalArgs: the match is ALWAYS passed via -g (never as a positional MATCH - a bare positional word is an INVALID match: "Failed to add match" - the round-N bug)',
+            JSON.stringify(jArgs({ match: 'systemd' })) === JSON.stringify(['--no-pager', '--output=short-iso', '-n', '200', '-g', 'systemd'])
+            && (() => { const a2 = jArgs({ unit: 'u', match: 'm' }); const i = a2.lastIndexOf('m'); return a2[i - 1] === '-g'; })());
         ok('journalArgs: follow adds -f', jArgs({ follow: true }).includes('-f') && jArgs({}).includes('-f') === false);
         const nOf = (args) => args[args.indexOf('-n') + 1];
         ok('journalArgs: the line count is clamped (0/junk -> the 200 default, >2000 capped)',
