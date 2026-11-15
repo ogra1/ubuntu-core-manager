@@ -514,19 +514,16 @@
                                 <button class="p-button ucm-sys__btn" type="button" id="refreshApplyBtn">Apply schedule</button>
                                 <button class="p-button--base p-button ucm-sys__btn" type="button" id="refreshDefaultBtn">Use default</button>
                             </div>
-                            <!-- round S+2: the 'Refresh now' button (== `snap refresh` all
-                                 snaps - an immediate store refresh, NOT a schedule change). -->
-                            <div class="ucm-sys__row ucm-sys__actions">
-                                <button class="p-button ucm-sys__btn" type="button" id="refreshNowBtn">Refresh now</button>
-                                <span id="refreshNowHint" class="ucm-sys__now"></span>
-                            </div>
                             <!-- round S: the global auto-refresh HOLD (the REST
                                  equivalent of `snap refresh --hold`). A p-switch (the
                                  48a/round-C orange idiom). POLARITY CHOICE: label
                                  "Pause auto-refresh", ON = held (paused), OFF =
                                  running. checked is synced from the LIVE sysinfo
                                  read (refreshHoldRead), so a hold set OUTSIDE the
-                                 app (the CLI) is reflected here too. -->
+                                 app (the CLI) is reflected here too. (round S+3: the
+                                 user asked to SWAP this toggle with the Refresh now
+                                 button and put a separator between them - so the
+                                 toggle now sits directly under the schedule actions.) -->
                             <div class="ucm-sys__row ucm-sys__holdrow">
                                 <span class="ucm-sys__holdlabel">Pause auto-refresh</span>
                                 <label class="p-switch ucm-sys__holdsw" title="When on, snapd holds every snap's auto-refresh (the snap refresh --hold equivalent). When off, auto-refresh runs normally.">
@@ -534,6 +531,16 @@
                                     <span class="p-switch__slider"></span>
                                 </label>
                                 <span id="refreshHoldState" class="ucm-sys__now">Not held</span>
+                            </div>
+                            <!-- round S+3: a hairline separator between the Pause toggle
+                                 and the Refresh now button (the house .ucm-sys divider
+                                 idiom). -->
+                            <div class="ucm-sys__sep" role="separator"></div>
+                            <!-- round S+2: the 'Refresh now' button (== `snap refresh` all
+                                 snaps - an immediate store refresh, NOT a schedule change). -->
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="refreshNowBtn">Refresh now</button>
+                                <span id="refreshNowHint" class="ucm-sys__now"></span>
                             </div>
                         </div>
                     </div>

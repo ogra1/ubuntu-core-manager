@@ -5735,7 +5735,17 @@ function mockFactoryJs() {
         // journalctl / log-observe / install / systemd-logind - implementation
         // detail the user doesn't need). whitespace-normalized (the HTML wraps).
         const helps = Array.from(document.querySelectorAll('#view-system .ucm-lp__help')).map((p) => p.textContent.replace(/\s+/g, ' ').trim());
-        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen, helps };
+        // round S+3: the refresh card's row ORDER - the Pause toggle must sit ABOVE
+        // the Refresh now button, with a hairline separator strictly between them.
+        const rcard = document.querySelector('#refreshApplyBtn') ? document.querySelector('#refreshApplyBtn').closest('.p-card') : null;
+        const rbody = rcard ? rcard.querySelector('.ucm-sys__body') : null;
+        const rowSeq = rbody ? Array.from(rbody.children).map((c) => {
+            if (c.classList && c.classList.contains('ucm-sys__holdrow')) return 'hold';
+            if (c.classList && c.classList.contains('ucm-sys__sep')) return 'sep';
+            if (c.querySelector && c.querySelector('#refreshNowBtn')) return 'refreshnow';
+            return 'other';
+        }) : null;
+        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen, helps, rowSeq };
     });
     if (gS.hidden) console.log('PAGE ERROR: the system view must be visible after switching to it (round L)');
     if (gS.activeView !== 'system') console.log('PAGE ERROR: the System nav link must be is-active on the system page (got ' + JSON.stringify(gS.activeView) + ') (round L)');
@@ -5759,6 +5769,18 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[2]) + ') (round R)');
     } else {
         console.log('PAGE ERROR: the system page must show 3 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R)');
+    }
+    // round S+3: the refresh card rows must be ordered  Pause-toggle < separator <
+    // Refresh-now  (the user asked to SWAP the toggle above the button and add a
+    // separator between them). rowSeq is the card body's children tagged
+    // hold/sep/refreshnow/other; sep must sit STRICTLY between hold and refreshnow.
+    {
+        const seq = gS.rowSeq || [];
+        const iHold = seq.indexOf('hold');
+        const iSep = seq.indexOf('sep');
+        const iNow = seq.indexOf('refreshnow');
+        if (!(iHold >= 0 && iSep > iHold && iNow > iSep))
+            console.log('PAGE ERROR: the refresh card must order Pause-toggle < separator < Refresh-now (got ' + JSON.stringify(seq) + ') (round S+3)');
     }
     if (gS.journalBtn !== 'View system journal') console.log('PAGE ERROR: the journal card button is wrong (got ' + JSON.stringify(gS.journalBtn) + ') (round L)');
     if (gS.refreshNow !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: the refresh schedule must read the default state (got ' + JSON.stringify(gS.refreshNow) + ') (round L)');

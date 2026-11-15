@@ -1567,6 +1567,10 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-sys__holdsw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
 .ucm-sys__holdsw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
 .ucm-sys__holdsw .p-switch__slider { background: #e0e0e0; }
+/* round S+3: the hairline separator between the Pause auto-refresh toggle and the
+   Refresh now button (the house .ucm-sys divider idiom - a 1px #f0f0f0 rule with
+   a little vertical padding so it reads as a clear break between the two rows). */
+.ucm-sys__sep { height: 0; border-top: 1px solid #f0f0f0; margin: .75rem 0; }
 .ucm-sys__schedform { display: grid; grid-template-columns: auto 11rem auto 15rem auto; column-gap: .75rem; align-items: center; margin-top: 1rem; }
 .ucm-sys__schedform .p-form__label { padding: 0; margin: 0; font-size: .9rem; color: #555; }
 .ucm-sys__schedform .ucm-kv--select, .ucm-sys__schedform .ucm-sys__inp { margin-bottom: 0; width: 100%; }
@@ -1606,3 +1610,4 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .is-dark .ucm-sys__scheduled { background: hsla(27,100%,50%,.2); border-color: #c48831; }
 .is-dark .ucm-sys__schedmsg { color: #f0c674; }
 .is-dark .ucm-sys__holdlabel { color: #d0d0d0; }
+.is-dark .ucm-sys__sep { border-top-color: #3a3a3a; }
