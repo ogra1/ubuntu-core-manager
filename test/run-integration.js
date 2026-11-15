@@ -536,6 +536,8 @@ function ok(name, cond, extra = '') {
                 && !!handlers['system:refresh-read'] && !!handlers['system:refresh-write']
                 && !!handlers['system:power'] && !!handlers['system:power-schedule']
                 && !!handlers['system:power-cancel-scheduled'] && !!handlers['system:power-scheduled']);
+            ok('system-page hold handlers registered (round S: refresh-hold read + write, auth-gated)',
+                !!handlers['system:refresh-hold-read'] && !!handlers['system:refresh-hold']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -1603,6 +1605,67 @@ function ok(name, cond, extra = '') {
         const none2 = await m.powerScheduledRead();
         ok('scheduled read: the (st) property parses to none after the cancel', none2.active === false);
         m.__setLogin1Transport(null);
+
+        // ---- the global auto-refresh HOLD (round S: the 'Pause auto-refresh'
+        //      toggle; the REST equivalent of `snap refresh --hold`/`--unhold`) ----
+        // (i) the PURE active-decision (unit-tested against the sysinfo value).
+        //     '' / null / undefined / whitespace = NOT active; any non-empty
+        //     string (the 'forever' token or an RFC3339 hold-until timestamp) =
+        //     active. A bare `snap refresh --hold` arrives as a distant ~100-year
+        //     timestamp, so the truthiness is 'non-empty', NOT '== forever'.
+        ok('refresh hold: the active decision is non-empty (not a forever-equality)',
+            m.refreshHoldActive('') === false && m.refreshHoldActive(null) === false
+            && m.refreshHoldActive(undefined) === false && m.refreshHoldActive('   ') === false
+            && m.refreshHoldActive('forever') === true && m.refreshHoldActive('  ') === false
+            && m.refreshHoldActive('2099-01-01T00:00:00Z') === true);
+        ok('refresh hold: a whitespace-only value is NOT active (the trim, not !!hold)',
+            m.refreshHoldActive('\t\n ') === false);
+
+        // (ii) refreshHoldRead with an INJECTED sysinfo shape (the __setSystemInfoFn
+        //      seam). The read walks info.refresh.hold (the UNWRAPPED result), NOT
+        //      info.result.refresh.hold. Absent/empty = inactive + ''; a timestamp
+        //      = active + the string preserved.
+        m.__setSystemInfoFn(async () => ({ version: 'x', refresh: { timer: 't', last: 'l', next: 'n' } }));
+        { const r = await m.refreshHoldRead();
+          ok('refresh hold read: an empty refresh (no hold) is INACTIVE with a blank string',
+             r.active === false && r.hold === '', JSON.stringify(r)); }
+        m.__setSystemInfoFn(async () => ({ version: 'x' })); // refresh key ABSENT
+        { const r = await m.refreshHoldRead();
+          ok('refresh hold read: an ABSENT refresh key degrades to inactive (no crash)',
+             r.active === false && r.hold === '', JSON.stringify(r)); }
+        m.__setSystemInfoFn(async () => ({ version: 'x', refresh: { timer: 't', last: 'l', next: 'n', hold: '2099-01-01T00:00:00Z' } }));
+        { const r = await m.refreshHoldRead();
+          ok('refresh hold read: a hold timestamp is ACTIVE and PRESERVED verbatim',
+             r.active === true && r.hold === '2099-01-01T00:00:00Z', JSON.stringify(r)); }
+        m.__setSystemInfoFn(null);
+
+        // (iii) the E2E write path against the STUB: setGlobalRefreshHold(true/false)
+        //       must POST the EXACT multi-action body (the CLI's `snap refresh --hold`
+        //       form) to /v2/snaps - NOT the single-snap /v2/snaps/<name> path and
+        //       NOT a setSnapConfig PUT. Assert the recorded socket body verbatim.
+        { const before = state.multiOps.length;
+          const chg = await m.setGlobalRefreshHold(true);
+          ok('refresh hold e2e: the hold returns an async CHANGE id (settle it)', typeof chg.id === 'string' && state.multiOps.length === before + 1, JSON.stringify(chg));
+          const rec = state.multiOps[before];
+          ok('refresh hold e2e: the HOLD body is EXACT (action hold, empty snaps, time forever, hold-level auto-refresh)',
+             JSON.stringify(rec.data) === JSON.stringify({ action: 'hold', snaps: [], time: 'forever', 'hold-level': 'auto-refresh' }), JSON.stringify(rec.data));
+          // let the stub settle (150ms) so the LIVE read-back reflects the hold
+          await new Promise((res) => setTimeout(res, 250));
+          const heldInfo = await m.getSystemInfo();
+          ok('refresh hold e2e: after a hold the LIVE sysinfo read-back is active (result.refresh.hold set)',
+             typeof heldInfo.refresh.hold === 'string' && heldInfo.refresh.hold !== '' && m.refreshHoldActive(heldInfo.refresh.hold) === true, JSON.stringify(heldInfo.refresh));
+        }
+        { const before = state.multiOps.length;
+          const chg = await m.setGlobalRefreshHold(false);
+          ok('refresh hold e2e: the unhold returns an async CHANGE id', typeof chg.id === 'string' && state.multiOps.length === before + 1, JSON.stringify(chg));
+          const rec = state.multiOps[before];
+          ok('refresh hold e2e: the UNHOLD body is EXACT (action unhold, empty snaps - no time/hold-level)',
+             JSON.stringify(rec.data) === JSON.stringify({ action: 'unhold', snaps: [] }), JSON.stringify(rec.data));
+          await new Promise((res) => setTimeout(res, 250));
+          const unheldInfo = await m.getSystemInfo();
+          ok('refresh hold e2e: after an unhold the LIVE sysinfo read-back is INACTIVE (result.refresh.hold absent)',
+             (!unheldInfo.refresh.hold || unheldInfo.refresh.hold === '') && m.refreshHoldActive(unheldInfo.refresh.hold) === false, JSON.stringify(unheldInfo.refresh));
+        }
     }
 
     const svgErr = (txt) => {

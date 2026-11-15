@@ -920,7 +920,7 @@ function mockFactoryJs() {
             // the power card as recorded calls + a live scheduled state.
             machine: (() => {
                 const __m = {
-                    journalCalls: 0, followCalls: 0, stopCalls: 0,
+                    journalCalls: 0, followCalls: 0, stopCalls: 0, holdCalls: 0,
                     powerCalls: [], scheduled: { active: false, action: null, usec: null },
                 };
                 const __mSubs = [];
@@ -1033,6 +1033,25 @@ function mockFactoryJs() {
                         // the harness asserts the __store result, exactly like round 48b.
                         return await core.snaps.confSet('core', { 'refresh.schedule': String(value) });
                     },
+                    // round S: the global auto-refresh HOLD. The read models the
+                    // LIVE core refresh.hold (what sysinfo result.refresh.hold
+                    // mirrors): '' = no hold, a timestamp = held (a bare --hold
+                    // arrives as a distant ~100-year time, so ANY non-empty value
+                    // = active). The write routes through the REAL mock confSet
+                    // (async change + 250ms settle) EXACTLY like refreshWrite, so
+                    // the renderer's waitChangeSettled runs the real path.
+                    async refreshHoldRead() {
+                        const doc = __store['core'] || JSON.parse(JSON.stringify(CONF['core'] || {}));
+                        const hold = (doc.refresh && typeof doc.refresh.hold === 'string') ? doc.refresh.hold
+                            : (typeof doc['refresh.hold'] === 'string' ? doc['refresh.hold'] : '');
+                        return { active: hold != null && String(hold).trim() !== '', hold: hold == null ? '' : String(hold) };
+                    },
+                    async refreshHold(on) {
+                        __m.holdCalls += 1;
+                        // on  -> hold forever (== the snap refresh --hold CLI form)
+                        // off -> null deletes the nested leaf (== the snap refresh --unhold CLI form)
+                        return await core.snaps.confSet('core', { 'refresh.hold': on ? 'forever' : null });
+                    },
                     async power(action) { __m.powerCalls.push(action); return { started: true }; },
                     async powerSchedule(action, whenMs) {
                         __m.powerCalls.push('schedule:' + action);
@@ -1051,6 +1070,20 @@ function mockFactoryJs() {
                     // ipcRenderer.on mirrors this: main broadcasts each line to EVERY
                     // registered listener, so the renderer must keep exactly ONE).
                     __jsubs: () => __mSubs.length,
+                    // round S: the CLI-hold ESCAPE - set/clear the LIVE hold OUTSIDE
+                    // the app's write path (no change/settle), so a view re-entry
+                    // must sync the switch from the live read (the "reflects state
+                    // set outside the app" proof). 'clear' removes it.
+                    __hold: (val) => {
+                        if (!__store['core']) __store['core'] = JSON.parse(JSON.stringify(CONF['core'] || {}));
+                        if (val === 'clear') {
+                            if (__store['core'].refresh) delete __store['core'].refresh.hold;
+                        } else {
+                            __store['core'].refresh = __store['core'].refresh || {};
+                            __store['core'].refresh.hold = String(val);
+                        }
+                        return __m;
+                    },
                     __machine: () => __m,
                 };
             })(),
@@ -6126,6 +6159,145 @@ function mockFactoryJs() {
     if (r3.val !== null && r3.val !== '') console.log('PAGE ERROR: "Use default" must clear the stored option (got ' + JSON.stringify(r3.val) + ') (round L)');
     if (r3.input !== '') console.log('PAGE ERROR: "Use default" must clear the input (got ' + JSON.stringify(r3.input) + ') (round L)');
 
+    // ---- 5s-rh: round S — the 'Pause auto-refresh' HOLD toggle ----
+    // Runs in the authenticated LIGHT state (same proof as the rest of 5s).
+    // Default hold OFF; the LIVE state (the mock's __store core refresh.hold)
+    // is what the switch must reflect — set/cleared via the mock's __hold()
+    // escape (models a CLI hold set OUTSIDE the app) and the real write path.
+    // Leaves the schedule + power + hold state pristine.
+    // 1) default: switch UNCHECKED, state line reads 'Not held' (loadSystem synced it)
+    const rh0 = await page.evaluate(async () => {
+        const sw = document.querySelector('#refreshHoldSwitch');
+        const st = document.querySelector('#refreshHoldState');
+        const core = window.__mockCore || window.ucmCore;
+        const r = core.machine ? await core.machine.refreshHoldRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        return {
+            checked: sw ? sw.checked : null,
+            stateText: st ? st.textContent : null,
+            active: r ? r.active : null,
+            hold: r ? r.hold : null,
+            storedHold: doc.refresh ? (doc.refresh.hold !== undefined ? doc.refresh.hold : 'absent') : 'no-refresh-node',
+        };
+    });
+    if (rh0.checked !== false) console.log('PAGE ERROR: the hold toggle must default OFF (not checked) (got ' + JSON.stringify(rh0.checked) + ') (round S)');
+    if (rh0.stateText !== 'Not held') console.log('PAGE ERROR: the default hold state line must read "Not held" (got ' + JSON.stringify(rh0.stateText) + ') (round S)');
+    if (rh0.active !== false) console.log('PAGE ERROR: the default live read must be inactive (got ' + JSON.stringify(rh0.active) + ') (round S)');
+    if (rh0.storedHold !== 'absent') console.log('PAGE ERROR: the default core refresh.hold must be ABSENT (got ' + JSON.stringify(rh0.storedHold) + ') (round S)');
+
+    // 2) TOGGLE ON -> the real write path (mock confSet async change + settle) ->
+    //    __store core refresh.hold = 'forever' + switch checked + state line + toast
+    await page.click('#refreshHoldSwitch');
+    await new Promise((r) => setTimeout(r, 700)); // the async change settles (250ms) + re-read
+    const rh1 = await page.evaluate(async () => {
+        const sw = document.querySelector('#refreshHoldSwitch');
+        const st = document.querySelector('#refreshHoldState');
+        const core = window.__mockCore || window.ucmCore;
+        const r = core.machine ? await core.machine.refreshHoldRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            checked: sw ? sw.checked : null,
+            stateText: st ? st.textContent : null,
+            active: r ? r.active : null,
+            hold: r ? r.hold : null,
+            storedHold: doc.refresh ? doc.refresh.hold : null,
+            holdCalls: m ? m.holdCalls : null,
+            toasts,
+        };
+    });
+    if (rh1.checked !== true) console.log('PAGE ERROR: toggling ON must CHECK the switch (got ' + JSON.stringify(rh1.checked) + ') (round S)');
+    if (rh1.active !== true) console.log('PAGE ERROR: toggling ON must set the LIVE hold active (got ' + JSON.stringify(rh1.active) + ') (round S)');
+    if (rh1.storedHold !== 'forever') console.log('PAGE ERROR: toggling ON must persist core refresh.hold = "forever" (got ' + JSON.stringify(rh1.storedHold) + ') (round S)');
+    if (rh1.hold !== 'forever') console.log('PAGE ERROR: the re-read must return the persisted hold string (got ' + JSON.stringify(rh1.hold) + ') (round S)');
+    if (!/Held/.test(rh1.stateText || '')) console.log('PAGE ERROR: the ON state line must report held (got ' + JSON.stringify(rh1.stateText) + ') (round S)');
+    if (rh1.holdCalls !== 1) console.log('PAGE ERROR: exactly one hold write must reach the backend (got ' + JSON.stringify(rh1.holdCalls) + ') (round S)');
+    if (!rh1.toasts.includes('Auto-refresh paused')) console.log('PAGE ERROR: toggling ON must toast "Auto-refresh paused" (got ' + JSON.stringify(rh1.toasts) + ') (round S)');
+
+    // 3) TOGGLE OFF -> unhold -> __store core refresh.hold cleared + switch
+    //    unchecked + state 'Not held' + a distinct toast
+    await page.click('#refreshHoldSwitch');
+    await new Promise((r) => setTimeout(r, 700));
+    const rh2 = await page.evaluate(async () => {
+        const sw = document.querySelector('#refreshHoldSwitch');
+        const st = document.querySelector('#refreshHoldState');
+        const core = window.__mockCore || window.ucmCore;
+        const r = core.machine ? await core.machine.refreshHoldRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            checked: sw ? sw.checked : null,
+            stateText: st ? st.textContent : null,
+            active: r ? r.active : null,
+            storedHold: doc.refresh ? (doc.refresh.hold !== undefined ? doc.refresh.hold : 'absent') : 'no-refresh-node',
+            holdCalls: m ? m.holdCalls : null,
+            toasts,
+        };
+    });
+    if (rh2.checked !== false) console.log('PAGE ERROR: toggling OFF must UNCHECK the switch (got ' + JSON.stringify(rh2.checked) + ') (round S)');
+    if (rh2.active !== false) console.log('PAGE ERROR: toggling OFF must clear the LIVE hold (got ' + JSON.stringify(rh2.active) + ') (round S)');
+    if (rh2.storedHold !== 'absent') console.log('PAGE ERROR: toggling OFF must remove core refresh.hold (got ' + JSON.stringify(rh2.storedHold) + ') (round S)');
+    if (rh2.stateText !== 'Not held') console.log('PAGE ERROR: the OFF state line must read "Not held" (got ' + JSON.stringify(rh2.stateText) + ') (round S)');
+    if (rh2.holdCalls !== 2) console.log('PAGE ERROR: a second write must reach the backend (got ' + JSON.stringify(rh2.holdCalls) + ') (round S)');
+    if (!rh2.toasts.includes('Auto-refresh resumed')) console.log('PAGE ERROR: toggling OFF must toast "Auto-refresh resumed" (got ' + JSON.stringify(rh2.toasts) + ') (round S)');
+
+    // 4) THE PROOF: a hold set OUTSIDE the app (the CLI, via the __hold escape) is
+    //    reflected on a view RE-ENTRY — the switch must sync from the LIVE read,
+    //    not from a stale local var. Leave the system view, come back (which runs
+    //    loadSystem -> refreshHoldRead), and the switch must be ON.
+    await page.evaluate(() => { window.__mockCore.machine.__hold('2099-01-01T00:00:00Z'); });
+    // verify the escape landed OUTSIDE the app's write path (no extra hold write)
+    const rhPreNav = await page.evaluate(() => {
+        const m = window.__mockCore.machine.__machine();
+        const core = window.__mockCore || window.ucmCore;
+        return { holdCalls: m.holdCalls };
+    });
+    if (rhPreNav.holdCalls !== 2) console.log('PAGE ERROR: the CLI-hold escape must NOT count as an app write (got holdCalls ' + JSON.stringify(rhPreNav.holdCalls) + ') (round S)');
+    // leave the system view, then re-enter (fires loadSystem)
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await new Promise((r) => setTimeout(r, 300));
+    await page.click('.ucm-side a[data-view="system"]');
+    await new Promise((r) => setTimeout(r, 600));
+    const rh3 = await page.evaluate(async () => {
+        const sw = document.querySelector('#refreshHoldSwitch');
+        const st = document.querySelector('#refreshHoldState');
+        const core = window.__mockCore || window.ucmCore;
+        const r = core.machine ? await core.machine.refreshHoldRead() : null;
+        return {
+            checked: sw ? sw.checked : null,
+            stateText: st ? st.textContent : null,
+            active: r ? r.active : null,
+            hold: r ? r.hold : null,
+        };
+    });
+    if (rh3.checked !== true) console.log('PAGE ERROR: a hold set OUTSIDE the app must sync the switch ON on re-entry (got ' + JSON.stringify(rh3.checked) + ') (round S)');
+    if (rh3.active !== true) console.log('PAGE ERROR: the live read after an outside hold must be active (got ' + JSON.stringify(rh3.active) + ') (round S)');
+    if (rh3.hold !== '2099-01-01T00:00:00Z') console.log('PAGE ERROR: the outside hold timestamp must be preserved (got ' + JSON.stringify(rh3.hold) + ') (round S)');
+    if (!/Held until 2099/.test(rh3.stateText || '')) console.log('PAGE ERROR: the outside-hold state line must show the held-until time (got ' + JSON.stringify(rh3.stateText) + ') (round S)');
+
+    // 5) PRISTINE: clear the outside hold (escape 'clear') so later sections start clean.
+    //    Re-enter so the switch syncs back to OFF before leaving the page.
+    await page.evaluate(() => { window.__mockCore.machine.__hold('clear'); });
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await new Promise((r) => setTimeout(r, 300));
+    await page.click('.ucm-side a[data-view="system"]');
+    await new Promise((r) => setTimeout(r, 600));
+    const rh4 = await page.evaluate(async () => {
+        const sw = document.querySelector('#refreshHoldSwitch');
+        const st = document.querySelector('#refreshHoldState');
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        return {
+            checked: sw ? sw.checked : null,
+            stateText: st ? st.textContent : null,
+            storedHold: doc.refresh ? (doc.refresh.hold !== undefined ? doc.refresh.hold : 'absent') : 'no-refresh-node',
+        };
+    });
+    if (rh4.checked !== false) console.log('PAGE ERROR: after clearing the outside hold the switch must sync back OFF (got ' + JSON.stringify(rh4.checked) + ') (round S)');
+    if (rh4.storedHold !== 'absent') console.log('PAGE ERROR: the hold must be cleared to leave state pristine (got ' + JSON.stringify(rh4.storedHold) + ') (round S)');
+
+    // back on the system view; the 5s-p power section runs next (leaves it pristine too)
     // ---- 5s-p: power (confirm + immediate + scheduled + cancel) ----
     await page.click('#rebootNowBtn');
     await new Promise((r) => setTimeout(r, 250));

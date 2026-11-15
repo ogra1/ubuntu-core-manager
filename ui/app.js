@@ -3455,6 +3455,14 @@ async function loadSystem() {
         if (now && v !== '' && rs.valid === false) now.textContent = v + '  (invalid — not applied by snapd)';
     }
     if (inp) inp.disabled = false;
+    // Round S: the global auto-refresh HOLD. The switch + state line are synced
+    // from the LIVE sysinfo read (main.js refreshHoldRead -> /v2/system-info
+    // result.refresh.hold), NOT from a local var - so a hold set OUTSIDE the
+    // app (the CLI, a snap) is reflected on re-entry. Non-empty = held.
+    let rh = null;
+    try { rh = await core.machine.refreshHoldRead(); }
+    catch (e) { /* snapd unreachable - leave the row at its HTML default */ }
+    syncRefreshHold(rh && rh.active ? true : false, rh && rh.hold);
     // Power: the live scheduled shutdown from logind ("" + max usec = none).
     let psched = null;
     try { psched = await core.machine.powerScheduled(); }
@@ -3675,6 +3683,50 @@ function openJournalModal() {
     loadTail(); // first fill (async; its own busy flag guards against re-entry)
 }
 
+// Round S: render the 'Pause auto-refresh' switch + state line from a LIVE read
+// ({ active, hold }). POLARITY: ON (checked) = held (paused), OFF = running. The
+// hold is a sysinfo refresh.hold string ('' = absent = no hold); any non-empty
+// value is a held-until timestamp (a bare --hold arrives as a distant
+// ~100-year time), so the state line shows the raw value when held.
+function syncRefreshHold(active, hold) {
+    const sw = $('#refreshHoldSwitch'); const st = $('#refreshHoldState');
+    if (sw) sw.checked = !!active;
+    if (st) {
+        const h = hold == null ? '' : String(hold).trim();
+        st.textContent = active && h ? ('Held until ' + h) : (active ? 'Held' : 'Not held');
+    }
+}
+
+// Round S: the toggle handler. Writes through the machine bridge (an async
+// snapd change, settled like every other write), then RE-READS the live state so
+// the switch + line reflect snapd - never a stale local value. Positive toast on
+// success, negative on a rejected request or a FAILED change (the round-52 rule:
+// the negative toast states what happened, not the expected behaviour).
+async function setRefreshHold(on) {
+    const sw = $('#refreshHoldSwitch');
+    if (sw) sw.disabled = true;
+    let change = null;
+    try {
+        change = (await core.machine.refreshHold(on)) || null;
+    } catch (e) {
+        if (sw) sw.disabled = false;
+        toastErr(e);
+        return;
+    }
+    const done = (change && change.id != null) ? await waitChangeSettled(change) : null;
+    if (sw) sw.disabled = false;
+    if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') {
+        toast('negative', 'Auto-refresh hold not ' + (on ? 'set' : 'cleared'), 'The change did not complete; the previous state is still in effect.');
+        return;
+    }
+    let rr = null;
+    try { rr = await core.machine.refreshHoldRead(); }
+    catch (e) { /* fall back to the intended state if the read-back is unreachable */ }
+    syncRefreshHold(rr ? rr.active : on, rr && rr.hold);
+    if (on) toast('positive', 'Auto-refresh paused', 'snapd holds every snap auto-refresh.');
+    else toast('positive', 'Auto-refresh resumed', 'Auto-refresh runs on its normal schedule.');
+}
+
 async function applyRefreshSchedule() {
     const inp = $('#refreshInput'); const msg = $('#refreshMsg'); const btn = $('#refreshApplyBtn');
     if (!inp) return;
@@ -3838,6 +3890,8 @@ function wire() {
     if (jOpen) jOpen.addEventListener('click', () => openJournalModal());
     const rApply = $('#refreshApplyBtn');
     if (rApply) rApply.addEventListener('click', () => applyRefreshSchedule());
+    const rHold = $('#refreshHoldSwitch');
+    if (rHold) rHold.addEventListener('change', () => setRefreshHold(rHold.checked));
     const rDefault = $('#refreshDefaultBtn');
     if (rDefault) rDefault.addEventListener('click', () => {
         const inp = $('#refreshInput'); const msg = $('#refreshMsg');

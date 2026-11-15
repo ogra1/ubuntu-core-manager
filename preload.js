@@ -185,6 +185,13 @@ const api = Object.freeze({
         // Snapd refresh schedule (core 'refresh.schedule' option; '' = default).
         refreshRead: invoke('system:refresh-read'),      // -> { value:string|null, valid:boolean }
         refreshWrite: invoke('system:refresh-write'),    // (value) -> async snapd change (wait + settle like other conf writes)
+        // Round S: the global auto-refresh HOLD (the 'Pause auto-refresh'
+        // toggle; the REST equivalent of `snap refresh --hold`). The read is
+        // the LIVE sysinfo state (reflects a hold set OUTSIDE the app, e.g.
+        // the CLI), the write is an async snapd change (waitChangeSettled in
+        // the renderer, exactly like refreshWrite).
+        refreshHoldRead: invoke('system:refresh-hold-read'), // -> { active:boolean, hold:string }
+        refreshHold: invoke('system:refresh-hold'),          // (boolean) -> async snapd change (hold/unhold)
         // Power (org.freedesktop.login1 over D-Bus — the shutdown interface
         // is D-BUS ONLY; no shell-out).
         power: invoke('system:power'),                   // ('reboot'|'poweroff') — immediate

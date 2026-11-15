@@ -514,6 +514,21 @@
                                 <button class="p-button ucm-sys__btn" type="button" id="refreshApplyBtn">Apply schedule</button>
                                 <button class="p-button--base p-button ucm-sys__btn" type="button" id="refreshDefaultBtn">Use default</button>
                             </div>
+                            <!-- round S: the global auto-refresh HOLD (the REST
+                                 equivalent of `snap refresh --hold`). A p-switch (the
+                                 48a/round-C orange idiom). POLARITY CHOICE: label
+                                 "Pause auto-refresh", ON = held (paused), OFF =
+                                 running. checked is synced from the LIVE sysinfo
+                                 read (refreshHoldRead), so a hold set OUTSIDE the
+                                 app (the CLI) is reflected here too. -->
+                            <div class="ucm-sys__row ucm-sys__holdrow">
+                                <span class="ucm-sys__holdlabel">Pause auto-refresh</span>
+                                <label class="p-switch ucm-sys__holdsw" title="When on, snapd holds every snap's auto-refresh (the snap refresh --hold equivalent). When off, auto-refresh runs normally.">
+                                    <input class="p-switch__input" type="checkbox" id="refreshHoldSwitch">
+                                    <span class="p-switch__slider"></span>
+                                </label>
+                                <span id="refreshHoldState" class="ucm-sys__now">Not held</span>
+                            </div>
                         </div>
                     </div>
                     <div class="p-card ucm-sys">

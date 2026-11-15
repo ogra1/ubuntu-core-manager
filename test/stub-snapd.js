@@ -104,6 +104,11 @@ function makeServer(socketPath, state) {
         ],
     };
     state.serviceOps = state.serviceOps || [];
+    // round S: the global auto-refresh HOLD (the multi-action POST /v2/snaps
+    // path + the sysinfo result.refresh.hold read-back). refreshHold models the
+    // LIVE EffectiveRefreshHold(): null = no hold, a distant RFC3339 = held.
+    state.multiOps = state.multiOps || [];
+    if (state.refreshHold === undefined) state.refreshHold = null;
 
     // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
     // htop ships defaults so the conf UI has something to edit; core keeps
@@ -167,7 +172,7 @@ function makeServer(socketPath, state) {
                     'kernel-version': '6.8.0-40-generic',
                     'os-release': { id: 'ubuntu', 'version-id': '24.04' },
                     // live snapd shape (verified 2.77): UTC ISO timestamps
-                    refresh: { timer: '00:00~24:00/4', last: '2026-10-30T18:45:00Z', next: '2026-10-31T03:55:00Z' },
+                    refresh: (() => { const r = { timer: '00:00~24:00/4', last: '2026-10-30T18:45:00Z', next: '2026-10-31T03:55:00Z' }; if (state.refreshHold) r.hold = state.refreshHold; return r; })(),
                 });
             }
             // ---- model assertion (RAW assertion text, NOT JSON — the live
@@ -238,6 +243,40 @@ function makeServer(socketPath, state) {
             // ---- snaps --------------------------------------------------------
             if (p === '/v2/snaps' && req.method === 'GET') {
                 return json(res, 200, SNAPS);
+            }
+            // round S: the MULTI-snap action path - POST /v2/snaps with an EMPTY
+            // snaps:[] means hold/unhold the AUTO-REFRESH of ALL snaps (the
+            // `snap refresh --hold` / `--unhold` REST equivalent; daemon/api_snaps.go
+            // snapHoldMany). A 'general' level with no named snaps is REJECTED
+            // (live snapd: "holding general refreshes for all snaps is not
+            // supported") - the global hold MUST be hold-level auto-refresh.
+            if (p === '/v2/snaps' && req.method === 'POST') {
+                if (!auth.ok) return json(res, 401, { kind: 'unauthenticated', message: 'unauthenticated access' });
+                const data = JSON.parse(await body());
+                state.multiOps.push({ data });
+                if (data.action === 'hold' && data['hold-level'] === 'general') {
+                    return json(res, 400, { kind: 'not-allowed', message: 'holding general refreshes for all snaps is not supported' });
+                }
+                if (!['hold', 'unhold'].includes(data.action)) {
+                    return json(res, 400, { kind: 'not-found', message: `unsupported multi-action "${data.action}"` });
+                }
+                const id = String(state.changeSeq += 1);
+                const change = {
+                    id, kind: 'configure-snap',
+                    summary: data.action === 'hold' ? 'Hold snap refreshes' : 'Unhold snap refreshes',
+                    status: 'Doing', 'spawn-time': new Date().toISOString(),
+                };
+                state.changes.push(change);
+                setTimeout(() => {
+                    if (data.action === 'hold') state.refreshHold = new Date(Date.now() + 100 * 365 * 24 * 3600 * 1000).toISOString(); // 'forever' -> ~100y out
+                    else state.refreshHold = null;
+                    change.status = 'Done';
+                }, 150);
+                const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: id });
+                return new Promise((resolve) => {
+                    res.writeHead(202, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
+                    res.end(payload); resolve();
+                });
             }
             const snapRe = p.match(/^\/v2\/snaps\/([^/]+)$/);
             if (snapRe) {

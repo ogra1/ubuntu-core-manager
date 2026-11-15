@@ -1559,6 +1559,14 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-sys__formrow .p-form__label { grid-column: 1; padding: 0; margin: 0; } /* bundle label phantom (round 40/50 class) */
 .ucm-sys__formrow .ucm-sys__inp { grid-column: 2; width: 100%; margin-bottom: 0; }
 .ucm-sys__formrow .p-form-validation__message { grid-column: 1 / -1; margin: 0 0 0; font-size: .8rem; }
+/* round S: the 'Pause auto-refresh' hold row — a p-switch (the 48a/round-C
+   orange idiom) + a live state line. ON = held, OFF = running. */
+.ucm-sys__holdrow { align-items: center; }
+.ucm-sys__holdlabel { font-size: .95rem; font-weight: 600; color: #3b3b3b; flex: 0 0 auto; }
+.ucm-sys__holdsw { display: inline-flex; margin: 0; padding-top: 0; gap: .5rem; align-items: center; }
+.ucm-sys__holdsw .p-switch__input:checked + .p-switch__slider { background: var(--ucm-orange); }
+.ucm-sys__holdsw .p-switch__input:checked + .p-switch__slider::before { border-color: var(--ucm-orange); }
+.ucm-sys__holdsw .p-switch__slider { background: #e0e0e0; }
 .ucm-sys__schedform { display: grid; grid-template-columns: auto 11rem auto 15rem auto; column-gap: .75rem; align-items: center; margin-top: 1rem; }
 .ucm-sys__schedform .p-form__label { padding: 0; margin: 0; font-size: .9rem; color: #555; }
 .ucm-sys__schedform .ucm-kv--select, .ucm-sys__schedform .ucm-sys__inp { margin-bottom: 0; width: 100%; }
@@ -1597,3 +1605,4 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .is-dark .ucm-sys__schedform .p-form__label { color: #a8a8a8; }
 .is-dark .ucm-sys__scheduled { background: hsla(27,100%,50%,.2); border-color: #c48831; }
 .is-dark .ucm-sys__schedmsg { color: #f0c674; }
+.is-dark .ucm-sys__holdlabel { color: #d0d0d0; }

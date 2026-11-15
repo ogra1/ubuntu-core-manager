@@ -1968,6 +1968,58 @@ async function refreshScheduleWrite(value) {
     return setSnapConfig('core', { 'refresh.schedule': value });
 }
 
+/* ---- 2b. global refresh HOLD (round S: the 'Pause auto-refresh' toggle) ----
+   This is the REST equivalent of `snap refresh --hold` / `--unhold` (no snap
+   names = hold ALL snaps' auto-refresh). Source-verified against snapd
+   (cmd/snapd/cli/cmd_snap_op.go holdRefreshes() + client/snap_op.go
+   doMultiSnapActionFull + daemon/api_snaps.go):
+     hold   = POST /v2/snaps  { action:'hold',   snaps:[], time:'forever',
+                                 hold-level:'auto-refresh' }
+     unhold = POST /v2/snaps  { action:'unhold', snaps:[] }
+   ('forever' is the CLI's own indefinite token; a DURATION would be an RFC3339
+   timestamp, but the toggle is ON/OFF, so 'forever' is exactly right. The
+   per-snap 'general' level is the NAMED-snaps form - NOT what a global
+   --hold does.) Both return an async snapd CHANGE id (the renderer settles it
+   like every other change, with the negative-toast-on-failed idiom).
+   The LIVE state is read back from sysinfo: GET /v2/system-info carries
+   result.refresh.hold = '' (no hold) or an RFC3339 hold-until timestamp
+   (client/client.go RefreshInfo; 'forever' arrives as a distant ~100-year
+   timestamp, so ANY non-empty value = held). The card's toggle must reflect
+   a hold set OUTSIDE the app (the CLI, a snap) too - hence the sysinfo read,
+   not our own state. */
+
+// Test seam (integration): inject a fake sysinfo read so refreshHoldRead's
+// path can be unit-tested without the socket (models the getSystemInfo shape,
+// including the UNWRAPPED result at info.refresh, not info.result.refresh).
+let __systemInfoFn = null;
+function __setSystemInfoFn(fn) { __systemInfoFn = fn; }
+
+// PURE (unit-tested): is a sysinfo refresh.hold value an ACTIVE hold?
+function refreshHoldActive(hold) {
+    return hold != null && String(hold).trim() !== '';
+}
+
+async function refreshHoldRead() {
+    // snapdRequest returns the UNWRAPPED result (like getSnapConfig does) -
+    // the refresh info is at result.refresh, i.e. info.refresh here.
+    const info = await (__systemInfoFn || getSystemInfo)();
+    const hold = info && info.refresh ? info.refresh.hold : undefined;
+    return { active: refreshHoldActive(hold), hold: hold == null ? '' : String(hold) };
+}
+
+async function setGlobalRefreshHold(hold) {
+    // The GLOBAL (all-snaps) auto-refresh hold - the multi-snap REST path
+    // POST /v2/snaps (NOT the single-snap /v2/snaps/<name> that snapAction
+    // uses). hold=true -> 'forever' auto-refresh hold (== `snap refresh
+    // --hold`); hold=false -> remove it (== `snap refresh --unhold`).
+    if (hold) {
+        return snapdRequest('POST', '/v2/snaps',
+            { body: { action: 'hold', snaps: [], time: 'forever', 'hold-level': 'auto-refresh' }, auth: A() });
+    }
+    return snapdRequest('POST', '/v2/snaps',
+            { body: { action: 'unhold', snaps: [] }, auth: A() });
+}
+
 /* ---- 3. power / scheduled shutdown (login1 over D-Bus) --------------- */
 
 let __login1Transport = null;
@@ -2330,6 +2382,7 @@ const api = {
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
     __setJournalBinary, __setJournalTimeouts,
     refreshScheduleRead, refreshScheduleWrite, validRefreshSchedule, refreshScheduleFromDoc,
+    refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
@@ -2799,6 +2852,17 @@ function initElectron() {
     ipcMain.handle('system:refresh-write', guard(async (value) => {
         requireAuth();
         return refreshScheduleWrite(value);
+    }));
+    // Global refresh hold (round S): the sysinfo LIVE read (open-ish, authed
+    // like every other machine read) + the hold/unhold change (console-
+    // privileged, like the schedule write).
+    ipcMain.handle('system:refresh-hold-read', guard(async () => {
+        requireAuth();
+        return refreshHoldRead();
+    }));
+    ipcMain.handle('system:refresh-hold', guard(async (hold) => {
+        requireAuth();
+        return setGlobalRefreshHold(hold === true);
     }));
     // Power / scheduled shutdown (login1 over D-Bus; the shutdown interface
     // is D-BUS ONLY - no shell-out to poweroff/systemctl).
