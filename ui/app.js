@@ -3759,7 +3759,7 @@ async function applyRefreshSchedule() {
     if (!inp) return;
     const value = inp.value.trim();
     if (!validRefreshScheduleUi(value)) {
-        sysSetFieldErr(inp, msg, 'Not a valid window — use HH:MM-HH:MM (24:00 as an end), windows separated by /');
+        sysSetFieldErr(inp, msg, 'Not a valid timer — e.g. 02:00-06:00 or mon-fri,09:00-17:00 (days + time window); separate schedules with ,,');
         return;
     }
     sysSetFieldErr(inp, msg, '');
@@ -3769,7 +3769,7 @@ async function applyRefreshSchedule() {
         change = (await core.machine.refreshWrite(value)) || null;
         const now = $('#refreshNow');
         if (now) now.textContent = value === '' ? 'Default (24/7, every 4 hours)' : value;
-        toast('positive', 'Refresh schedule updated', value === '' ? 'snapd now uses its default schedule.' : 'snapd now refreshes within this window.');
+        toast('positive', 'Refresh schedule updated', value === '' ? 'snapd now uses its default schedule.' : 'snapd now refreshes on this schedule.');
     } catch (e) { toastErr(e); }
     finally {
         btn.disabled = false;
@@ -3782,22 +3782,78 @@ async function applyRefreshSchedule() {
     }
 }
 
-// Mirrors main.js validRefreshSchedule (which mirrors snapd's
-// timeutil.ParseLegacySchedule grammar). The renderer must reject BEFORE the
-// IPC (the house rule: UI validation first, snapd is the final authority).
+// round S+4: the STRUCTURED refresh timer (the actual snapd scheduling
+// mechanism). Mirrors main.js validRefreshTimer (which mirrors snapd
+// timeutil.ParseSchedule EXACTLY - verified against snapd's own ParseSchedule
+// test table). The renderer must reject BEFORE the IPC (the house rule: UI
+// validation first, snapd is the final authority). Grammar: a comma-separated
+// list of event sets (sets join with ',,'); each set = [weekdays][,][time
+// window]. Weekday: mon|tue|wed|thu|fri|sat|sun (+optional 1-5 = nth in
+// month), a single day or a range (may wrap, e.g. fri-mon). Time: HH:MM,
+// HH:MM-HH:MM (range), HH:MM~HH:MM (spread), any + /N (split). Hours 0-23
+// (24:00 allowed), minutes 0-59.
 const RE_SYS_CLOCK = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
+const SYS_WEEKDAYS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+function sysClockOk(s) { return RE_SYS_CLOCK.test(s); }
+function sysWeekday(s) {
+    const l = s.length;
+    if (l !== 3 && l !== 4) return null;
+    const day = s.slice(0, 3);
+    let pos = 0;
+    if (l === 4) { const v = parseInt(s.slice(3), 10); if (isNaN(v) || v < 1 || v > 5) return null; pos = v; }
+    if (!(day in SYS_WEEKDAYS)) return null;
+    return { day, pos };
+}
+function sysWeekSpan(s) {
+    const split = s.split('-');
+    if (split.length > 2) return null;
+    const start = sysWeekday(split[0]);
+    if (!start) return null;
+    let end = start;
+    if (split.length === 2) { end = sysWeekday(split[1]); if (!end) return null; }
+    if (start.pos !== 0 && end.pos !== 0 && end.pos < start.pos) return null; // mon5-mon1
+    return true;
+}
+function sysClockSpan(s) {
+    let rest = s;
+    const ci = rest.indexOf('/');
+    if (ci >= 0) {
+        if (rest.indexOf('/', ci + 1) >= 0) return false;
+        const countStr = rest.slice(ci + 1);
+        const c = parseInt(countStr, 10);
+        if (isNaN(c) || String(c) !== countStr || c === 0) return false;
+        rest = rest.slice(0, ci);
+    }
+    const norm = rest.includes('~') ? rest.replace('~', '-') : rest;
+    if (norm === '-') return false; // bare '-' / '~' are not a valid time (snapd rejects them)
+    if (norm.includes('-')) {
+        const parts = norm.split('-');
+        if (parts.length !== 2) return false;
+        return sysClockOk(parts[0]) && sysClockOk(parts[1]);
+    }
+    return sysClockOk(norm);
+}
+function sysEventSet(s) {
+    const fragments = s.split(',');
+    if (fragments.length === 1) {
+        if (s.includes(':')) return sysClockSpan(s);
+        return sysWeekSpan(s);
+    }
+    let expectTime = false;
+    for (const frag of fragments) {
+        if (frag.length === 0) return false;
+        if (frag.includes(':')) { if (!sysClockSpan(frag)) return false; expectTime = true; }
+        else if (!expectTime) { if (!sysWeekSpan(frag)) return false; }
+        else { return false; }
+    }
+    return true;
+}
 function validRefreshScheduleUi(v) {
     if (typeof v !== 'string') return false;
     v = v.trim();
-    if (v === '') return true;
-    if (v === 'managed') return false;
-    for (const win of v.split('/')) {
-        const parts = win.split('-');
-        if (parts.length !== 2) return false;
-        if (parts[0] === '24:00') return false; // a valid END only
-        if (!RE_SYS_CLOCK.test(parts[0]) || !RE_SYS_CLOCK.test(parts[1])) return false;
-    }
-    return true;
+    if (v === '') return true; // empty = unset = the built-in default
+    if (v === 'managed') return false; // reserved; not a timer value
+    return v.split(',,').every((set) => sysEventSet(set));
 }
 
 async function schedulePower() {

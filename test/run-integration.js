@@ -1531,24 +1531,39 @@ function ok(name, cond, extra = '') {
         m.__setJournalTimeouts(8000, 60000);
         fs.rmSync(JDIR, { recursive: true, force: true });
 
-        // ---- the refresh.schedule validator (mirrors snapd's
-        //      timeutil.ParseLegacySchedule + validTime EXACTLY) ----
-        const vs = (v) => m.validRefreshSchedule(v);
-        ok('refresh schedule: empty (the default) is valid', vs('') === true);
-        ok('refresh schedule: single + multiple windows',
-            vs('02:00-06:00') === true && vs('00:00-24:00') === true && vs('9:00-15:00/21:00-22:00') === true);
-        ok('refresh schedule: the hour grammar (single digit, 0-padded, 24:00 END only)',
-            vs('0:30-23:59') === true && vs('24:00-06:00') === false && vs('25:00-06:00') === false && vs('02:60-06:00') === false);
-        ok('refresh schedule: malformed windows are rejected',
-            vs('2:00') === false && vs('02:00-06:00-08:00') === false && vs('02:00-') === false
-            && vs('/06:00') === false && vs('abc') === false && vs('managed') === false
-            && vs(null) === false && vs(5) === false);
+        // ---- the refresh.timer validator (round S+4: the STRUCTURED schedule,
+        //      mirrors snapd timeutil.ParseSchedule EXACTLY - the cases below are
+        //      drawn from snapd's own TestParseSchedule table) ----
+        const vt = (v) => m.validRefreshTimer(v);
+        ok('refresh timer: a lone time / range / split / spread are all valid',
+            vt('9:00') === true && vt('9:00-11:00') === true && vt('9:00-11:00/2') === true && vt('9:00~11:00') === true);
+        ok('refresh timer: weekdays (single / range / nth / wrap) are valid',
+            vt('mon') === true && vt('mon-wed') === true && vt('mon5') === true && vt('fri-mon') === true && vt('mon-mon2,9:00') === true);
+        ok('refresh timer: weekday + time combine (days then window)',
+            vt('mon,9:00-11:00') === true && vt('mon-wed,fri,9:00-11:00/2') === true && vt('mon-fri,09:00-17:00') === true);
+        ok('refresh timer: multiple event sets join with ,, (and a lone ,, set)',
+            vt('9:00-11:00,,20:00-22:00') === true && vt('mon,9:00-11:00,,wed,22:00-23:00') === true && vt('mon,,wed') === true);
+        ok('refresh timer: the built-in default (spread + split) parses', vt('00:00~24:00/4') === true);
+        ok('refresh timer: malformed values are REJECTED (from snapd ParseSchedule table)',
+            vt('09:00-25:00') === false && vt('09:00-24:30') === false && vt('02:60-06:00') === false && vt('25:00-06:00') === false
+            && vt('9:00-11:00/0') === false && vt('9:00-11:00/3/3/3') === false && vt('9:00-11:00/invalid') === false
+            && vt('mon-01:00') === false && vt('9:00,mon') === false && vt('mon~wed') === false && vt('mon--wed') === false
+            && vt('mon9,9:00') === false && vt('mon0,9:00') === false && vt('mon5-mon1,9:00') === false && vt('foo2,9:00') === false
+            && vt('-') === false && vt('~/4') === false && vt(',,') === false && vt('') === false && vt('abc') === false
+            && vt(null) === false && vt(5) === false);
+        ok('refresh timer: "managed" is NOT a timer grammar value (rejected as input)', vt('managed') === false);
+        // the ACCEPTED-state flag (the read-back / UI 'valid'): '' default, 'managed',
+        // and any valid structured timer are accepted; absent (null) is the default.
+        ok('refresh timer accepted-state: the empty string, managed, a valid timer, and absent are all accepted',
+            m.isRefreshTimerAccepted('') === true && m.isRefreshTimerAccepted('managed') === true
+            && m.isRefreshTimerAccepted('mon-fri,09:00-17:00') === true && m.isRefreshTimerAccepted(null) === true
+            && m.isRefreshTimerAccepted('09:00-25:00') === false);
 
-        // ---- the doc-shape-robust schedule read (round 48f nested JSON) ----
-        const rd = (d) => m.refreshScheduleFromDoc(d);
-        ok('refresh read: flat dotted key', rd({ 'refresh.schedule': '02:00-06:00' }) === '02:00-06:00');
-        ok('refresh read: the NESTED path (snapd stores dotted keys nested)', rd({ refresh: { schedule: '02:00-06:00' } }) === '02:00-06:00');
-        ok('refresh read: absent = null (the default state)', rd({ system: { hostname: 'x' } }) === null && rd(null) === null && rd({}) === null);
+        // ---- the doc-shape-robust refresh.timer read (round 48f nested JSON) ----
+        const rd = (d) => m.refreshTimerFromDoc(d);
+        ok('timer read: flat dotted key', rd({ 'refresh.timer': 'mon-fri,09:00-17:00' }) === 'mon-fri,09:00-17:00');
+        ok('timer read: the NESTED path (snapd stores dotted keys nested)', rd({ refresh: { timer: 'mon-fri,09:00-17:00' } }) === 'mon-fri,09:00-17:00');
+        ok('timer read: absent = null (the default state)', rd({ system: { hostname: 'x' } }) === null && rd(null) === null && rd({}) === null);
 
         // ---- the (st) ScheduledShutdown parse ("" + max = none) ----
         const ps = (v) => m.powerScheduledParse(v);
@@ -1626,6 +1641,18 @@ function ok(name, cond, extra = '') {
         }
         m.__setLogin1Transport(null);
 
+        // ---- the refresh.timer WRITE target (round S+4 regression guard): a write must
+        //      land in the STRUCTURED refresh.timer and round-trip through the real
+        //      refreshTimerRead (getSnapConfig core -> refreshTimerFromDoc). If the writer
+        //      targeted the legacy refresh.schedule, this round-trip reads null.
+        { const chgT = await m.refreshTimerWrite('mon-fri,09:00-17:00');
+          ok('refresh timer e2e: a write returns an async CHANGE id', typeof chgT.id === 'string', JSON.stringify(chgT));
+          await new Promise((res) => setTimeout(res, 400)); // the stub conf PUT settles (250ms)
+          const rb = await m.refreshTimerRead();
+          ok('refresh timer e2e: writing refresh.timer ROUND-TRIPS (the target is refresh.timer, not the legacy refresh.schedule)', rb === 'mon-fri,09:00-17:00', JSON.stringify(rb));
+          // clear it again so the rest of the section (hold/refresh-now) sees a clean doc
+          await m.refreshTimerWrite('');
+        }
         // ---- the global auto-refresh HOLD (round S: the 'Pause auto-refresh'
         //      toggle; the REST equivalent of `snap refresh --hold`/`--unhold`) ----
         // (i) the PURE active-decision (unit-tested against the sysinfo value).

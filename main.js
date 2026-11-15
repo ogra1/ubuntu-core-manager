@@ -1762,13 +1762,13 @@ function localPagesAllowSelfSignedCert(details) {
  *     which grants journalctl execution + /run/log/journal/** (source-
  *     verified: snapd interfaces/builtin/log_observe.go, 8d4d073). Same
  *     house idiom as ip/resolvctl (sanctioned tool, no new grant).
- *   2. REFRESH SCHEDULE - the core 'refresh.schedule' option (legacy
- *     time-window grammar: HH:MM-HH:MM windows separated by '/', e.g.
- *     "02:00-06:00"). snapd validates via timeutil.ParseLegacySchedule
- *     (validTime = ^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$;
- *     24:00 = end-of-day). Empty = unset = the built-in default (24/7,
- *     every 4h: defaultRefreshScheduleStr "00:00~24:00/4"). Written via
- *     the existing core config bridge (async snapd change).
+ *   2. REFRESH SCHEDULE - the core 'refresh.timer' option (round S+4: the
+ *     ACTUAL snapd structured scheduling, timeutil.ParseSchedule). Lets the
+ *     user pick weekdays (mon-fri, even nth-weekday mon5) AND a time window
+ *     (range / spread ~ / split /N); event sets join with ',,'. snapd reads
+ *     refresh.timer FIRST (legacy refresh.schedule is a fallback only, and is
+ *     dropped here - the app is unreleased). Empty = unset = the built-in
+ *     default. Written via the existing core config bridge (async change).
  *   3. POWER / SCHEDULED SHUTDOWN - org.freedesktop.login1.Manager over
  *     the system bus via dbus-next (the shutdown interface is D-BUS
  *     ONLY - source-verified, no systemctl/poweroff allowed). Signatures
@@ -1915,57 +1915,165 @@ function journalFollow(opts, onLine, onDone) {
     return child;
 }
 
-/* ---- 2. snapd refresh schedule (refresh.schedule) ------------------- */
+/* ---- 2. snapd refresh SCHEDULE — the STRUCTURED refresh.timer option -------
+   (round S+4: the user asked to switch from the LEGACY refresh.schedule
+   (time-windows-per-day only) to the ACTUAL snapd scheduling mechanism.
+   Source-verified against snapd timeutil/schedule.go ParseSchedule +
+   overlord/configstate/configcore/refresh.go + overlord/snapstate/autorefresh.go
+   getRefreshScheduleConf.)
 
-// Mirrors snapd's timeutil validTime + ParseLegacySchedule grammar exactly:
-// each window is HH:MM-HH:MM (hours 0-23, minutes 0-59, "24:00" allowed as
-// an END bound); windows are separated by '/'.
-const RE_LEGACY_CLOCK = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
-function legacyClockHour(s) {
-    if (s === '24:00') return 24;
-    const m = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$/.exec(s);
-    if (!m) return null;
-    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10); // minutes-of-day
+   snapd reads core.refresh.timer FIRST; only if it is EMPTY does it fall back to
+   the legacy core.refresh.schedule (windows-only). This app is UNRELEASED, so per
+   the user the legacy path is DROPPED: refresh.timer is the single source of
+   truth. Writing a timer value makes snapd ignore any legacy refresh.schedule.
+
+   GRAMMAR (ParseSchedule) — a comma-separated list of EVENT SETS, where the
+   separator between event sets is TWO commas (",,"). Each event set is
+   [weekdays][,][time window]:
+     weekdays : day | day[-day]  where day = mon|tue|wed|thu|fri|sat|sun,
+                optionally with a week-position digit 1-5 (mon5 = the 5th
+                Monday; mon2-tue = 2nd Monday through the following Tuesday).
+                Ranges may wrap (fri-mon). A weekday with ONLY a position
+                (mon1) means that single day.
+     time     : HH:MM | HH:MM-HH:MM (range) | HH:MM~HH:MM (spread randomly
+                inside) | whole-day "-" or "~" | any of these with /N (split the
+                window into N sub-windows). Hours 0-23 (24:00 is a valid END
+                only), minutes 0-59, an optional leading zero on the hour.
+     weekday and time fragments may BOTH appear in one set, in that order
+     (mon-fri,09:00-17:00). Multiple sets join with ",,".
+   Special values: "" = unset (the built-in default) and "managed" = an external
+   snap drives the refreshes (both are ACCEPTED states; user INPUT is always the
+   grammar, never "managed"). */
+
+const RE_CLOCK = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
+const WEEKDAYS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+function parseClock(s) {
+    if (!RE_CLOCK.test(s)) return null; // null = not a valid clock
+    return true; // we only need VALIDITY (the port never computes a time)
 }
-function validRefreshSchedule(s) {
-    if (typeof s !== 'string') return false;
-    s = s.trim();
-    if (s === '') return true; // empty = unset (the built-in default)
-    if (s === 'managed') return false; // reserved for refresh-managing snaps
-    for (const win of s.split('/')) {
-        const parts = win.split('-');
-        if (parts.length !== 2) return false;
-        const a = legacyClockHour(parts[0]);
-        const b = legacyClockHour(parts[1]);
-        if (a == null || b == null) return false;
-        if (parts[0] === '24:00') return false; // 24:00 is a valid END only
+function parseTimerWeekday(s) {
+    const l = s.length;
+    if (l !== 3 && l !== 4) return null;
+    const day = s.slice(0, 3);
+    let pos = 0;
+    if (l === 4) {
+        const v = parseInt(s.slice(3), 10);
+        if (isNaN(v) || v < 1 || v > 5) return null;
+        pos = v;
+    }
+    if (!(day in WEEKDAYS)) return null;
+    return { day, pos };
+}
+function parseTimerWeekSpan(s) {
+    const split = s.split('-');
+    if (split.length > 2) return null;
+    const start = parseTimerWeekday(split[0]);
+    if (!start) return null;
+    let end = start;
+    if (split.length === 2) {
+        end = parseTimerWeekday(split[1]);
+        if (!end) return null;
+    }
+    // snapd: both positions set -> the end position must be >= the start position,
+    // and a NON-single span with two positions degrades the end to EveryWeek.
+    if (start.pos !== 0 && end.pos !== 0) {
+        if (end.pos < start.pos) return null;
+    }
+    return { start, end };
+}
+function parseTimerClockSpan(s) {
+    // timespan = time ("-" / "~") time [ "/" N ]; or the whole-day tokens "-" / "~"
+    // (each optionally followed by "/N").
+    let rest = s;
+    let splitCount = 0;
+    const ci = rest.indexOf('/');
+    if (ci >= 0) {
+        if (rest.indexOf('/', ci + 1) >= 0) return null; // at most one '/'
+        const countStr = rest.slice(ci + 1);
+        const c = parseInt(countStr, 10);
+        if (isNaN(c) || String(c) !== countStr || c === 0) return null; // positive integer
+        splitCount = c;
+        rest = rest.slice(0, ci);
+    }
+    const norm = rest.includes('~') ? rest.replace('~', '-') : rest;
+    if (norm === '-') return true; // whole day (optionally split)
+    if (norm.includes('-')) {
+        const parts = norm.split('-');
+        if (parts.length !== 2) return null;
+        if (!parseClock(parts[0]) || !parseClock(parts[1])) return null;
+        return true;
+    }
+    return parseClock(norm);
+}
+function parseTimerEventSet(s) {
+    const fragments = s.split(',');
+    if (fragments.length === 1) {
+        // a lone fragment is EITHER a week span or a clock span
+        if (s.includes(':')) {
+            if (!parseTimerClockSpan(s)) return false;
+            return true;
+        }
+        if (!parseTimerWeekSpan(s)) return false;
+        return true;
+    }
+    let expectTime = false;
+    for (const frag of fragments) {
+        if (frag.length === 0) return false;
+        if (frag.includes(':')) {
+            if (!parseTimerClockSpan(frag)) return false;
+            expectTime = true;
+        } else if (!expectTime) {
+            if (!parseTimerWeekSpan(frag)) return false;
+        } else {
+            return false; // a weekday fragment after a time fragment
+        }
     }
     return true;
 }
-
-/* Read the CURRENT refresh.schedule (the whole core doc, shape-robust: the
-   full-doc and the { 'refresh.schedule': v } single-key shapes both work). */
-function refreshScheduleFromDoc(doc) {
+// PURE (unit-tested): mirrors snapd timeutil.ParseSchedule EXACTLY. "managed" is
+// NOT a grammar value (it is the external-management reserved token) so it is
+// rejected here; the ACCEPTED-state check ("" or "managed") lives in
+// isRefreshTimerAccepted.
+function validRefreshTimer(s) {
+    if (typeof s !== 'string') return false;
+    s = s.trim();
+    if (s === '' || s === 'managed') return false;
+    const sets = s.split(',,');
+    for (const set of sets) {
+        if (!parseTimerEventSet(set)) return false;
+    }
+    return true;
+}
+// The ACCEPTED states for the option: empty (the built-in default) OR a valid
+// structured timer OR "managed". (This is what the read-back / UI-valid flag uses.)
+function isRefreshTimerAccepted(s) {
+    if (s == null) return true; // null = option absent = the default
+    const t = String(s).trim();
+    if (t === '') return true;
+    if (t === 'managed') return true;
+    return validRefreshTimer(t);
+}
+/* Read the CURRENT refresh.timer (shape-robust: the full-doc and the
+   { 'refresh.timer': v } single-key shapes both work; the netplan-merged doc
+   nests under network). */
+function refreshTimerFromDoc(doc) {
     if (!doc || typeof doc !== 'object') return null;
-    // The doc shape is flexible: the whole core doc stores a dotted key as a
-    // NESTED path (round 48f: snapd stores config as nested JSON), a single-key
-    // GET returns { 'refresh.schedule': v }, and the netplan-merged doc nests
-    // under network. Walk all three.
-    if (typeof doc['refresh.schedule'] === 'string') return doc['refresh.schedule'];
-    if (doc.refresh && typeof doc.refresh === 'object' && typeof doc.refresh.schedule === 'string') return doc.refresh.schedule;
-    if (doc.network && typeof doc.network === 'object' && typeof doc.network['refresh.schedule'] === 'string') return doc.network['refresh.schedule'];
+    if (typeof doc['refresh.timer'] === 'string') return doc['refresh.timer'];
+    if (doc.refresh && typeof doc.refresh === 'object' && typeof doc.refresh.timer === 'string') return doc.refresh.timer;
+    if (doc.network && typeof doc.network === 'object' && typeof doc.network['refresh.timer'] === 'string') return doc.network['refresh.timer'];
     return null;
 }
-
-async function refreshScheduleRead() {
+async function refreshTimerRead() {
     const doc = await getSnapConfig('core');
-    return refreshScheduleFromDoc(doc);
+    return refreshTimerFromDoc(doc);
 }
-
-async function refreshScheduleWrite(value) {
+async function refreshTimerWrite(value) {
     // '' = clear the option (snapd's Set drops empty-string scalars -> the
-    // built-in default applies again).
-    return setSnapConfig('core', { 'refresh.schedule': value });
+    // built-in default applies again). Writing a non-empty timer is enough:
+    // snapd reads refresh.timer first and IGNORES the legacy refresh.schedule,
+    // so we do not need to (and must not) touch the legacy option.
+    return setSnapConfig('core', { 'refresh.timer': value });
 }
 
 /* ---- 2b. global refresh HOLD (round S: the 'Pause auto-refresh' toggle) ----
@@ -2396,7 +2504,7 @@ const api = {
     // round L: System page (journal / refresh schedule / power)
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
     __setJournalBinary, __setJournalTimeouts,
-    refreshScheduleRead, refreshScheduleWrite, validRefreshSchedule, refreshScheduleFromDoc,
+    refreshTimerRead, refreshTimerWrite, validRefreshTimer, isRefreshTimerAccepted, refreshTimerFromDoc,
     refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
@@ -2861,12 +2969,15 @@ function initElectron() {
     // Refresh schedule (core config; async snapd change).
     ipcMain.handle('system:refresh-read', guard(async () => {
         requireAuth();
-        const value = await refreshScheduleRead();
-        return { value: value, valid: validRefreshSchedule(value == null ? '' : value) };
+        const value = await refreshTimerRead();
+        // 'valid' = the ACCEPTED-state flag ("" default / a valid structured
+        // timer / "managed" are all accepted); the user-INPUT grammar check is
+        // validRefreshTimer (the renderer uses that, main uses this).
+        return { value: value, valid: isRefreshTimerAccepted(value == null ? '' : value) };
     }));
     ipcMain.handle('system:refresh-write', guard(async (value) => {
         requireAuth();
-        return refreshScheduleWrite(value);
+        return refreshTimerWrite(value);
     }));
     // Global refresh hold (round S): the sysinfo LIVE read (open-ish, authed
     // like every other machine read) + the hold/unhold change (console-

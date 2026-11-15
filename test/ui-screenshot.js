@@ -968,6 +968,52 @@ function mockFactoryJs() {
                         .filter((l) => (re ? re.test(l) : true))
                         .filter((l) => __pri(l) <= __priMin[opts.pri || 'all']);
                 };
+                // round S+4: the STRUCTURED refresh.timer validity (mirrors main.js
+                // isRefreshTimerAccepted, which mirrors snapd timeutil.ParseSchedule).
+                // Compact port for the mock's refreshRead.valid; accepted = '' (default),
+                // 'managed', or a valid structured timer (weekdays [+,] time window).
+                const __timerValid = (v) => {
+                    if (typeof v !== 'string') return false;
+                    v = v.trim();
+                    if (v === '') return true; // unset = the built-in default
+                    if (v === 'managed') return true; // an external snap drives refreshes
+                    const CW = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
+                    const WD = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                    const clock = (x) => CW.test(x);
+                    const wday = (x) => {
+                        const l = x.length; if (l !== 3 && l !== 4) return null;
+                        const d = x.slice(0, 3); let p = 0;
+                        if (l === 4) { const n = parseInt(x.slice(3), 10); if (!(n >= 1 && n <= 5)) return null; p = n; }
+                        return WD.indexOf(d) >= 0 ? p : null;
+                    };
+                    const wspan = (x) => {
+                        const sp = x.split('-'); if (sp.length > 2) return false;
+                        if (wday(sp[0]) === null) return false;
+                        if (sp.length === 2) { const a = wday(sp[0]); const b = wday(sp[1]); if (b === null) return false; if (a !== 0 && b !== 0 && b < a) return false; }
+                        return true;
+                    };
+                    const cspan = (x) => {
+                        let r = x; const ci = r.indexOf('/');
+                        if (ci >= 0) { if (r.indexOf('/', ci + 1) >= 0) return false; if (!/^[1-9][0-9]*$/.test(r.slice(ci + 1))) return false; r = r.slice(0, ci); }
+                        const n = r.includes('~') ? r.replace('~', '-') : r;
+                        if (n === '-') return false; // bare - / ~ are NOT a valid time (snapd rejects them)
+                        if (n.includes('-')) { const p2 = n.split('-'); return p2.length === 2 && clock(p2[0]) && clock(p2[1]); }
+                        return clock(n);
+                    };
+                    const eset = (x) => {
+                        const f = x.split(',');
+                        if (f.length === 1) return x.includes(':') ? cspan(x) : wspan(x);
+                        let et = false;
+                        for (const y of f) {
+                            if (y.length === 0) return false;
+                            if (y.includes(':')) { if (!cspan(y)) return false; et = true; }
+                            else if (!et) { if (!wspan(y)) return false; }
+                            else return false;
+                        }
+                        return true;
+                    };
+                    return v.split(',,').every(eset);
+                };
                 return {
                     async journalTail(opts) {
                         __m.journalCalls += 1;
@@ -1012,26 +1058,22 @@ function mockFactoryJs() {
                     async journalStop() { __m.stopCalls += 1; return { stopped: true }; },
                     onJournalLine(cb) { __mSubs.push(cb); return () => { const i = __mSubs.indexOf(cb); if (i >= 0) __mSubs.splice(i, 1); }; },
                     async refreshRead() {
+                        // round S+4: the STRUCTURED refresh.timer (the actual snapd
+                        // scheduling mechanism; the legacy refresh.schedule is dropped).
                         const doc = __store['core'] || JSON.parse(JSON.stringify(CONF['core'] || {}));
                         let v = null;
-                        if (typeof doc['refresh.schedule'] === 'string') v = doc['refresh.schedule'];
-                        else if (doc.refresh && typeof doc.refresh.schedule === 'string') v = doc.refresh.schedule;
-                        const REC = /^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$|^24:00$/;
-                        let valid = true;
-                        if (v) {
-                            if (v === 'managed') valid = false;
-                            else for (const w of v.split('/')) {
-                                const parts = w.split('-');
-                                if (parts.length !== 2 || parts[0] === '24:00' || !REC.test(parts[0]) || !REC.test(parts[1])) { valid = false; break; }
-                            }
-                        }
-                        return { value: v, valid };
+                        if (typeof doc['refresh.timer'] === 'string') v = doc['refresh.timer'];
+                        else if (doc.refresh && typeof doc.refresh.timer === 'string') v = doc.refresh.timer;
+                        return { value: v, valid: __timerValid(v) };
                     },
                     async refreshWrite(value) {
-                        // the REAL path: the app writes through the core conf bridge
-                        // (async change + settle), so route it through the mock confSet —
-                        // the harness asserts the __store result, exactly like round 48b.
-                        return await core.snaps.confSet('core', { 'refresh.schedule': String(value) });
+                        // the REAL path: the app writes the core conf bridge (async
+                        // change + settle) via confSet, exactly like round 48b. round S+4:
+                        // the option is the structured refresh.timer (snapd reads it first;
+                        // the legacy refresh.schedule is ignored by snapd, so we never write
+                        // it). '' = clear: snapd DROPS empty-string scalars (the key is
+                        // removed, the built-in default applies) - so we send null (delete).
+                        return await core.snaps.confSet('core', { 'refresh.timer': value === '' ? null : String(value) });
                     },
                     // round S: the global auto-refresh HOLD. The read models the
                     // LIVE core refresh.hold (what sysinfo result.refresh.hold
@@ -6138,63 +6180,82 @@ function mockFactoryJs() {
     const j4 = await page.evaluate(() => ({ modalGone: !document.querySelector('.ucm-modal--journal') }));
     if (!j4.modalGone) console.log('PAGE ERROR: the journal modal must close (round L)');
 
-    // ---- 5s-r: the refresh schedule (apply + invalid + default) ----
-    // invalid input is rejected BEFORE the IPC (no change, error shown)
-    await page.evaluate(() => {
-        const inp = document.querySelector('#refreshInput');
-        inp.value = '25:00-06:00';
-    });
+    // ---- 5s-r: the refresh SCHEDULE (round S+4: the STRUCTURED refresh.timer) ----
+    // round S+4: the card now edits the ACTUAL snapd scheduling mechanism
+    // (core.refresh.timer, timeutil.ParseSchedule), NOT the legacy windows-only
+    // refresh.schedule. So the drives use structured values (weekdays + time).
+    // (a) INVALID structured input is rejected BEFORE the IPC (no change, error
+    //     shown): '25:00-06:00' is not a valid clock hour.
+    await page.evaluate(() => { const inp = document.querySelector('#refreshInput'); inp.value = '25:00-06:00'; });
     await page.click('#refreshApplyBtn');
     await new Promise((r) => setTimeout(r, 300));
     const r1 = await page.evaluate(() => {
         const inp = document.querySelector('#refreshInput');
         const msg = document.querySelector('#refreshMsg');
-        const m = window.__mockCore && window.__mockCore.__machine ? null : null;
-        return {
-            invalidShown: inp ? inp.classList.contains('is-error') : null,
-            msg: msg ? msg.textContent : null,
-            now: (document.querySelector('#refreshNow') || {}).textContent,
-        };
+        return { invalidShown: inp ? inp.classList.contains('is-error') : null, msg: msg ? msg.textContent : null, now: (document.querySelector('#refreshNow') || {}).textContent };
     });
-    if (r1.invalidShown !== true) console.log('PAGE ERROR: an invalid window (25:00 hour) must be flagged in the UI (round L)');
-    if (!/HH:MM-HH:MM/.test(r1.msg || '')) console.log('PAGE ERROR: the invalid-schedule message must name the grammar (got ' + JSON.stringify(r1.msg) + ') (round L)');
-    if (r1.now !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: a rejected schedule must not change the current value (got ' + JSON.stringify(r1.now) + ') (round L)');
+    if (r1.invalidShown !== true) console.log('PAGE ERROR: an invalid clock hour (25:00) must be flagged in the UI (round S+4)');
+    if (!/Not a valid timer/.test(r1.msg || '')) console.log('PAGE ERROR: the invalid message must say "Not a valid timer" (got ' + JSON.stringify(r1.msg) + ') (round S+4)');
+    if (r1.now !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: a rejected timer must not change the current value (got ' + JSON.stringify(r1.now) + ') (round S+4)');
 
-    // a valid window: apply -> the store flips + the current value updates
-    await page.evaluate(() => {
-        const inp = document.querySelector('#refreshInput');
-        inp.value = '02:00-06:00';
-    });
+    // (b) a VALID STRUCTURED timer: apply -> persisted to refresh.timer + current
+    //     value updates + toast. (weekdays + time window - the new capability.)
+    await page.evaluate(() => { const inp = document.querySelector('#refreshInput'); inp.value = 'mon-fri,09:00-17:00'; });
     await page.click('#refreshApplyBtn');
     await new Promise((r) => setTimeout(r, 700)); // the async change settles (250ms)
-    const r2 = await page.evaluate(() => {
-        const store = window.__mockCore ? null : null;
+    const r2 = await page.evaluate(async () => {
         const now = (document.querySelector('#refreshNow') || {}).textContent;
-        const inputVal = (document.querySelector('#refreshInput') || {}).value;
         const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
-        return { now, inputVal, toasts };
+        const rs = await (window.__mockCore || window.ucmCore).machine.refreshRead();
+        const doc = (window.__mockCore.snaps.confStore('core') || {});
+        return { now, toasts, value: rs ? rs.value : null, valid: rs ? rs.valid : null, storedTimer: doc.refresh ? doc.refresh.timer : null };
     });
-    if (r2.now !== '02:00-06:00') console.log('PAGE ERROR: the applied schedule must become the current value (got ' + JSON.stringify(r2.now) + ') (round L)');
-    if (!r2.toasts.includes('Refresh schedule updated')) console.log('PAGE ERROR: the schedule apply must toast (got ' + JSON.stringify(r2.toasts) + ') (round L)');
-    // the STORED core conf must carry it (the real write path)
-    const r2read = await page.evaluate(async () => {
-        const core = window.__mockCore || window.ucmCore;
-        const rs = await core.machine.refreshRead();
-        return { value: rs ? rs.value : null, valid: rs ? rs.valid : null };
-    });
-    if (r2read.value !== '02:00-06:00' || r2read.valid !== true) console.log('PAGE ERROR: the schedule must be persisted to the core conf (got ' + JSON.stringify(r2read) + ') (round L)');
+    if (r2.now !== 'mon-fri,09:00-17:00') console.log('PAGE ERROR: the applied structured timer must become the current value (got ' + JSON.stringify(r2.now) + ') (round S+4)');
+    if (!r2.toasts.includes('Refresh schedule updated')) console.log('PAGE ERROR: the timer apply must toast (got ' + JSON.stringify(r2.toasts) + ') (round S+4)');
+    if (r2.value !== 'mon-fri,09:00-17:00' || r2.valid !== true) console.log('PAGE ERROR: the structured timer must be persisted + valid (got ' + JSON.stringify(r2) + ') (round S+4)');
+    if (r2.storedTimer !== 'mon-fri,09:00-17:00') console.log('PAGE ERROR: the structured timer must land in core refresh.timer (got ' + JSON.stringify(r2.storedTimer) + ') (round S+4)');
 
-    // "Use default" -> clears the option -> the default text returns
+    // (c) a LEGACY windows-only value is now REJECTED (the legacy refresh.schedule
+    //     grammar is gone - a lone window with no day is valid ONLY when it has a
+    //     ':' clock part; '02:00-06:00' IS a valid lone clock span, but a bare
+    //     multi-window '02:00-06:00/21:00-22:00' is legacy-only and must fail now).
+    await page.evaluate(() => { const inp = document.querySelector('#refreshInput'); inp.value = '02:00-06:00/21:00-22:00'; });
+    await page.click('#refreshApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const r2b = await page.evaluate(() => {
+        const inp = document.querySelector('#refreshInput');
+        const now = (document.querySelector('#refreshNow') || {}).textContent;
+        return { invalidShown: inp ? inp.classList.contains('is-error') : null, now };
+    });
+    if (r2b.invalidShown !== true) console.log('PAGE ERROR: a legacy multi-window value (02:00-06:00/21:00-22:00) must now be rejected (round S+4)');
+    if (r2b.now !== 'mon-fri,09:00-17:00') console.log('PAGE ERROR: the rejected legacy value must not change the current value (got ' + JSON.stringify(r2b.now) + ') (round S+4)');
+
+    // (c2) TIME-then-weekday is the WRONG ORDER (snapd requires weekdays BEFORE
+    // the time window): '9:00,mon' must be rejected (the day fragment follows the
+    // time fragment within one set). This pins the ordering rule.
+    await page.evaluate(() => { const inp = document.querySelector('#refreshInput'); inp.value = '9:00,mon'; });
+    await page.click('#refreshApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const r2c = await page.evaluate(() => {
+        const inp = document.querySelector('#refreshInput');
+        const now = (document.querySelector('#refreshNow') || {}).textContent;
+        return { invalidShown: inp ? inp.classList.contains('is-error') : null, now };
+    });
+    if (r2c.invalidShown !== true) console.log('PAGE ERROR: time-then-weekday (9:00,mon) must be rejected - days come before the window (round S+4)');
+    if (r2c.now !== 'mon-fri,09:00-17:00') console.log('PAGE ERROR: the rejected out-of-order value must not change the current value (got ' + JSON.stringify(r2c.now) + ') (round S+4)');
+
+    // (d) "Use default" -> clears refresh.timer -> the default text returns.
     await page.click('#refreshDefaultBtn');
     await new Promise((r) => setTimeout(r, 700));
     const r3 = await page.evaluate(async () => {
-        const core = window.__mockCore || window.ucmCore;
-        const rs = await core.machine.refreshRead();
-        return { now: (document.querySelector('#refreshNow') || {}).textContent, val: rs ? rs.value : null, input: (document.querySelector('#refreshInput') || {}).value };
+        const rs = await (window.__mockCore || window.ucmCore).machine.refreshRead();
+        const doc = (window.__mockCore.snaps.confStore('core') || {});
+        return { now: (document.querySelector('#refreshNow') || {}).textContent, val: rs ? rs.value : null, input: (document.querySelector('#refreshInput') || {}).value, storedTimer: doc.refresh ? (doc.refresh.timer !== undefined ? doc.refresh.timer : 'absent') : 'no-refresh-node' };
     });
-    if (r3.now !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: "Use default" must restore the default text (got ' + JSON.stringify(r3.now) + ') (round L)');
-    if (r3.val !== null && r3.val !== '') console.log('PAGE ERROR: "Use default" must clear the stored option (got ' + JSON.stringify(r3.val) + ') (round L)');
-    if (r3.input !== '') console.log('PAGE ERROR: "Use default" must clear the input (got ' + JSON.stringify(r3.input) + ') (round L)');
+    if (r3.now !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: "Use default" must restore the default text (got ' + JSON.stringify(r3.now) + ') (round S+4)');
+    if (r3.val !== null && r3.val !== '') console.log('PAGE ERROR: "Use default" must clear the stored refresh.timer (got ' + JSON.stringify(r3.val) + ') (round S+4)');
+    if (r3.input !== '') console.log('PAGE ERROR: "Use default" must clear the input (got ' + JSON.stringify(r3.input) + ') (round S+4)');
+    // '' = cleared (the mock stores the empty scalar; real snapd drops it so the key is absent).
 
     // ---- 5s-rh: round S — the 'Pause auto-refresh' HOLD toggle ----
     // Runs in the authenticated LIGHT state (same proof as the rest of 5s).
