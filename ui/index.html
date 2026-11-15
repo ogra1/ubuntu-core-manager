@@ -514,6 +514,12 @@
                                 <button class="p-button ucm-sys__btn" type="button" id="refreshApplyBtn">Apply schedule</button>
                                 <button class="p-button--base p-button ucm-sys__btn" type="button" id="refreshDefaultBtn">Use default</button>
                             </div>
+                            <!-- round S+2: the 'Refresh now' button (== `snap refresh` all
+                                 snaps - an immediate store refresh, NOT a schedule change). -->
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="refreshNowBtn">Refresh now</button>
+                                <span id="refreshNowHint" class="ucm-sys__now"></span>
+                            </div>
                             <!-- round S: the global auto-refresh HOLD (the REST
                                  equivalent of `snap refresh --hold`). A p-switch (the
                                  48a/round-C orange idiom). POLARITY CHOICE: label

@@ -192,6 +192,9 @@ const api = Object.freeze({
         // the renderer, exactly like refreshWrite).
         refreshHoldRead: invoke('system:refresh-hold-read'), // -> { active:boolean, hold:string }
         refreshHold: invoke('system:refresh-hold'),          // (boolean) -> async snapd change (hold/unhold)
+        // Round S+2: the 'Refresh now' button (== `snap refresh` all snaps). An
+        // async snapd change (settle it like every other write).
+        refreshNow: invoke('system:refresh-now'),             // () -> async snapd change (refresh all snaps)
         // Power (org.freedesktop.login1 over D-Bus — the shutdown interface
         // is D-BUS ONLY; no shell-out).
         power: invoke('system:power'),                   // ('reboot'|'poweroff') — immediate

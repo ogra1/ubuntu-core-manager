@@ -245,7 +245,9 @@ function makeServer(socketPath, state) {
                 return json(res, 200, SNAPS);
             }
             // round S: the MULTI-snap action path - POST /v2/snaps with an EMPTY
-            // snaps:[] means hold/unhold the AUTO-REFRESH of ALL snaps (the
+            // snaps:[] means a GLOBAL action: hold/unhold the AUTO-REFRESH of ALL
+            // snaps, or (round S+2) 'refresh' = refresh ALL installed snaps (the
+            // `snap refresh --hold` / `--unhold` / `snap refresh` REST equivalent;
             // `snap refresh --hold` / `--unhold` REST equivalent; daemon/api_snaps.go
             // snapHoldMany). A 'general' level with no named snaps is REJECTED
             // (live snapd: "holding general refreshes for all snaps is not
@@ -257,19 +259,22 @@ function makeServer(socketPath, state) {
                 if (data.action === 'hold' && data['hold-level'] === 'general') {
                     return json(res, 400, { kind: 'not-allowed', message: 'holding general refreshes for all snaps is not supported' });
                 }
-                if (!['hold', 'unhold'].includes(data.action)) {
+                if (!['hold', 'unhold', 'refresh'].includes(data.action)) {
                     return json(res, 400, { kind: 'not-found', message: `unsupported multi-action "${data.action}"` });
                 }
                 const id = String(state.changeSeq += 1);
                 const change = {
-                    id, kind: 'configure-snap',
-                    summary: data.action === 'hold' ? 'Hold snap refreshes' : 'Unhold snap refreshes',
+                    id, kind: data.action === 'refresh' ? 'refresh-snap' : 'configure-snap',
+                    summary: data.action === 'hold' ? 'Hold snap refreshes'
+                        : (data.action === 'refresh' ? 'Refresh all snaps' : 'Unhold snap refreshes'),
                     status: 'Doing', 'spawn-time': new Date().toISOString(),
                 };
                 state.changes.push(change);
                 setTimeout(() => {
                     if (data.action === 'hold') state.refreshHold = new Date(Date.now() + 100 * 365 * 24 * 3600 * 1000).toISOString(); // 'forever' -> ~100y out
-                    else state.refreshHold = null;
+                    else if (data.action === 'unhold') state.refreshHold = null;
+                    // 'refresh' = a clean no-op change here (nothing is pending in the
+                    // stub store) - it must NOT mutate snap revisions or the conf.
                     change.status = 'Done';
                 }, 150);
                 const payload = JSON.stringify({ type: 'async', 'status-code': 202, status: 'Accepted', result: null, change: id });

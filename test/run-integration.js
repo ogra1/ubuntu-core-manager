@@ -538,6 +538,8 @@ function ok(name, cond, extra = '') {
                 && !!handlers['system:power-cancel-scheduled'] && !!handlers['system:power-scheduled']);
             ok('system-page hold handlers registered (round S: refresh-hold read + write, auth-gated)',
                 !!handlers['system:refresh-hold-read'] && !!handlers['system:refresh-hold']);
+            ok('system-page refresh-now handler registered (round S+2: the Refresh now button, auth-gated)',
+                !!handlers['system:refresh-now']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -1604,6 +1606,24 @@ function ok(name, cond, extra = '') {
             cancelCall && cancelCall.signature === '' && cancelled.cancelled === true);
         const none2 = await m.powerScheduledRead();
         ok('scheduled read: the (st) property parses to none after the cancel', none2.active === false);
+        // ---- the 'Refresh now' button (round S+2: == `snap refresh` all installed
+        //      snaps). Source-verified: the multi-action body is EXACTLY
+        //      { action:'refresh' } (every multiActionData field is omitempty, so the
+        //      empty snaps list is dropped). The daemon routes it to snapUpdateMany
+        //      (refresh-all; a clean no-op change when nothing is pending) - it must
+        //      NOT mutate the snap revisions and returns an async change id.
+        { const beforeOps = state.multiOps.length;
+          const beforeChanges = state.changes.length;
+          const chg = await m.setGlobalRefreshNow();
+          ok('refresh-now e2e: returns an async CHANGE id', typeof chg.id === 'string' && state.multiOps.length === beforeOps + 1, JSON.stringify(chg));
+          const rec = state.multiOps[beforeOps];
+          ok('refresh-now e2e: the body is EXACTLY { action: refresh } (no snaps - the omitempty drop)',
+             JSON.stringify(rec.data) === JSON.stringify({ action: 'refresh' }), JSON.stringify(rec.data));
+          await new Promise((res) => setTimeout(res, 250)); // let the stub change settle
+          const afterChanges = state.changes.find((c) => c.id === chg.id);
+          ok('refresh-now e2e: the change settles to Done', afterChanges && afterChanges.status === 'Done', JSON.stringify(afterChanges));
+          ok('refresh-now e2e: the change is the REFRESH kind (the daemon refresh-all path, not a conf write)', afterChanges && afterChanges.kind === 'refresh-snap', JSON.stringify(afterChanges));
+        }
         m.__setLogin1Transport(null);
 
         // ---- the global auto-refresh HOLD (round S: the 'Pause auto-refresh'

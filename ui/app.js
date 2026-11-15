@@ -3683,18 +3683,45 @@ function openJournalModal() {
     loadTail(); // first fill (async; its own busy flag guards against re-entry)
 }
 
+/* Round S+2: the 'Refresh now' button - an IMMEDIATE store refresh of every
+   installed snap (== `snap refresh` with no names; the REST equivalent is the
+   multi-action POST /v2/snaps { action:'refresh' }). It triggers a real
+   change that can take a while, so the button is disabled while the change is
+   in flight and a hint line shows progress. Positive toast on start, negative
+   on a rejected request or a FAILED change (the round-52 rule: state what
+   happened, not the expected behaviour). */
+async function doRefreshNow() {
+    const btn = $('#refreshNowBtn'); const hint = $('#refreshNowHint');
+    if (btn) btn.disabled = true;
+    if (hint) hint.textContent = 'Refreshing…';
+    let change = null;
+    try {
+        change = (await core.machine.refreshNow()) || null;
+        toast('positive', 'Refresh started', 'snapd is now refreshing all installed snaps.');
+    } catch (e) {
+        if (btn) btn.disabled = false;
+        if (hint) hint.textContent = '';
+        toastErr(e);
+        return;
+    }
+    const done = (change && change.id != null) ? await waitChangeSettled(change) : null;
+    if (btn) btn.disabled = false;
+    if (hint) hint.textContent = '';
+    if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') {
+        toast('negative', 'Refresh did not complete', 'The refresh change failed; try again.');
+    }
+}
+
 // Round S: render the 'Pause auto-refresh' switch + state line from a LIVE read
 // ({ active, hold }). POLARITY: ON (checked) = held (paused), OFF = running. The
 // hold is a sysinfo refresh.hold string ('' = absent = no hold); any non-empty
 // value is a held-until timestamp (a bare --hold arrives as a distant
-// ~100-year time), so the state line shows the raw value when held.
+// ~100-year time, e.g. a date in 2319) - so the state line is just Held/Not
+// held; the held-until DATE is intentionally NOT shown (round S+2).
 function syncRefreshHold(active, hold) {
     const sw = $('#refreshHoldSwitch'); const st = $('#refreshHoldState');
     if (sw) sw.checked = !!active;
-    if (st) {
-        const h = hold == null ? '' : String(hold).trim();
-        st.textContent = active && h ? ('Held until ' + h) : (active ? 'Held' : 'Not held');
-    }
+    if (st) st.textContent = active ? 'Held' : 'Not held';
 }
 
 // Round S: the toggle handler. Writes through the machine bridge (an async
@@ -3892,6 +3919,8 @@ function wire() {
     if (rApply) rApply.addEventListener('click', () => applyRefreshSchedule());
     const rHold = $('#refreshHoldSwitch');
     if (rHold) rHold.addEventListener('change', () => setRefreshHold(rHold.checked));
+    const rNow = $('#refreshNowBtn');
+    if (rNow) rNow.addEventListener('click', () => doRefreshNow());
     const rDefault = $('#refreshDefaultBtn');
     if (rDefault) rDefault.addEventListener('click', () => {
         const inp = $('#refreshInput'); const msg = $('#refreshMsg');

@@ -2020,6 +2020,21 @@ async function setGlobalRefreshHold(hold) {
             { body: { action: 'unhold', snaps: [] }, auth: A() });
 }
 
+// Round S+2: the 'Refresh now' button. The REST equivalent of `snap refresh`
+// with NO snap names = refresh ALL installed snaps' auto-refresh. Source-
+// verified against snapd (cmd/snapd/cli/cmd_snap_op.go refreshMany([]) ->
+// client.RefreshMany -> doMultiSnapAction('refresh', [], {}, {}); every
+// multiActionData field is omitempty, so the on-the-wire body is EXACTLY
+// { action:'refresh' } - the empty snaps list is dropped). The daemon routes
+// action 'refresh' with no names to snapUpdateMany, which refreshes every
+// installed snap (and is a clean no-op change when nothing is pending). It
+// returns an ASYNC change id - the renderer settles it like every other
+// write. Same multi-action POST /v2/snaps path as the hold (no new plug).
+async function setGlobalRefreshNow() {
+    return snapdRequest('POST', '/v2/snaps',
+        { body: { action: 'refresh' }, auth: A() });
+}
+
 /* ---- 3. power / scheduled shutdown (login1 over D-Bus) --------------- */
 
 let __login1Transport = null;
@@ -2382,7 +2397,7 @@ const api = {
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
     __setJournalBinary, __setJournalTimeouts,
     refreshScheduleRead, refreshScheduleWrite, validRefreshSchedule, refreshScheduleFromDoc,
-    refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, __setSystemInfoFn,
+    refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
@@ -2863,6 +2878,12 @@ function initElectron() {
     ipcMain.handle('system:refresh-hold', guard(async (hold) => {
         requireAuth();
         return setGlobalRefreshHold(hold === true);
+    }));
+    // Round S+2: the 'Refresh now' button (console-privileged, like the hold
+    // write - it triggers a store refresh of all installed snaps).
+    ipcMain.handle('system:refresh-now', guard(async () => {
+        requireAuth();
+        return setGlobalRefreshNow();
     }));
     // Power / scheduled shutdown (login1 over D-Bus; the shutdown interface
     // is D-BUS ONLY - no shell-out to poweroff/systemctl).

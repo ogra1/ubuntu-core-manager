@@ -920,7 +920,7 @@ function mockFactoryJs() {
             // the power card as recorded calls + a live scheduled state.
             machine: (() => {
                 const __m = {
-                    journalCalls: 0, followCalls: 0, stopCalls: 0, holdCalls: 0,
+                    journalCalls: 0, followCalls: 0, stopCalls: 0, holdCalls: 0, refreshNowCalls: 0,
                     powerCalls: [], scheduled: { active: false, action: null, usec: null },
                 };
                 const __mSubs = [];
@@ -1052,6 +1052,19 @@ function mockFactoryJs() {
                         // off -> null deletes the nested leaf (== the snap refresh --unhold CLI form)
                         return await core.snaps.confSet('core', { 'refresh.hold': on ? 'forever' : null });
                     },
+                    // round S+2: the 'Refresh now' button (== the snap refresh all-snaps form).
+                    // MODELS the real multi-action path: it returns an async change that
+                    // settles (so the renderer's waitChangeSettled runs the real path) and
+                    // it does NOT touch the conf store - a refresh is an operation, not a
+                    // config write (the hold/schedule live in conf; the refresh does not).
+                    async refreshNow() {
+                        __m.refreshNowCalls += 1;
+                        CHANGES.svc = CHANGES.svc + 1;
+                        const id = 'refreshnow' + CHANGES.svc;
+                        CHANGES[id] = { id, status: 'Doing', kind: 'refresh-snap' };
+                        setTimeout(() => { CHANGES[id] = { id, status: 'Done' }; }, 250);
+                        return { id, change: id };
+                    },
                     async power(action) { __m.powerCalls.push(action); return { started: true }; },
                     async powerSchedule(action, whenMs) {
                         __m.powerCalls.push('schedule:' + action);
@@ -1084,6 +1097,8 @@ function mockFactoryJs() {
                         }
                         return __m;
                     },
+                    // round S+2: expose the refresh-now LIVE call count for the harness.
+                    __refreshNow: () => __m.refreshNowCalls,
                     __machine: () => __m,
                 };
             })(),
@@ -6275,7 +6290,7 @@ function mockFactoryJs() {
     if (rh3.checked !== true) console.log('PAGE ERROR: a hold set OUTSIDE the app must sync the switch ON on re-entry (got ' + JSON.stringify(rh3.checked) + ') (round S)');
     if (rh3.active !== true) console.log('PAGE ERROR: the live read after an outside hold must be active (got ' + JSON.stringify(rh3.active) + ') (round S)');
     if (rh3.hold !== '2099-01-01T00:00:00Z') console.log('PAGE ERROR: the outside hold timestamp must be preserved (got ' + JSON.stringify(rh3.hold) + ') (round S)');
-    if (!/Held until 2099/.test(rh3.stateText || '')) console.log('PAGE ERROR: the outside-hold state line must show the held-until time (got ' + JSON.stringify(rh3.stateText) + ') (round S)');
+    if (rh3.stateText !== 'Held') console.log('PAGE ERROR: the outside-hold state line must read exactly "Held" (no held-until date; got ' + JSON.stringify(rh3.stateText) + ') (round S+2)');
 
     // 5) PRISTINE: clear the outside hold (escape 'clear') so later sections start clean.
     //    Re-enter so the switch syncs back to OFF before leaving the page.
@@ -6296,6 +6311,58 @@ function mockFactoryJs() {
     });
     if (rh4.checked !== false) console.log('PAGE ERROR: after clearing the outside hold the switch must sync back OFF (got ' + JSON.stringify(rh4.checked) + ') (round S)');
     if (rh4.storedHold !== 'absent') console.log('PAGE ERROR: the hold must be cleared to leave state pristine (got ' + JSON.stringify(rh4.storedHold) + ') (round S)');
+
+    // ---- 5s-rn: round S+2 — the 'Refresh now' button ----
+    // An immediate store refresh of ALL installed snaps (== `snap refresh` with no
+    // names). It triggers a REAL async change (settled by waitChangeSettled) and
+    // must NOT touch the conf store (a refresh is an operation, not a config write -
+    // the hold/schedule above are the only things that live in conf).
+    // 1) default: the button is present, ENABLED, and no refresh has run yet.
+    const rn0 = await page.evaluate(() => {
+        const btn = document.querySelector('#refreshNowBtn');
+        const hint = document.querySelector('#refreshNowHint');
+        const m = window.__mockCore.machine.__refreshNow ? window.__mockCore.machine.__refreshNow() : null;
+        return { present: !!btn, label: btn ? btn.textContent : null, disabled: btn ? btn.disabled : null, hint: hint ? hint.textContent : null, calls: m };
+    });
+    if (rn0.present !== true) console.log('PAGE ERROR: the Refresh now button must be present on the refresh card (round S+2)');
+    if (rn0.label !== 'Refresh now') console.log('PAGE ERROR: the Refresh now button label is wrong (got ' + JSON.stringify(rn0.label) + ') (round S+2)');
+    if (rn0.disabled !== false) console.log('PAGE ERROR: the Refresh now button must be ENABLED by default (got ' + JSON.stringify(rn0.disabled) + ') (round S+2)');
+    if (rn0.hint !== '') console.log('PAGE ERROR: no progress hint must show before a refresh (got ' + JSON.stringify(rn0.hint) + ') (round S+2)');
+    if (rn0.calls !== 0) console.log('PAGE ERROR: no refresh must have run before the button is pressed (got ' + JSON.stringify(rn0.calls) + ') (round S+2)');
+
+    // capture the LIVE core conf BEFORE the refresh (the before/after invariant:
+    // a refresh must NOT write to the conf store - hold/schedule are the only conf
+    // keys here and a refresh changes neither).
+    const rnPre = await page.evaluate(() => {
+        const doc = window.__mockCore.snaps.confStore('core') || {};
+        return JSON.stringify(doc);
+    });
+    // 2) CLICK -> the mock refresh path runs (1 call) + the change settles + a
+    //    positive toast + the button re-enables + the hint clears.
+    await page.click('#refreshNowBtn');
+    await new Promise((r) => setTimeout(r, 700)); // the async change settles (250ms) + the hint clears
+    const rn1 = await page.evaluate(async () => {
+        const btn = document.querySelector('#refreshNowBtn');
+        const hint = document.querySelector('#refreshNowHint');
+        const m = window.__mockCore.machine;
+        const doc = window.__mockCore.snaps.confStore('core') || {};
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        return {
+            disabled: btn ? btn.disabled : null,
+            hint: hint ? hint.textContent : null,
+            calls: m.__refreshNow ? m.__refreshNow() : null,
+            doc: JSON.stringify(doc),
+            toasts,
+        };
+    });
+    if (rn1.calls !== 1) console.log('PAGE ERROR: clicking Refresh now must reach the backend EXACTLY once (got ' + JSON.stringify(rn1.calls) + ') (round S+2)');
+    if (rn1.disabled !== false) console.log('PAGE ERROR: the button must RE-ENABLE after the refresh settles (got ' + JSON.stringify(rn1.disabled) + ') (round S+2)');
+    if (rn1.hint !== '') console.log('PAGE ERROR: the progress hint must clear once the change settles (got ' + JSON.stringify(rn1.hint) + ') (round S+2)');
+    if (!rn1.toasts.includes('Refresh started')) console.log('PAGE ERROR: Refresh now must toast "Refresh started" (got ' + JSON.stringify(rn1.toasts) + ') (round S+2)');
+    // the BEFORE/AFTER invariant: the refresh must NOT have changed the core conf doc
+    // at all (a refresh is an operation, not a config write - the 5s-rh hold/schedule
+    // keys are the only conf state here, and a refresh changes neither).
+    if (rn1.doc !== rnPre) console.log('PAGE ERROR: a Refresh now must NOT mutate the core conf store (before ' + rnPre + ' after ' + rn1.doc + ') (round S+2)');
 
     // back on the system view; the 5s-p power section runs next (leaves it pristine too)
     // ---- 5s-p: power (confirm + immediate + scheduled + cancel) ----
