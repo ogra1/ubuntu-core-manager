@@ -5683,7 +5683,11 @@ function mockFactoryJs() {
         const shutdownBtn = (document.querySelector('#shutdownNowBtn') || {}).textContent || null;
         const schedRowHidden = (document.querySelector('#scheduledRow') || {}).classList ? document.querySelector('#scheduledRow').classList.contains('ucm-hidden') : null;
         const schedWhen = (document.querySelector('#schedWhen') || {}).value || null;
-        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen };
+        // round R: the 3 card help texts (de-worded; the round-L versions named
+        // journalctl / log-observe / install / systemd-logind - implementation
+        // detail the user doesn't need). whitespace-normalized (the HTML wraps).
+        const helps = Array.from(document.querySelectorAll('#view-system .ucm-lp__help')).map((p) => p.textContent.replace(/\s+/g, ' ').trim());
+        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen, helps };
     });
     if (gS.hidden) console.log('PAGE ERROR: the system view must be visible after switching to it (round L)');
     if (gS.activeView !== 'system') console.log('PAGE ERROR: the System nav link must be is-active on the system page (got ' + JSON.stringify(gS.activeView) + ') (round L)');
@@ -5697,6 +5701,17 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
     if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'System power']))
         console.log('PAGE ERROR: the system page must show exactly the 3 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L)');
+    // round R: the de-worded card help texts (exact, so the old verbose copy can't regress)
+    if (gS.helps && gS.helps.length === 3) {
+        if (gS.helps[0] !== 'The latest entries are shown; filter by unit or text and raise the minimum priority.')
+            console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
+        if (gS.helps[1].indexOf('When snapd may automatically refresh snaps.') !== 0 || /install/.test(gS.helps[1]))
+            console.log('PAGE ERROR: the refresh card help must say "automatically refresh" (not install) (got ' + JSON.stringify(gS.helps[1]) + ') (round R)');
+        if (gS.helps[2] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
+            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[2]) + ') (round R)');
+    } else {
+        console.log('PAGE ERROR: the system page must show 3 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R)');
+    }
     if (gS.journalBtn !== 'View system journal') console.log('PAGE ERROR: the journal card button is wrong (got ' + JSON.stringify(gS.journalBtn) + ') (round L)');
     if (gS.refreshNow !== 'Default (24/7, every 4 hours)') console.log('PAGE ERROR: the refresh schedule must read the default state (got ' + JSON.stringify(gS.refreshNow) + ') (round L)');
     if (gS.refreshVal !== '') console.log('PAGE ERROR: the schedule input must start empty (got ' + JSON.stringify(gS.refreshVal) + ') (round L)');

@@ -481,9 +481,7 @@
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">System journal</p></div>
                         <div class="ucm-sys__body">
                             <p class="ucm-lp__help">
-                                The system journal (<span class="mono">journalctl</span>), read with the
-                                <span class="mono">log-observe</span> interface. The latest entries are
-                                shown; filter by unit or text and raise the minimum priority.
+                                The latest entries are shown; filter by unit or text and raise the minimum priority.
                             </p>
                             <div class="ucm-sys__row">
                                 <button class="p-button ucm-sys__btn" type="button" id="journalOpenBtn">View system journal</button>
@@ -494,7 +492,7 @@
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Snap refresh schedule</p></div>
                         <div class="ucm-sys__body">
                             <p class="ucm-lp__help">
-                                When snapd may install and refresh snaps. A window like
+                                When snapd may automatically refresh snaps. A window like
                                 <span class="mono">02:00-06:00</span> limits refreshes to that time of day;
                                 several windows can be separated with
                                 <span class="mono">/</span>. Leave empty to use the snapd default
@@ -522,9 +520,7 @@
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">System power</p></div>
                         <div class="ucm-sys__body">
                             <p class="ucm-lp__help">
-                                Reboot or shut the system down now, or schedule it for later (the
-                                schedule is held by <span class="mono">systemd-logind</span> and survives a
-                                restart of this app; logins are blocked from 5 minutes before).
+                                Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).
                             </p>
                             <div class="ucm-sys__row ucm-sys__actions">
                                 <button class="p-button ucm-sys__btn" type="button" id="rebootNowBtn">Reboot</button>
