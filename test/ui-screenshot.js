@@ -1047,6 +1047,10 @@ function mockFactoryJs() {
                     async powerScheduled() { return JSON.parse(JSON.stringify(__m.scheduled)); },
                     // round O: the harness can inspect the canned journal pool.
                     __jlines: { tail: () => J_LINES.length, full: () => J_LINES_FULL.length },
+                    // round Q: the LIVE journal-line subscriber count (the preload's
+                    // ipcRenderer.on mirrors this: main broadcasts each line to EVERY
+                    // registered listener, so the renderer must keep exactly ONE).
+                    __jsubs: () => __mSubs.length,
                     __machine: () => __m,
                 };
             })(),
@@ -6012,6 +6016,37 @@ function mockFactoryJs() {
     });
     if (jScrollStop2.stayed !== true) console.log('PAGE ERROR: a scroll-up stop must NOT re-pin the pane (the user stayed put; got ' + JSON.stringify(jScrollStop2.stayed) + ') (round O)');
     if (jScrollStop2.stopCalls < 2) console.log('PAGE ERROR: the scroll-up stop must call journalStop (got ' + JSON.stringify(jScrollStop2.stopCalls) + ') (round O)');
+    // ---- round Q: follow STOP/START cycles must NOT duplicate the lines ----
+    // The old code registered a NEW onJournalLine on every follow start (released only at
+    // modal close); main broadcasts each line to EVERY registered listener, so after N
+    // restarts each line rendered N+1 times (the user's duplicated/triplicated report).
+    const jSubs0 = await page.evaluate(() => {
+        const j = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__jsubs ? window.__mockCore.machine.__jsubs : null;
+        return j ? j() : null;
+    });
+    if (jSubs0 !== 1) console.log('PAGE ERROR: the journal modal must hold EXACTLY one live journal-line subscription (got ' + JSON.stringify(jSubs0) + ' after 3 stop/start cycles - each would duplicate a line) (round Q)');
+    for (let cyc = 0; cyc < 2; cyc++) {
+        await page.evaluate(() => {
+            const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Follow');
+            if (b) b.click();
+        });
+        await new Promise((r) => setTimeout(r, 600));
+        await page.evaluate(() => {
+            const b = Array.from(document.querySelectorAll('.ucm-journal__filters button')).find((x) => x.textContent === 'Stop');
+            if (b) b.click();
+        });
+        await new Promise((r) => setTimeout(r, 300));
+    }
+    const jDup = await page.evaluate(() => {
+        const j = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__jsubs ? window.__mockCore.machine.__jsubs : null;
+        const pre = document.querySelector('.ucm-modal--journal .ucm-journal__lines');
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        const t = pre ? pre.textContent : '';
+        return { subs: j ? j() : null, count: t.split('Journal follow line one').length - 1, followCalls: m ? m.followCalls : null };
+    });
+    if (jDup.subs !== 1) console.log('PAGE ERROR: extra stop/start cycles must NOT stack journal-line subscriptions (got ' + JSON.stringify(jDup.subs) + ' after 5 follow starts) (round Q)');
+    if (jDup.count !== 1) console.log('PAGE ERROR: a restarted follow must stream each line EXACTLY once (got ' + jDup.count + 'x "Journal follow line one") (round Q)');
+    if (!(jDup.followCalls >= 5)) console.log('PAGE ERROR: all 5 follow starts must have reached main (got ' + JSON.stringify(jDup.followCalls) + ') (round Q)');
     // close the modal (the X button; the Esc path is the 6b lock test's domain)
     await page.click('.ucm-modal--journal .ucm-modal__head button[aria-label="Close"]');
     await new Promise((r) => setTimeout(r, 250));

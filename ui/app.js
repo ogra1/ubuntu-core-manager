@@ -3635,6 +3635,19 @@ function openJournalModal() {
         try { await core.machine.journalStop(); } catch { /* best effort */ }
     };
 
+    // ONE journal-line subscription per modal (round Q): registered here ONCE and released
+    // in closeModal. The old code registered a NEW onJournalLine on every follow start and
+    // never released the previous one - main broadcasts each line to EVERY registered
+    // listener, so after N stop/start cycles each line was rendered N+1 times (the
+    // 'duplicated / triplicated follow' bug). The handler body is stable for the modal's
+    // lifetime (append + re-render) and lines only arrive while a follow child is active,
+    // so exactly one listener is all we need.
+    unsub = core.machine.onJournalLine((line) => {
+        lines.push(line); // the terminal appends at the bottom
+        if (lines.length > 2000) lines.shift();
+        if (autoStuck) pre.scrollTop = pre.scrollHeight; // follow the tail
+        render();
+    });
     followBtn.onclick = async () => {
         if (busy) return;
         if (following) { await stopFollow(); setStatus('Stopped following'); return; }
@@ -3648,14 +3661,7 @@ function openJournalModal() {
             setStatus('Could not start following');
             autoStuck = true;
             if (pre) pre.scrollTop = pre.scrollHeight;
-            return;
         }
-        unsub = core.machine.onJournalLine((line) => {
-            lines.push(line); // the terminal appends at the bottom
-            if (lines.length > 2000) lines.shift();
-            if (autoStuck) pre.scrollTop = pre.scrollHeight; // follow the tail
-            render();
-        });
     };
     const reload = () => loadTail();
     refreshBtn.onclick = reload;
