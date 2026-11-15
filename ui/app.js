@@ -3548,7 +3548,7 @@ function openJournalModal() {
     // --- the filter row (unit + match + priority + LINES + follow + refresh) --
     const filters = el('div', { class: 'ucm-journal__filters' });
     const unitInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'unit (e.g. snapd)', 'aria-label': 'Filter by unit', spellcheck: 'false' });
-    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (a grep pattern on the message, e.g. snapd.*denied; the full journal)', 'aria-label': 'Match text', spellcheck: 'false' });
+    const matchInp = el('input', { class: 'p-form-validation__input', type: 'text', placeholder: 'match text (grep style)', 'aria-label': 'Match text', spellcheck: 'false' });
     const prioSel = el('select', { class: 'ucm-kv--select', 'aria-label': 'Minimum priority' });
     for (const [v, label] of SYS_JOURNAL_PRIOS) prioSel.append(el('option', { value: v, text: label }));
     // The number of entries to show (round O): DEFAULT 200 (a bounded, fast tail);
@@ -3571,7 +3571,10 @@ function openJournalModal() {
         const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
         if (!nearBottom && autoStuck) autoStuck = false;
         else if (nearBottom) autoStuck = true;
-        if (!nearBottom && following) stopFollow().then(() => setStatus('Stopped following (scrolled away from the tail)'));
+        if (!nearBottom && following) stopFollow().then(() => setStatus('Stopped following'));
+        // (round P: the same short message as the button-stop - the long
+        // '(scrolled away from the tail)' suffix overflowed the nowrap status span's
+        // line and the flex row wrapped to a second line = a jitter on every stop.)
     });
     const bodyBox = el('div', { class: 'ucm-modal__body' });
     bodyBox.append(filters, pre);

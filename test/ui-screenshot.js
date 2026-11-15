@@ -5729,6 +5729,7 @@ function mockFactoryJs() {
             status: status.textContent || null,
             linesVal: linesInp ? linesInp.value : null,
             linesW: linesInp ? Math.round(linesInp.getBoundingClientRect().width) : null,
+            matchPh: f && f.querySelector('input[aria-label="Match text"]') ? f.querySelector('input[aria-label="Match text"]').placeholder : null,
             // round O: the filter row is CENTER-aligned - the two buttons must sit
             // on the SAME line as the inputs (the bundle base `button` margin of
             // 18.88px bottom would otherwise lift their ink ~9px).
@@ -5748,6 +5749,7 @@ function mockFactoryJs() {
     if (j1.linesVal !== '200') console.log('PAGE ERROR: the journal lines control must default to 200 (got ' + JSON.stringify(j1.linesVal) + ') (round O)');
     // the count field is a COMPACT control (6rem), not the 13rem/100% bundle box
     if (!(j1.linesW >= 80 && j1.linesW <= 112)) console.log('PAGE ERROR: the journal lines control must be compact (~96px, got ' + JSON.stringify(j1.linesW) + ') (round O)');
+    if (j1.matchPh !== 'match text (grep style)') console.log('PAGE ERROR: the match placeholder must be the short grep-style text (got ' + JSON.stringify(j1.matchPh) + ') (round P)');
     // round O: the filter row alignment (the two buttons on the inputs' line).
     if (j1.btnMb !== '0px') console.log('PAGE ERROR: the journal filter buttons must carry no bundle bottom margin (got ' + JSON.stringify(j1.btnMb) + ' - the 18.88px button margin) (round O)');
     if (j1.align == null || j1.align > 2) console.log('PAGE ERROR: the journal filter buttons must be vertically centered on the inputs (delta ' + JSON.stringify(j1.align) + 'px, want <=2) (round O)');
@@ -5937,7 +5939,7 @@ function mockFactoryJs() {
     });
     if (jScroll.unStuck !== true) console.log('PAGE ERROR: scrolling up must UN-stick the pane from the bottom (leave it where the user put it; got ' + JSON.stringify(jScroll.unStuck) + ') (round O)');
     if (jScroll.stopped !== true) console.log('PAGE ERROR: scrolling up during follow must STOP the follow (the button must read Follow; got ' + JSON.stringify(jScroll.stopped) + ') (round O)');
-    if (!/scrolled away from the tail/.test(jScroll.status || '')) console.log('PAGE ERROR: the scroll-stop must say why the follow stopped (got ' + JSON.stringify(jScroll.status) + ') (round O)');
+    if (jScroll.status !== 'Stopped following') console.log('PAGE ERROR: the scroll-stop must use the SAME short message as the button-stop (got ' + JSON.stringify(jScroll.status) + ') (round P)');
     if (jScroll.stopCalls < 1) console.log('PAGE ERROR: the scroll-stop must call journalStop (got ' + JSON.stringify(jScroll.stopCalls) + ') (round O)');
     // the pane must NOT be yanked back to the bottom after the un-stick
     await new Promise((r) => setTimeout(r, 200));
