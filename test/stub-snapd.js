@@ -473,7 +473,19 @@ function makeServer(socketPath, state) {
                     const doc = state.conf[name] || {};
                     if (keys === null) return json(res, 200, doc);
                     const k = decodeURIComponent(keys);
-                    const val = confWalk(doc, k.split('.'));
+                    let val = confWalk(doc, k.split('.'));
+                    // round T: EXTERNAL config semantics (snapd
+                    // configcore/timezone.go): core.system.timezone is
+                    // RegisterExternalConfig'd, so a GET RESOLVES THE LIVE
+                    // SYSTEM VALUE (never the stored conf doc) — absent means
+                    // "the system default" (UTC via the /etc/localtime
+                    // readlink), NOT "option not found". A stored value only
+                    // exists as the last thing snapd APPLIED (the stub models
+                    // that as state.timezone, which the conf PUT below
+                    // updates — exactly what the real configure handler does).
+                    if (name === 'core' && k === 'system.timezone') {
+                        return json(res, 200, { [k]: val == null ? state.timezone : val });
+                    }
                     // LIVE (round 48f probe): a single-key GET for a MISSING key
                     // is a 400 option-not-found error, NOT {key: null}. (The old
                     // flat stub returned {key:null}; the app never does a
@@ -497,6 +509,16 @@ function makeServer(socketPath, state) {
                         if (st) st.status = 'Done';
                         if (name === 'core' && data['system.network.netplan']) {
                             state.netplan = JSON.parse(JSON.stringify(data['system.network.netplan']));
+                        } else if (name === 'core' && data['system.timezone'] != null) {
+                            // round T: the REAL configure handler stores the
+                            // option AND runs "timedatectl set-timezone <zone>"
+                            // on the live system — model both: the doc gains
+                            // the key (like every other conf write) and the
+                            // LIVE zone moves (what the GET resolves).
+                            if (!state.conf[name]) state.conf[name] = {};
+                            for (const [k, v] of Object.entries(data))
+                                confSetPath(state.conf[name], k.split('.'), v);
+                            state.timezone = String(data['system.timezone']);
                         } else {
                             // round 48f: nested write (null deletes the leaf —
                             // snapd's purgeNulls does NOT prune emptied parents,
@@ -665,7 +687,12 @@ module.exports = { makeServer };
 
 if (require.main === module) {
     const sock = process.argv[2] || '/tmp/stub-snapd.socket';
-    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {},         netplan: NETPLAN_DOC, changes: [
+    const state = { requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 100, logoutCount: 0, prevRev: {},
+        // round T: the stub's LIVE timezone (models the real system, which
+        // snapd's external-config GET reads via getTimezoneFromSystem). The
+        // app never mutates it here (the SetTime/zone writes are
+        // integration-injected / VM-only) — tests set it directly.
+        timezone: 'Etc/UTC',         netplan: NETPLAN_DOC, changes: [
         // seed changes: live shape (string summary, hyphenated spawn-time).
         // Deliberately NOT in newest-first order — the UI must sort.
         { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },

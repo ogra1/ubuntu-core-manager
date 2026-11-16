@@ -256,6 +256,10 @@ function mockFactoryJs() {
            main.js setLockTimeout + the pref). Default '15' = the shipped
            15 min; 'off' = no auto-lock (timeoutMs null, no expiresAt). */
         let __lockTimeout = '15';
+        /* round T: the topbar-clock pref (mock of main.js showClockPref).
+           Default 'off' = the shipped default (no clock in the topbar). */
+        let __showClock = 'off';
+        let __showClockCalls = 0;
         let __lockCalls = 0;
         /* round A: the appearance (light/dark) — mock of main.js appearancePref
            + setAppearance. Default 'light' = the shipped default (the light
@@ -272,6 +276,7 @@ function mockFactoryJs() {
             expiresAt: (localAuthed && __lockTimeout !== 'off') ? Date.now() + Number(__lockTimeout) * 60000 : null,
             timeoutMs: (__lockTimeout === 'off') ? null : Number(__lockTimeout) * 60000,
             appearance: __appearance,
+            showClock: __showClock,
             localPages: __localPages.map((e) => ({ name: e.name, url: e.url, id: 'lp-' + __localPages.indexOf(e) })),
             storeAuthenticated: false,
             storeUsername: null,
@@ -373,6 +378,20 @@ function mockFactoryJs() {
                     return { list: __localPages.map((e) => ({ name: e.name, url: e.url })), max: 10 };
                 },
                 __localpages: () => ({ value: __localPages, calls: __localPagesCalls }),
+                // round T: the topbar-clock pref (mirror of main.js
+                // setShowClock: validate, persist, PUSH the status payload —
+                // the renderer's applyAuthPayload + syncShowClock run the
+                // real path, exactly like setAppearance).
+                async setShowClock(v) {
+                    const allowed = ['on', 'off'];
+                    if (!allowed.includes(v)) throw new Error('invalid show-clock: ' + v);
+                    __showClockCalls += 1;
+                    __showClock = v;
+                    const p = status();
+                    __SUBS.forEach((f) => { try { f(p); } catch (e) {} });
+                    return { value: v, allowed, default: 'off' };
+                },
+                __showclock: () => ({ value: __showClock, calls: __showClockCalls }),
             },
             store: {
                 // Backend-only (not used by the UI anymore); kept so the
@@ -923,6 +942,19 @@ function mockFactoryJs() {
                     journalCalls: 0, followCalls: 0, stopCalls: 0, holdCalls: 0, refreshNowCalls: 0,
                     powerCalls: [], scheduled: { active: false, action: null, usec: null },
                 };
+                // round T: the TIME card state (closure object — see the
+                // comment on the methods below: the caller invokes them as
+                // core.machine.timeRead, so a factory-scoped object, not 'this').
+                const __t = {
+                    timenow: null,            // usec (null = "now" at read time)
+                    timezone: 'Etc/UTC',
+                    timeSetCalls: 0,
+                    zoneCalls: 0,
+                    // the BUNDLED list, trimmed (the real one is 497; 32 keeps
+                    // the option DOM light — the guards count options, not names,
+                    // so trimming is honest; the full list ships in main.js).
+                    zonelist: ['Africa/Abidjan', 'America/Anchorage', 'America/Argentina/Buenos_Aires', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/New_York', 'Antarctica/Casey', 'Asia/Bangkok', 'Asia/Hong_Kong', 'Asia/Kolkata', 'Asia/Shanghai', 'Asia/Tokyo', 'Australia/Sydney', 'Etc/GMT', 'Etc/GMT+8', 'Etc/UTC', 'Europe/Berlin', 'Europe/Dublin', 'Europe/London', 'Europe/Madrid', 'Europe/Moscow', 'Europe/Paris', 'Europe/Rome', 'Europe/Stockholm', 'Europe/Vienna', 'Europe/Warsaw', 'Europe/Zurich', 'Pacific/Auckland', 'Pacific/Honolulu', 'UTC'],
+                };
                 const __mSubs = [];
                 const J_LINES = [
                     '2026-11-14T08:00:01.123456Z core-kvm-01 systemd[1]: Starting Daily apt download activities...',
@@ -1119,6 +1151,46 @@ function mockFactoryJs() {
                         return { cancelled: had };
                     },
                     async powerScheduled() { return JSON.parse(JSON.stringify(__m.scheduled)); },
+                    // round T: the TIME card. The read models the LIVE
+                    // system (timedate1 wall clock + timezone + NTP) plus the
+                    // bundled zone list. ntp is SHARED with the timesync
+                    // namespace (the Network "Sync time from internet" toggle
+                    // drives the SAME live property the time card gates on).
+                    // set-time moves the mock wall clock (the real SetTime);
+                    // the timezone write routes through the REAL confSet
+                    // (core conf + 250ms settle) EXACTLY like the refresh.
+                    async timeRead() {
+                        const usec = __t.timenow || Date.now() * 1000;
+                        const ntp = (typeof window !== 'undefined' && window.__mockCore && window.__mockCore.timesync)
+                            ? window.__mockCore.timesync.__ts().ntp : true;
+                        return { usec, zone: __t.timezone, ntp: !!ntp, zones: __t.zonelist.slice() };
+                    },
+                    async timeSet(value) {
+                        const ntp = (typeof window !== 'undefined' && window.__mockCore && window.__mockCore.timesync)
+                            ? window.__mockCore.timesync.__ts().ntp : true;
+                        if (ntp) throw new Error('time sync is ON — turn it off on the Network page to set the time manually');
+                        if (typeof value !== 'number' || !isFinite(value) || value <= 0) throw new Error('invalid time: ' + value);
+                        __t.timeSetCalls += 1;
+                        __t.timenow = Math.round(value);
+                        return { ok: true };
+                    },
+                    async timeZoneWrite(zone) {
+                        __t.zoneCalls += 1;
+                        return await core.snaps.confSet('core', { 'system.timezone': String(zone) });
+                    },
+                    // ESCAPE: set the LIVE wall clock outside the app's set
+                    // path (no call count, like the round-S __hold) — models a
+                    // CLI "timedatectl set-time" the re-entry must display.
+                    __settime: (val) => { __t.timenow = val == null ? null : Math.round(val); return __t.timenow; },
+                    // ESCAPE: set the LIVE timezone outside the app's write
+                    // path (no conf change/settle) — models a CLI
+                    // "timedatectl set-timezone" the re-entry must select.
+                    __setzone: (val) => {
+                        const z = val == null ? 'Etc/UTC' : String(val);
+                        if (__t.zonelist.indexOf(z) < 0) __t.zonelist.push(z);
+                        __t.timezone = z;
+                        return z;
+                    },
                     // round O: the harness can inspect the canned journal pool.
                     __jlines: { tail: () => J_LINES.length, full: () => J_LINES_FULL.length },
                     // round Q: the LIVE journal-line subscriber count (the preload's
@@ -1141,6 +1213,7 @@ function mockFactoryJs() {
                     },
                     // round S+2: expose the refresh-now LIVE call count for the harness.
                     __refreshNow: () => __m.refreshNowCalls,
+                    __t: () => __t,
                     __machine: () => __m,
                 };
             })(),
@@ -5799,18 +5872,21 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the fixed nav order is wrong / System is not directly below Settings (got ' + JSON.stringify(gS.navLinks) + ') (round L)');
     if (gS.navLinks.indexOf('system') !== 5)
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
-    if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'System power']))
-        console.log('PAGE ERROR: the system page must show exactly the 3 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L)');
-    // round R: the de-worded card help texts (exact, so the old verbose copy can't regress)
-    if (gS.helps && gS.helps.length === 3) {
+    if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'System power']))
+        console.log('PAGE ERROR: the system page must show exactly the 4 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time between refresh and power)');
+    // round R: the de-worded card help texts (exact, so the old verbose copy
+    // can't regress). round T: the Time card adds a 4th help text.
+    if (gS.helps && gS.helps.length === 4) {
         if (gS.helps[0] !== 'The latest entries are shown; filter by unit or text and raise the minimum priority.')
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
         if (gS.helps[1].indexOf('When snapd may automatically refresh snaps.') !== 0 || /install/.test(gS.helps[1]))
             console.log('PAGE ERROR: the refresh card help must say "automatically refresh" (not install) (got ' + JSON.stringify(gS.helps[1]) + ') (round R)');
-        if (gS.helps[2] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
-            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[2]) + ') (round R)');
+        if (gS.helps[2] !== 'Set the time manually (only when time sync is off) or pick the device\'s time zone.')
+            console.log('PAGE ERROR: the Time card help is missing / wrong (got ' + JSON.stringify(gS.helps[2]) + ') (round T)');
+        if (gS.helps[3] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
+            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[3]) + ') (round R)');
     } else {
-        console.log('PAGE ERROR: the system page must show 3 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R)');
+        console.log('PAGE ERROR: the system page must show 4 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds the Time card)');
     }
     // round S+3: the refresh card rows must be ordered  Pause-toggle < separator <
     // Refresh-now  (the user asked to SWAP the toggle above the button and add a
@@ -6448,6 +6524,219 @@ function mockFactoryJs() {
     if (rn1.doc !== rnPre) console.log('PAGE ERROR: a Refresh now must NOT mutate the core conf store (before ' + rnPre + ' after ' + rn1.doc + ') (round S+2)');
 
     // back on the system view; the 5s-p power section runs next (leaves it pristine too)
+    // ---- 5s-t: round T — the TIME card (set-time gate + wall clock + timezone + topbar clock) ----
+    // Runs on the system view in the authenticated LIGHT state. The NTP gate is
+    // SHARED with the Network "Sync time from internet" toggle (the mock's
+    // timesync.ntp flag): section 3i left it ON, so (t0) proves the greyed
+    // state; (t1) turns it off via the SAME toggle path the real app uses;
+    // (t6) restores it ON so 5s-p and the run end pristine.
+    await wait(150);
+    let t0 = await page.evaluate(() => {
+      const on = (id) => { const x = document.querySelector(id); return x ? x.classList.contains('ucm-hidden') : null; };
+      return {
+        card: !!document.querySelector('#view-system .p-card .p-heading--5') && Array.prototype.some.call(
+          document.querySelectorAll('#view-system .p-card .p-heading--5'), (h) => h.textContent.trim() === 'Time'),
+        timeNow: (document.querySelector('#timeNow') || {}).textContent || null,
+        timeNote: (document.querySelector('#timeNtpState') || {}).textContent || null,
+        noteHidden: on('#timeNtpState'),
+        timeInp: (document.querySelector('#timeSetInput') || {}).disabled,
+        timeBtn: (document.querySelector('#timeSetBtn') || {}).disabled,
+        zoneN: document.querySelector('#timeZoneSelect') ? document.querySelector('#timeZoneSelect').options.length : null,
+        zoneVal: (document.querySelector('#timeZoneSelect') || {}).value,
+        zoneBtn: (document.querySelector('#timeZoneApplyBtn') || {}).disabled,
+        clockSw: (document.querySelector('#showClockSwitch') || {}).checked,
+        clockState: (document.querySelector('#showClockState') || {}).textContent || null,
+        clock: on('#topbarClock'),
+        clockText: (document.querySelector('#topbarClock') || {}).textContent || null,
+        sc: (window.__mockCore.settings.__showclock ? window.__mockCore.settings.__showclock() : null),
+        m: (window.__mockCore.machine.__t ? window.__mockCore.machine.__t() : null),
+      };
+    });
+    if (!t0.card) console.log('PAGE ERROR: the Time card must sit between the refresh schedule and power (round T)');
+    if (!/\d\d:\d\d:\d\d/.test(t0.timeNow || '')) console.log('PAGE ERROR: the current-time line must read a live HH:MM:SS wall clock (got ' + JSON.stringify(t0.timeNow) + ') (round T)');
+    if (t0.noteHidden || (t0.timeNote || '').indexOf('time sync is on') < 0) console.log('PAGE ERROR: with NTP on the Time card must show the sync note (got ' + JSON.stringify(t0.timeNote) + ') (round T)');
+    if (t0.timeInp !== true || t0.timeBtn !== true) console.log('PAGE ERROR: with NTP on the manual time set must be disabled (got ' + JSON.stringify([t0.timeInp, t0.timeBtn]) + ') (round T)');
+    if (t0.zoneN < 30) console.log('PAGE ERROR: the timezone picker must carry the bundled zone list (got ' + JSON.stringify(t0.zoneN) + ') (round T)');
+    if (t0.zoneVal !== 'Etc/UTC') console.log('PAGE ERROR: the timezone picker must preselect the LIVE zone (got ' + JSON.stringify(t0.zoneVal) + ') (round T)');
+    if (t0.zoneBtn !== false) console.log('PAGE ERROR: the timezone apply must be enabled (the zone is not gated by NTP) (round T)');
+    if (t0.clockSw !== false || t0.clockState !== 'Off') console.log('PAGE ERROR: the topbar clock must default OFF (got ' + JSON.stringify([t0.clockSw, t0.clockState]) + ') (round T)');
+    if (t0.clock !== true) console.log('PAGE ERROR: the topbar clock element must be HIDDEN by default (round T)');
+
+    // (t1) turn NTP OFF via the shared toggle path (the Network sync switch's
+    // mock method — the SAME flag the gate reads) -> the manual rows enable.
+    await page.evaluate(() => window.__mockCore.timesync.setEnabled(false));
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await page.click('.ucm-side a[data-view="system"]');
+    await wait(600);
+    let t1 = await page.evaluate(() => {
+      return {
+        timeInp: (document.querySelector('#timeSetInput') || {}).disabled,
+        timeBtn: (document.querySelector('#timeSetBtn') || {}).disabled,
+        noteHidden: (document.querySelector('#timeNtpState') || {}).classList ? document.querySelector('#timeNtpState').classList.contains('ucm-hidden') : null,
+        inpVal: (document.querySelector('#timeSetInput') || {}).value,
+      };
+    });
+    if (t1.timeInp !== false || t1.timeBtn !== false) console.log('PAGE ERROR: with NTP off the manual time set must be enabled (got ' + JSON.stringify([t1.timeInp, t1.timeBtn]) + ') (round T)');
+    if (t1.noteHidden !== true) console.log('PAGE ERROR: with NTP off the sync note must disappear (round T)');
+    if (!/\d{4}-\d\d-\d\dT\d\d:\d\d/.test(t1.inpVal || '')) console.log('PAGE ERROR: the set-time field must prefill with the local current time (got ' + JSON.stringify(t1.inpVal) + ') (round T)');
+
+    // (t2) a direct set with NTP back ON must be REFUSED (the main-side gate)
+    // and must NOT move the wall clock.
+    await page.evaluate(() => window.__mockCore.timesync.setEnabled(true));
+    let t2 = await page.evaluate(async () => {
+      const m = window.__mockCore.machine; const before = m.__t().timenow;
+      let err = null;
+      try { await m.timeSet(Date.now()); } catch (e) { err = String(e && e.message || e); }
+      return { err, moved: m.__t().timenow !== before, calls: m.__t().timeSetCalls };
+    });
+    if (!t2.err || t2.err.indexOf('time sync is ON') < 0) console.log('PAGE ERROR: a manual set with NTP on must be refused with the sync message (got ' + JSON.stringify(t2.err) + ') (round T)');
+    if (t2.moved || t2.calls !== 0) console.log('PAGE ERROR: the refused set must not touch the wall clock or count (got ' + JSON.stringify([t2.moved, t2.calls]) + ') (round T)');
+
+    // (t3) the UI path with NTP off: set a specific time -> toast + the
+    // current-time line updates to exactly the set minute.
+    await page.evaluate(() => window.__mockCore.timesync.setEnabled(false));
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await page.click('.ucm-side a[data-view="system"]');
+    await wait(600);
+    const t3val = '2026-11-16T09:30';
+    await page.evaluate((v) => { const i = document.querySelector('#timeSetInput'); i.value = v; i.dispatchEvent(new Event('change', { bubbles: true })); }, t3val);
+    await page.click('#timeSetBtn');
+    await wait(400);
+    let t3 = await page.evaluate(() => {
+      const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification'));
+      const set = toasts.find((t) => (t.querySelector('.p-notification__title') || {}).textContent === 'Time set');
+      return {
+        timeNow: (document.querySelector('#timeNow') || {}).textContent || null,
+        calls: window.__mockCore.machine.__t().timeSetCalls,
+        toast: set ? ((set.querySelector('.p-notification__message') || {}).textContent || null) : null,
+        toastCount: toasts.filter((t) => (t.querySelector('.p-notification__title') || {}).textContent === 'Time set').length,
+      };
+    });
+    if (t3.timeNow !== '09:30:00') console.log('PAGE ERROR: after a set the current-time line must read the set minute (got ' + JSON.stringify(t3.timeNow) + ') (round T)');
+    if (t3.calls !== 1) console.log('PAGE ERROR: the set-time button must call core.machine.timeSet exactly once (got ' + JSON.stringify(t3.calls) + ') (round T)');
+    if (t3.toastCount !== 1 || !t3.toast) console.log('PAGE ERROR: the set-time success toast is missing (got ' + JSON.stringify([t3.toastCount, t3.toast]) + ') (round T)');
+
+    // (t4) the LIVE read wins: an outside wall-clock change (the CLI) must be
+    // shown on re-entry.
+    const t4usec = new Date('2026-11-16T12:00:00').getTime() * 1000;
+    await page.evaluate((u) => window.__mockCore.machine.__settime(u), t4usec);
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await page.click('.ucm-side a[data-view="system"]');
+    await wait(600);
+    let t4 = await page.evaluate(() => ({ timeNow: (document.querySelector('#timeNow') || {}).textContent || null }));
+    if (t4.timeNow !== '12:00:00') console.log('PAGE ERROR: a wall-clock change made OUTSIDE the app must show on re-entry (got ' + JSON.stringify(t4.timeNow) + ') (round T)');
+
+    // (t5) the timezone: apply Europe/London -> the core conf holds it (the
+    // real confSet path: 250ms settle) + toast; then an OUTSIDE zone change
+    // must preselect on re-entry WITHOUT an app write.
+    await page.select('#timeZoneSelect', 'Europe/London');
+    await page.click('#timeZoneApplyBtn');
+    await wait(500);
+    let t5 = await page.evaluate(async () => {
+      const m = window.__mockCore.machine; const t = m.__t();
+      await new Promise((r) => setTimeout(r, 350));
+      const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification'));
+      const set = toasts.find((x) => (x.querySelector('.p-notification__title') || {}).textContent === 'Time zone updated');
+      return {
+        zoneCalls: t.zoneCalls,
+        stored: (() => { const doc = window.__mockCore.snaps.confStore('core'); return doc && doc.system ? doc.system.timezone : null; })(),
+        toast: set ? ((set.querySelector('.p-notification__message') || {}).textContent || null) : null,
+        zoneVal: (document.querySelector('#timeZoneSelect') || {}).value,
+      };
+    });
+    if (t5.zoneCalls !== 1) console.log('PAGE ERROR: the timezone apply must call core.machine.timeZoneWrite once (got ' + JSON.stringify(t5.zoneCalls) + ') (round T)');
+    if (t5.stored !== 'Europe/London') console.log('PAGE ERROR: the timezone write must land in the core conf (system.timezone) (got ' + JSON.stringify(t5.stored) + ') (round T)');
+    if (t5.toast !== 'The device is now in Europe/London.') console.log('PAGE ERROR: the timezone success toast is wrong (got ' + JSON.stringify(t5.toast) + ') (round T)');
+    await page.evaluate(() => window.__mockCore.machine.__setzone('Australia/Sydney'));
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await page.click('.ucm-side a[data-view="system"]');
+    await wait(600);
+    let t5b = await page.evaluate(() => {
+      return { zoneVal: (document.querySelector('#timeZoneSelect') || {}).value, zoneCalls: window.__mockCore.machine.__t().zoneCalls };
+    });
+    if (t5b.zoneVal !== 'Australia/Sydney') console.log('PAGE ERROR: a timezone set OUTSIDE the app must preselect on re-entry (got ' + JSON.stringify(t5b.zoneVal) + ') (round T)');
+    if (t5b.zoneCalls !== 1) console.log('PAGE ERROR: re-entry must not write the timezone (got ' + JSON.stringify(t5b.zoneCalls) + ') (round T)');
+
+    // (t6) the topbar clock toggle: ON -> the topbar shows a ticking HH:MM:SS;
+    // OFF -> hidden + the pref back to the shipped default.
+    await page.click('#showClockSwitch');
+    await wait(300);
+    let t6 = await page.evaluate(() => {
+      const c = document.querySelector('#topbarClock');
+      return {
+        hidden: c ? c.classList.contains('ucm-hidden') : null,
+        text: c ? c.textContent : null,
+        sc: window.__mockCore.settings.__showclock(),
+        sw: (document.querySelector('#showClockSwitch') || {}).checked,
+        state: (document.querySelector('#showClockState') || {}).textContent || null,
+      };
+    });
+    if (t6.hidden !== false) console.log('PAGE ERROR: the topbar clock must be VISIBLE when the toggle is on (round T)');
+    if (!/\d\d:\d\d:\d\d/.test(t6.text || '')) console.log('PAGE ERROR: the topbar clock must render HH:MM:SS (got ' + JSON.stringify(t6.text) + ') (round T)');
+    if (t6.sc.value !== 'on' || t6.sc.calls !== 1 || t6.sw !== true || t6.state !== 'On') console.log('PAGE ERROR: the toggle must persist the show-clock pref + sync the row (got ' + JSON.stringify([t6.sc, t6.sw, t6.state]) + ') (round T)');
+    // the clock must actually TICK (a 1s interval on the renderer's new Date).
+    // POLL for the change (up to 3.5s) — a fixed 1.2s wait is load-flaky: both
+    // reads can land inside the SAME wall second on a busy container.
+    const t6tick1 = t6.text;
+    let t6tick2 = t6tick1;
+    for (let i = 0; i < 14 && t6tick2 === t6tick1; i++) {
+      await wait(250);
+      t6tick2 = await page.evaluate(() => (document.querySelector('#topbarClock') || {}).textContent || null);
+    }
+    if (t6tick2 === t6tick1) console.log('PAGE ERROR: the topbar clock must TICK (the 1s interval - the text did not advance over 3.5s: ' + JSON.stringify([t6tick1, t6tick2]) + ') (round T)');
+    // the LIVE-payload path: a status push carrying the pref (a boot/re-push,
+    // NOT a UI action) must apply it too (applyAuthPayload -> syncShowClock).
+    // Direct mock calls (no UI) so the UI click count stays owned by t6/t6b.
+    await page.evaluate(() => window.__mockCore.settings.setShowClock('off'));
+    await wait(300);
+    let t6c = await page.evaluate(() => {
+      const c = document.querySelector('#topbarClock');
+      return {
+        hidden: c ? c.classList.contains('ucm-hidden') : null,
+        sc: window.__mockCore.settings.__showclock(),
+        sw: (document.querySelector('#showClockSwitch') || {}).checked,
+        state: (document.querySelector('#showClockState') || {}).textContent || null,
+      };
+    });
+    if (t6c.hidden !== true || t6c.sc.value !== 'off' || t6c.sw !== false || t6c.state !== 'Off')
+        console.log('PAGE ERROR: a status push with the pref OFF must hide the clock + sync the row (got ' + JSON.stringify(t6c) + ') (round T)');
+    await page.evaluate(() => window.__mockCore.settings.setShowClock('on'));
+    await wait(300);
+    let t6d = await page.evaluate(() => {
+      const c = document.querySelector('#topbarClock');
+      return {
+        hidden: c ? c.classList.contains('ucm-hidden') : null,
+        sc: window.__mockCore.settings.__showclock(),
+        sw: (document.querySelector('#showClockSwitch') || {}).checked,
+        state: (document.querySelector('#showClockState') || {}).textContent || null,
+      };
+    });
+    if (t6d.hidden !== false || t6d.sc.value !== 'on' || t6d.sw !== true || t6d.state !== 'On')
+        console.log('PAGE ERROR: a status push with the pref ON (no UI action) must show the clock + sync the row (got ' + JSON.stringify(t6d) + ') (round T)');
+    // the UI click OFF (the switch is now checked=true via the payload sync)
+    // returns the pref to the shipped default.
+    await page.click('#showClockSwitch');
+    await wait(300);
+    let t6b = await page.evaluate(() => {
+      const c = document.querySelector('#topbarClock');
+      return {
+        hidden: c ? c.classList.contains('ucm-hidden') : null,
+        sc: window.__mockCore.settings.__showclock(),
+        sw: (document.querySelector('#showClockSwitch') || {}).checked,
+        state: (document.querySelector('#showClockState') || {}).textContent || null,
+      };
+    });
+    if (t6b.hidden !== true) console.log('PAGE ERROR: the topbar clock must be HIDDEN again when the toggle is off (round T)');
+    if (t6b.sc.value !== 'off' || t6b.sc.calls !== 4 || t6b.sw !== false || t6b.state !== 'Off') console.log('PAGE ERROR: the toggle-off must restore the pref + row (got ' + JSON.stringify([t6b.sc, t6b.sw, t6b.state]) + ') (round T)');
+
+    // (t7) PRISTINE: NTP back on (section 3i's state), the wall clock back to
+    // "now", the timezone back to the live default.
+    await page.evaluate(() => {
+      window.__mockCore.timesync.setEnabled(true);
+      window.__mockCore.machine.__settime(null);
+      window.__mockCore.machine.__setzone('Etc/UTC');
+    });
+    await wait(300);
     // ---- 5s-p: power (confirm + immediate + scheduled + cancel) ----
     await page.click('#rebootNowBtn');
     await new Promise((r) => setTimeout(r, 250));

@@ -37,6 +37,8 @@ apps:
       - system-observe
       - mount-observe
       - timeserver-control
+      - timezone-control
+      - time-control
       - network-control
       - network-setup-control
       - shutdown

@@ -102,6 +102,7 @@ const api = Object.freeze({
     // status payload (appearance).
     settings: Object.freeze({
         setAppearance: invoke('settings:set-appearance'),  // (value) => {value,allowed,default}
+        setShowClock: invoke('settings:set-show-clock'),   // (value) => {value,allowed,default}
         // round I: local pages (embedded localhost web UIs). SET takes the whole
         // list (renderer computes add/edit/remove); the CURRENT list rides the
         // auth status payload (core.auth.status().localPages) — read-only here.
@@ -195,6 +196,13 @@ const api = Object.freeze({
         // Round S+2: the 'Refresh now' button (== `snap refresh` all snaps). An
         // async snapd change (settle it like every other write).
         refreshNow: invoke('system:refresh-now'),             // () -> async snapd change (refresh all snaps)
+        // Round T: the Time card. timeRead = the LIVE wall clock +
+        // timezone + NTP flag + the bundled zone list; timeSet is the
+        // gated manual set (time-control plug, SetTime xbb); timeZoneWrite
+        // is the core.system.timezone conf PUT (snapd runs timedatectl).
+        timeRead: invoke('system:time-read'),          // () -> { usec, zone, ntp, zones[] }
+        timeSet: invoke('system:time-set'),            // (usec-utc) -> { ok } (refused while NTP is ON)
+        timeZoneWrite: invoke('system:timezone-write'),// (zone) -> async snapd change (wait + settle)
         // Power (org.freedesktop.login1 over D-Bus — the shutdown interface
         // is D-BUS ONLY; no shell-out).
         power: invoke('system:power'),                   // ('reboot'|'poweroff') — immediate

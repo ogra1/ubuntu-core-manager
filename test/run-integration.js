@@ -540,6 +540,9 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:refresh-hold-read'] && !!handlers['system:refresh-hold']);
             ok('system-page refresh-now handler registered (round S+2: the Refresh now button, auth-gated)',
                 !!handlers['system:refresh-now']);
+            ok('time-card handlers registered (round T: time read/set + timezone write, auth-gated)',
+                !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
+            ok('show-clock handler registered (round T, auth-gated)', !!handlers['settings:set-show-clock']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -1653,6 +1656,119 @@ function ok(name, cond, extra = '') {
           // clear it again so the rest of the section (hold/refresh-now) sees a clean doc
           await m.refreshTimerWrite('');
         }
+        // ---- the TIME card (round T: set-time + timezone + topbar clock) ----
+        // (a) the bundled IANA zone list (main.js listTimezones — the file the
+        //      renderer's <select> is built from; every entry must pass
+        //      snapd's own validTimezone regex or snapd would reject it at
+        //      configure time).
+        {
+          const zones = m.listTimezones();
+          ok('timezones: the bundled list is non-trivial and sorted',
+             zones.length > 400 && JSON.stringify(zones) === JSON.stringify(zones.slice().sort()), 'n=' + zones.length);
+          ok('timezones: every bundled entry passes snapd validTimezone',
+             zones.every((z) => m.timezoneValid(z)));
+          ok('timezones: the common zones are present (Etc/UTC + a few)',
+             zones.includes('Etc/UTC') && zones.includes('Europe/Berlin') && zones.includes('America/New_York') && zones.includes('Asia/Tokyo'));
+          ok('timezoneValid: junk is rejected (not a zone grammar)',
+             m.timezoneValid('') === false && m.timezoneValid('a/b/c/d') === false && m.timezoneValid('has space') === false
+             && m.timezoneValid('Europe/Berlin') === true && m.timezoneValid('Etc/GMT+5') === true && m.timezoneValid(5) === false);
+        }
+        // (b) set-time: the NTP gate (checked in main at write time) + the
+        //      EXACT SetTime(xbb) D-Bus body (injected transport, the 49h
+        //      signature-verification idiom).
+        {
+          const tCalls = [];
+          m.__setTimesyncTransport(async (spec) => {
+            tCalls.push(spec);
+            if (spec.member === 'Get') {
+              if (spec.body && spec.body[1] === 'NTPEnabled') return [{ signature: 'b', value: false }];
+              if (spec.body && spec.body[1] === 'Timezone') return [{ signature: 's', value: 'Europe/Berlin' }];
+              if (spec.body && spec.body[1] === 'TimeUSec') return [{ signature: 't', value: 1794771882397771n }];
+            }
+            return [];
+          });
+          const usec = 1794770000000000;
+          const r1 = await m.timeSet(usec);
+          const setCall = tCalls.find((c) => c.member === 'SetTime');
+          ok('timeSet: returns ok and calls SetTime', r1.ok === true && !!setCall);
+          ok('timeSet: the body is EXACTLY [usec, 0, false] with the xbb signature (the container introspection truth)',
+             setCall && setCall.signature === 'xbb' && setCall.body[0] === usec && setCall.body[1] === 0 && setCall.body[2] === false,
+             setCall ? JSON.stringify([setCall.signature, setCall.body.map(String)]) : 'no call');
+          // the GATE: with NTP on, a manual set is refused BEFORE any SetTime.
+          m.__setTimesyncTransport(async (spec) => {
+            if (spec.member === 'Get' && spec.body && spec.body[1] === 'NTPEnabled') return [{ signature: 'b', value: true }];
+            throw new Error('SetTime must never be reached while NTP is on');
+          });
+          let gateErr = null;
+          try { await m.timeSet(usec); } catch (e) { gateErr = e; }
+          ok('timeSet: refused while NTP is on (the gate — the user: with time sync we do not manually set the time)',
+             !!gateErr && /time sync is ON/i.test(gateErr.message), gateErr && gateErr.message);
+          let nonFinite = null;
+          try { await m.timeSet('junk'); } catch (e) { nonFinite = e; }
+          ok('timeSet: a non-finite value is rejected before the D-Bus',
+             !!nonFinite && /invalid time/i.test(nonFinite.message), nonFinite && nonFinite.message);
+          m.__setTimesyncTransport(null);
+        }
+        // (c) the timezone WRITE (core conf — snapd runs timedatectl itself;
+        //      the app must NOT need the timezone-control plug for this) +
+        //      the EXTERNAL-CONFIG round-trip through the stub.
+        {
+          const before = state.confSets.length;
+          await m.timezoneWrite('Europe/Vienna');
+          ok('timezoneWrite: returns a zone and sends a conf PUT (async change)',
+             state.confSets.length === before + 1);
+          const put = state.confSets[state.confSets.length - 1];
+          ok('timezoneWrite: the PUT body is EXACTLY { "system.timezone": zone } on the CORE snap',
+             put.name === 'core' && JSON.stringify(put.data) === JSON.stringify({ 'system.timezone': 'Europe/Vienna' }), JSON.stringify(put.data));
+          await new Promise((res) => setTimeout(res, 400)); // the stub conf PUT settles (250ms)
+          const rb = await m.timezoneRead();
+          ok('timezoneWrite: the write ROUND-TRIPS (the external-config GET resolves the applied zone)',
+             rb === 'Europe/Vienna', JSON.stringify(rb));
+          let badZone = null;
+          try { await m.timezoneWrite('Not A Zone'); } catch (e) { badZone = e; }
+          ok('timezoneWrite: a junk zone is rejected BEFORE the socket (nothing sent)',
+             !!badZone && /invalid timezone/i.test(badZone.message) && state.confSets.length === before + 1, badZone && badZone.message);
+          // the GET when NOTHING is stored: the live system value (the stub
+          // models the real external-config resolution, not "option missing"):
+          // wipe the stored doc + move the LIVE zone (the CLI set it) -> the
+          // read must return the LIVE zone, proving external-config semantics.
+          state.conf.core = {};
+          state.timezone = 'Pacific/Honolulu';
+          const live = await m.timezoneRead();
+          ok('timezoneRead: an absent stored zone RESOLVES TO THE LIVE SYSTEM ZONE (external config, never 404)',
+             live === 'Pacific/Honolulu', JSON.stringify(live));
+          state.timezone = 'Etc/UTC';
+        }
+        // (d) the topbar-clock pref (the appearance idiom: a 0600 file, the
+        //      status payload, validate-on-set).
+        {
+          // the pref path seam (the ipfwd idiom — call-time env read, so the
+          // SAME required instance is usable, no re-require dance).
+          const pref = path.join(STATE, 'show-clock-t.pref');
+          process.env.UCM_SHOW_CLOCK_PREF = pref;
+          try {
+            const sc0 = m.getShowClock();
+            ok('show-clock: the default is OFF (no clock in the topbar until asked)',
+               sc0.value === 'off' && sc0.default === 'off' && JSON.stringify(sc0.allowed) === JSON.stringify(['on', 'off']), JSON.stringify(sc0));
+            m.setShowClock('on');
+            ok('show-clock: set persists to the 0600 pref file + reflects in get',
+               fs.readFileSync(pref, 'utf8') === 'on' && m.getShowClock().value === 'on');
+            let badSc = null;
+            try { m.setShowClock('sometimes'); } catch (e) { badSc = e; }
+            ok('show-clock: an unknown value is rejected (nothing written)',
+               !!badSc && m.getShowClock().value === 'on', badSc && badSc.message);
+            m.setShowClock('off');
+            ok('show-clock: off sticks (the explicit value, not "absent")', m.getShowClock().value === 'off');
+            m.setShowClock('on');
+            ok('show-clock: the STATUS PAYLOAD carries the pref (the renderer shows/hides the clock from it)',
+               m.statusPayload().showClock === 'on');
+            m.setShowClock('off');
+          } finally {
+            delete process.env.UCM_SHOW_CLOCK_PREF;
+            try { fs.unlinkSync(pref); } catch (e) {}
+          }
+        }
+
         // ---- the global auto-refresh HOLD (round S: the 'Pause auto-refresh'
         //      toggle; the REST equivalent of `snap refresh --hold`/`--unhold`) ----
         // (i) the PURE active-decision (unit-tested against the sysinfo value).

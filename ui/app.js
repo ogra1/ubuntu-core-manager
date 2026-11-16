@@ -128,6 +128,9 @@ const state = {
     // round L: the System page's power card (the live scheduled shutdown,
     // read from logind on view entry; {active, action, usec}).
     scheduled: null,
+    // round T: the Time card's topbar-clock pref. 'off' seeds the FIRST
+    // paint before core.auth.status() lands the real pref.
+    showClock: 'off',
     // optional store auth
     storeAuthenticated: false,
     storeUsername: null,
@@ -376,6 +379,11 @@ function applyAuthPayload(p) {
     // (undefined) falls back to the current value. (`!= null` was wrong: it
     // kept the stale default and hid a persisted "off" on load.)
     state.timeoutMs = p.timeoutMs !== undefined ? p.timeoutMs : state.timeoutMs;
+    // round T: the topbar-clock pref rides the status payload (the
+    // appearance idiom) — an explicit 'off' must stick, only an ABSENT
+    // field (undefined) falls back.
+    state.showClock = p.showClock !== undefined ? (p.showClock === 'on' ? 'on' : 'off') : state.showClock;
+    syncShowClock(state.showClock);
     // round A: the appearance rides the status payload. An explicit value
     // (including 'light') must stick; only an ABSENT field (undefined) falls
     // back — the same !==undefined contract as timeoutMs. Flipping
@@ -3439,6 +3447,23 @@ function sysSetFieldErr(inp, msgEl, text) {
     if (msgEl) msgEl.textContent = text || '';
 }
 
+function clockFmt(d) {
+    // 'HH:MM:SS' 24-hour local time — the kiosk topbar idiom (mono, compact).
+    const p = (x) => String(x).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+let __clockTimer = null;
+function updateTopbarClock() {
+    const el = $('#topbarClock');
+    if (!el) return;
+    el.classList.toggle('ucm-hidden', state.showClock !== 'on');
+    if (state.showClock === 'on') el.textContent = clockFmt(new Date());
+}
+function startTopbarClock() {
+    if (__clockTimer) return;
+    updateTopbarClock();
+    __clockTimer = setInterval(() => { if (state.showClock === 'on') updateTopbarClock(); }, 1000);
+}
 async function loadSystem() {
     // Refresh schedule (core config; the shape-robust read lives in main.js).
     const inp = $('#refreshInput'); const now = $('#refreshNow'); const msg = $('#refreshMsg');
@@ -3478,6 +3503,96 @@ async function loadSystem() {
         when.value = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate())
             + 'T' + pad(t.getHours()) + ':' + pad(t.getMinutes());
     }
+    // Round T: the TIME card. One IPC reads the LIVE wall clock + timezone +
+    // the NTP flag + the bundled zone list (main.js timeRead). The manual
+    // rows are gated by the NTP flag (the Network page's "Sync time from
+    // internet" toggle drives the same property): sync ON = greyed out,
+    // because a manual set would just be overwritten by the next sync.
+    const timeInp = $('#timeSetInput'); const timeBtn = $('#timeSetBtn');
+    const zoneSel = $('#timeZoneSelect'); const zoneBtn = $('#timeZoneApplyBtn');
+    const timeNote = $('#timeNtpState'); const timeNowEl = $('#timeNow');
+    let tr = null;
+    try { tr = await core.machine.timeRead(); }
+    catch (e) { /* timedate1/bundled list unavailable — leave the rows at their HTML defaults */ }
+    if (tr) {
+        if (tr.usec != null && timeNowEl) timeNowEl.textContent = clockFmt(new Date(tr.usec / 1000)); // timedate1 usec -> ms
+        const ntpOn = tr.ntp === true;
+        if (timeNote) {
+            timeNote.textContent = ntpOn ? '(time sync is on — manual time is disabled)' : '';
+            timeNote.classList.toggle('ucm-hidden', !ntpOn);
+        }
+        if (timeInp) {
+            timeInp.disabled = ntpOn;
+            if (!ntpOn) {
+                const t = new Date(); t.setSeconds(0, 0);
+                const pad = (x) => String(x).padStart(2, '0');
+                timeInp.value = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate())
+                    + 'T' + pad(t.getHours()) + ':' + pad(t.getMinutes());
+            }
+        }
+        if (timeBtn) timeBtn.disabled = ntpOn;
+        // the zone list: 497 <option>s (the real IANA list, bundled).
+        if (zoneSel) {
+            zoneSel.innerHTML = '';
+            const zones = tr.zones || [];
+            for (const z of zones) zoneSel.appendChild(new Option(z, z));
+            zoneSel.value = (tr.zone && zones.includes(tr.zone)) ? tr.zone : (zones[0] || '');
+        }
+        if (zoneBtn) zoneBtn.disabled = !zoneSel || !zoneSel.value;
+    }
+}
+
+async function doSetTime() {
+    const inp = $('#timeSetInput'); const btn = $('#timeSetBtn');
+    if (!inp || !inp.value) return;
+    const local = new Date(inp.value).getTime();
+    if (!Number.isFinite(local)) { toastErr(new Error('could not read the time from the field')); return; }
+    btn.disabled = true;
+    try {
+        await core.machine.timeSet(Math.round((local - new Date().getTimezoneOffset() * 60000) * 1000)); // local -> UTC usec
+        const nowEl = $('#timeNow');
+        if (nowEl) nowEl.textContent = clockFmt(new Date(local));
+        toast('positive', 'Time set', 'The system clock was set manually.');
+    } catch (e) { toastErr(e); }
+    finally { btn.disabled = false; }
+}
+
+async function doSetZone() {
+    const sel = $('#timeZoneSelect'); const btn = $('#timeZoneApplyBtn'); const msg = $('#timeZoneMsg');
+    if (!sel || !sel.value) return;
+    const zone = sel.value;
+    btn.disabled = true;
+    let change = null;
+    try {
+        change = (await core.machine.timeZoneWrite(zone)) || null;
+        toast('positive', 'Time zone updated', 'The device is now in ' + zone + '.');
+    } catch (e) { toastErr(e); }
+    finally {
+        btn.disabled = false;
+        if (change) {
+            const done = await waitChangeSettled(change);
+            if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') {
+                toast('negative', 'Time zone not applied', 'The previous time zone is still in effect.');
+            }
+        }
+    }
+}
+
+async function doShowClock(on) {
+    const sw = $('#showClockSwitch');
+    try {
+        await core.settings.setShowClock(on ? 'on' : 'off');
+        // the pushed status payload does the actual show/hide (applyAuthPayload).
+        syncShowClock(on ? 'on' : 'off');
+        toast('positive', on ? 'Topbar clock on' : 'Topbar clock off', on ? 'The local time is now shown in the top bar.' : 'The topbar clock is hidden.');
+    } catch (e) { toastErr(e); if (sw) sw.checked = !on; }
+}
+function syncShowClock(value) {
+    state.showClock = value === 'on' ? 'on' : 'off';
+    const sw = $('#showClockSwitch'); const st = $('#showClockState');
+    if (sw) sw.checked = state.showClock === 'on';
+    if (st) st.textContent = state.showClock === 'on' ? 'On' : 'Off';
+    updateTopbarClock();
 }
 
 function renderScheduled() {
@@ -3889,9 +4004,17 @@ async function cancelScheduled() {
 }
 
 function wire() {
+    startTopbarClock();
     const netAdd = $('#netAddDevice');
     if (netAdd) netAdd.addEventListener('click', () => netAddBridge());
 
+    // round T: the Time card (null-guarded — the house wire rule).
+    const timeBtn = $('#timeSetBtn');
+    if (timeBtn) timeBtn.addEventListener('click', () => doSetTime());
+    const zoneBtn = $('#timeZoneApplyBtn');
+    if (zoneBtn) zoneBtn.addEventListener('click', () => doSetZone());
+    const clockSw = $('#showClockSwitch');
+    if (clockSw) clockSw.addEventListener('change', (e) => doShowClock(e.target.checked));
     // Round 48k: Escape cancels the topmost confirmation dialog — the same as
     // its Cancel button (every confirm's Cancel handler is just box.remove()).
     // Registered here, before any modal can open, so this listener runs before

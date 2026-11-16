@@ -139,10 +139,18 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     // ---- round L: the SYSTEM page (the REAL journal + the REAL login1
     // read). READ-ONLY: the probe never triggers a power action.
     const sy = p.sys || {};
-    ok('the system page shows its 3 cards in the real app (nav + loaders wired)',
+    ok('the system page shows its 4 cards in the real app (nav + loaders wired)',
         sy.ok === true && sy.sy && sy.sy.viewActive === true
-        && JSON.stringify(sy.sy.cards) === JSON.stringify(['System journal', 'Snap refresh schedule', 'System power']),
+        && JSON.stringify(sy.sy.cards) === JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'System power']),
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.error));
+    // round T: the REAL time read (timedate1 over the existing
+    // timeserver-control plug — READ-ONLY; the wall clock + the live zone
+    // must come back, and the bundled zone list must be non-trivial).
+    ok('the REAL timedate1 read works (wall clock + live zone + bundled zones; read-only)',
+        sy.ok === true && sy.sy && sy.sy.time && sy.sy.time.usecOk === true
+        && typeof sy.sy.time.zone === 'string' && sy.sy.time.zone.length > 0
+        && sy.sy.time.zones > 400,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.time) : sy.error));
     ok('the REAL journal (journalctl via log-observe) returns real lines',
         sy.ok === true && sy.sy && sy.sy.journal && sy.sy.journal.ok === true && sy.sy.journal.n > 0,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.journal) : sy.error));

@@ -402,6 +402,9 @@ function statusPayload() {
         // round A: the appearance pref ('light' | 'dark') — the renderer maps
         // 'dark' to the vanilla <html>.is-dark class (live theme switch).
         appearance: appearancePref,
+        // round T: the topbar-clock pref ('on' | 'off') — the renderer
+        // shows/hides the topbar clock from it (the appearance idiom).
+        showClock: showClockValue(),
         // round I: the local pages list (embedded localhost web UIs) — the
         // renderer renders the sidebar entries + the <webview> views.
         localPages: localPages.map((e) => ({ name: e.name, url: e.url })),
@@ -2143,6 +2146,176 @@ async function setGlobalRefreshNow() {
         { body: { action: 'refresh' }, auth: A() });
 }
 
+/* ------------------------------------------------------------------ *
+ * 8g. Time card (round T): manual time + timezone + topbar clock
+ *
+ * The user asked for a "Time" card on the System page (between the
+ * refresh schedule and power) with: a manual SET-TIME control, a
+ * timezone picker, and a toggle for the topbar clock.
+ *
+ * MECHANISMS (all source-verified against local snapd @8d4d073 in
+ * container snapd-sign-patch /root/snapd — the standing rule):
+ *
+ * (a) SET-TIME = timedated D-Bus SetTime. There is NO snapd option for
+ *     the wall clock (the refresh/schedule/timer/hold options cover
+ *     auto-refresh only), so this is the one mechanism that needs a
+ *     NEW plug: time-control (interfaces/builtin/time_control.go —
+ *     grants Set{Time,LocalRTC} + capability sys_time + RTC access;
+ *     deny-auto-connection: true, like the other plugs). Signature
+ *     verified against the live bus (busctl introspect + a
+ *     dbus-next marshal probe of THIS app's dependency):
+ *       SetTime(xbb) = (usec: uint64-UTC, monotonic-serial: uint64,
+ *                        interactive: bool)  -> body [usec, 0, false]
+ *     The uint64 is sent as a JS NUMBER (the read side arrives as a
+ *     BigInt — see timeNowUsec — but the WRITE marshals fine as a
+ *     number; the value is a 1.79e15-era usec, far inside the
+ *     2^53-safe range).
+ *
+ * (b) GATE = the live NTP state (timedate1 Properties.Get NTPEnabled,
+ *     the same read the Network "Sync time from internet" toggle
+ *     uses). If NTP is ON, manual time-setting is refused — with
+ *     time sync active, a manual set is meaningless (it gets
+ *     overwritten on the next sync). Checked in the renderer (the
+ *     rows grey out) AND re-checked here at write time (robust
+ *     against a CLI flip between page load and click).
+ *
+ * (c) TIMEZONE WRITE = the snapd option core.system.timezone (an
+ *     EXTERNAL config, configcore/timezone.go: the daemon itself runs
+ *     "timedatectl set-timezone <zone>" as the configure handler —
+ *     so the app does a PLAIN core conf PUT over the existing snapd
+ *     UDS and does NOT need the timezone-control plug for writing,
+ *     and does not shell out itself). Validation mirrors snapd's
+ *     validTimezone regexp.
+ *
+ * (d) TIMEZONE LIST = the bundled IANA list (build/data/timezones.json,
+ *     captured from "timedatectl list-timezones" on Core 24 = the
+ *     VM's tzdata; every entry matches snapd's validTimezone regexp —
+ *     snapd would reject a zone name at configure time anyway).
+ *     Bundling needs NO plug and NO D-Bus dependency (the
+ *     timezone-control ListTimezones grant exists but would be a
+ *     second plug for zero benefit).
+ *
+ * (e) TIMEZONE READ (the CURRENT zone) = timedate1 Properties.Get
+ *     Timezone — already granted by the EXISTING timeserver-control
+ *     plug (Get{,All} on timedate1), so no new plug.
+ *
+ * (f) TOPBAR CLOCK = a pure UI pref (show-clock.pref, the
+ *     appearance.ipfwd idiom — $SNAP_COMMON, 0600, console-
+ *     privileged, rides the status payload like appearance). The
+ *     clock itself renders from new Date() in the renderer (the
+ *     local time of the OS = exactly what a kiosk topbar should
+ *     show); the pref only switches it on/off.
+ * ------------------------------------------------------------------ */
+/* The IANA zone list (bundled — see 8g(d)). */
+function timeZonesPath() {
+    return process.env.UCM_TIMEZONES || path.join(__dirname, 'build', 'data', 'timezones.json');
+}
+let TIMEZONES_CACHE = null;
+function listTimezones() {
+    if (TIMEZONES_CACHE) return TIMEZONES_CACHE;
+    const raw = JSON.parse(fs.readFileSync(timeZonesPath(), 'utf8'));
+    if (!Array.isArray(raw) || raw.length === 0 || raw.some((z) => typeof z !== 'string' || z.trim() === ''))
+        throw new Error('the bundled timezone list is corrupt (' + timeZonesPath() + ')');
+    TIMEZONES_CACHE = raw.slice().sort();
+    return TIMEZONES_CACHE;
+}
+/* test seam: point the zone list at a different file (integration tests). */
+function __setTimeZonesFile(p) { process.env.UCM_TIMEZONES = p || null; TIMEZONES_CACHE = null; }
+/* snapd's validTimezone (configcore/timezone.go) — the daemon re-validates
+   at configure time, but the app rejects junk BEFORE the IPC round-trip. */
+const RE_TIMEZONE = /^[a-zA-Z0-9+_-]+(\/[a-zA-Z0-9+_-]+)?(\/[a-zA-Z0-9+_-]+)?$/;
+function timezoneValid(zone) {
+    return typeof zone === 'string' && RE_TIMEZONE.test(zone) && zone.split('/').length <= 3;
+}
+
+/* (e) the CURRENT timezone — timedate1 Properties.Get (granted by the
+   existing timeserver-control plug: Get{,All} on timedate1). */
+async function timeNowZone() {
+    const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
+        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
+        body: [TIME_DATE_IFACE, 'Timezone'] });
+    return String(unwrapVariant(body[0]));
+}
+/* (a) the LIVE wall clock (timedate1 TimeUSec) — read-side uint64
+   ARRIVES as a BigInt in dbus-next (the container probe: JSON.stringify
+   throws "Do not know how to serialize a BigInt"), so String() first,
+   then a Number (safe: the value is ~1.79e15 usec, far inside 2^53). */
+async function timeNowUsec() {
+    const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
+        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
+        body: [TIME_DATE_IFACE, 'TimeUSec'] });
+    return Number(String(unwrapVariant(body[0])));
+}
+async function timeNtpEnabled() {
+    const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
+        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
+        body: [TIME_DATE_IFACE, 'NTPEnabled'] });
+    return !!unwrapVariant(body[0]);
+}
+/* (a)+(b) manual set: re-check the gate HERE (a CLI could have enabled
+   NTP after the page loaded) + the exact xbb SetTime body. */
+async function timeSet(value) {
+    if (!Number.isFinite(value)) throw new Error('invalid time: ' + JSON.stringify(value));
+    if (await timeNtpEnabled()) {
+        throw new Error('time sync is ON — turn it off on the Network page to set the time manually');
+    }
+    await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
+        interface: TIME_DATE_IFACE, member: 'SetTime', signature: 'xbb',
+        body: [Math.round(value), 0, false] });
+    return { ok: true };
+}
+/* (c) timezone: plain core conf — snapd runs timedatectl itself. */
+async function timezoneRead() {
+    const res = await getSnapConfig('core', 'system.timezone');
+    return (res && typeof res === 'object' && 'system.timezone' in res) ? res['system.timezone'] : null;
+}
+async function timezoneWrite(zone) {
+    zone = (zone == null ? '' : String(zone)).trim();
+    if (!timezoneValid(zone)) throw new Error('invalid timezone: ' + JSON.stringify(zone));
+    await setSnapConfig('core', { 'system.timezone': zone });
+    return zone;
+}
+
+/* (f) the topbar-clock pref (the appearance idiom: a small 0600 file in
+   $SNAP_COMMON, value on the status payload, console-privileged set). */
+let SHOW_CLOCKS = ['on', 'off'];
+let DEFAULT_SHOW_CLOCK = 'off';
+let showClockPref = 'off';
+function showClockPrefPath() {
+    return process.env.UCM_SHOW_CLOCK_PREF || (stateDir() ? path.join(stateDir(), 'show-clock.pref') : null);
+}
+function showClockPrefRead() {
+    const p = showClockPrefPath();
+    if (!p) return DEFAULT_SHOW_CLOCK;
+    try {
+        const v = fs.readFileSync(p, 'utf8').trim();
+        return SHOW_CLOCKS.includes(v) ? v : DEFAULT_SHOW_CLOCK;
+    } catch { return DEFAULT_SHOW_CLOCK; }
+}
+function showClockPrefWrite(v) {
+    const p = showClockPrefPath();
+    if (!p) return; // dev mode (no state dir) — nothing durable
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, v, { mode: 0o600 });
+}
+function showClockValue() {
+    // Read at CALL time (the ipfwd idiom, NOT the appearance module-load
+    // cache): the pref is a one-word 0600 file, and call-time reads keep the
+    // UCM_SHOW_CLOCK_PREF seam (integration tests) working on the same
+    // required instance.
+    return showClockPrefRead();
+}
+function getShowClock() {
+    return { value: showClockValue(), allowed: SHOW_CLOCKS.slice(), default: DEFAULT_SHOW_CLOCK };
+}
+function setShowClock(v) {
+    if (typeof v !== 'string' || !SHOW_CLOCKS.includes(v)) {
+        throw new Error('invalid show-clock: ' + JSON.stringify(v) + ' (allowed: ' + SHOW_CLOCKS.join(', ') + ')');
+    }
+    showClockPrefWrite(v);
+    return getShowClock();
+}
+
 /* ---- 3. power / scheduled shutdown (login1 over D-Bus) --------------- */
 
 let __login1Transport = null;
@@ -2500,6 +2673,10 @@ const api = {
     getSnapServices, controlSnapService,
     getSnapConfig, getNetplan, listInterfaces, confInferType,
     timesyncStatus, timesyncSetEnabled, timesyncSetServer,
+    // round T: the System-page Time card (set-time + timezone + topbar clock)
+    listTimezones, timezoneValid, timeNowUsec, timeNowZone, timeNtpEnabled,
+    timeSet, timezoneRead, timezoneWrite,
+    getShowClock, setShowClock, __setTimeZonesFile, statusPayload,
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
     // round L: System page (journal / refresh schedule / power)
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
@@ -2827,6 +3004,14 @@ function initElectron() {
                                     await wait(1500);
                                     sy.viewActive = !document.querySelector('#view-system').classList.contains('ucm-hidden');
                                     sy.cards = Array.from(document.querySelectorAll('#view-system .p-card .p-heading--5')).map((h) => h.textContent.trim());
+                                    // round T: the REAL time READ (timedate1
+                                    // Properties.Get — granted by the EXISTING
+                                    // timeserver-control plug; READ-ONLY, the
+                                    // probe never sets time/zone).
+                                    try {
+                                        const tr = await core.machine.timeRead();
+                                        sy.time = tr ? { usecOk: tr.usec != null, zone: tr.zone, ntp: tr.ntp, zones: (tr.zones || []).length } : null;
+                                    } catch (e) { sy.time = { error: String(e.message || e) }; }
                                     return { ok: true, sy };
                                 } catch (e) {
                                     return { ok: false, error: String((e && e.message) || e) };
@@ -2934,6 +3119,20 @@ function initElectron() {
     ipcMain.handle('timesync:status', guard(() => timesyncStatus()));
     ipcMain.handle('timesync:set-enabled', guard((b) => { requireAuth(); return timesyncSetEnabled(b); }));
     ipcMain.handle('timesync:set-server', guard((s) => { requireAuth(); return timesyncSetServer(s); }));
+    // round T: the Time card (the System page). Reads are auth-gated like
+    // the other system reads; writes are console-privileged.
+    ipcMain.handle('system:time-read', guard(async () => {
+        requireAuth();
+        const out = { usec: null, zone: null, ntp: null, zones: null };
+        try { out.usec = await timeNowUsec(); } catch { /* timedate1 unreachable */ }
+        try { out.zone = await timeNowZone(); } catch { /* ditto */ }
+        try { out.ntp = await timeNtpEnabled(); } catch { /* ditto */ }
+        try { out.zones = listTimezones(); } catch (e) { out.zones = null; out.zonesError = String((e && e.message) || e); }
+        return out;
+    }));
+    ipcMain.handle('system:time-set', guard(async (value) => { requireAuth(); return timeSet(value); }));
+    ipcMain.handle('system:timezone-write', guard(async (zone) => { requireAuth(); return timezoneWrite(zone); }));
+    ipcMain.handle('settings:set-show-clock', guard((value) => { requireAuth(); const p = setShowClock(value); pushAuthStatus(); return p; }));
     // ip forwarding (network-control interface; reads open, writes are
     // console-privileged like the other system changes)
     // network devices (round 53): the live list (open) + the per-device
