@@ -2213,9 +2213,17 @@ function timeZonesPath() {
 let TIMEZONES_CACHE = null;
 function listTimezones() {
     if (TIMEZONES_CACHE) return TIMEZONES_CACHE;
-    const raw = JSON.parse(fs.readFileSync(timeZonesPath(), 'utf8'));
-    if (!Array.isArray(raw) || raw.length === 0 || raw.some((z) => typeof z !== 'string' || z.trim() === ''))
-        throw new Error('the bundled timezone list is corrupt (' + timeZonesPath() + ')');
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(timeZonesPath(), 'utf8')); }
+    catch (e) {
+        // the bundled list is missing/corrupt — degrade to an EMPTY list (the
+        // picker stays usable). A missing data file must NOT throw: that would
+        // blank the whole time read. (round-T-fix bug 2)
+        console.error('listTimezones: no usable bundled zone list (' + timeZonesPath() + '): ' + String((e && e.message) || e));
+        TIMEZONES_CACHE = [];
+        return TIMEZONES_CACHE;
+    }
+    if (!Array.isArray(raw) || raw.some((z) => typeof z !== 'string' || z.trim() === '')) raw = [];
     TIMEZONES_CACHE = raw.slice().sort();
     return TIMEZONES_CACHE;
 }
@@ -2230,27 +2238,35 @@ function timezoneValid(zone) {
 
 /* (e) the CURRENT timezone — timedate1 Properties.Get (granted by the
    existing timeserver-control plug: Get{,All} on timedate1). */
-async function timeNowZone() {
+/* The live timedate1 properties in ONE call — Properties.Get**All** (signature
+   "s", body [iface]) returning { Prop: Variant, ... }. Properties.Get (signature
+   "ss", body [iface, prop]) is REJECTED by systemd on this bus ("Unknown
+   interface org.freedesktop.timedate1 or property …") — the round-T bug.
+   GetAll is the idiom the already-working Network "Sync time from internet"
+   toggle (timesyncNtpEnabled) uses, and it is granted by BOTH timeserver-
+   control AND time-control, so it is safe under either plug. (round-T-fix bug 1) */
+async function timedateAllProps() {
     const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
-        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
-        body: [TIME_DATE_IFACE, 'Timezone'] });
-    return String(unwrapVariant(body[0]));
+        interface: 'org.freedesktop.DBus.Properties', member: 'GetAll', signature: 's',
+        body: [TIME_DATE_IFACE] });
+    return (body && body[0]) || {};
 }
-/* (a) the LIVE wall clock (timedate1 TimeUSec) — read-side uint64
-   ARRIVES as a BigInt in dbus-next (the container probe: JSON.stringify
-   throws "Do not know how to serialize a BigInt"), so String() first,
-   then a Number (safe: the value is ~1.79e15 usec, far inside 2^53). */
+async function timeNowZone() {
+    const p = await timedateAllProps();
+    return (p.Timezone != null) ? String(unwrapVariant(p.Timezone)) : null;
+}
 async function timeNowUsec() {
-    const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
-        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
-        body: [TIME_DATE_IFACE, 'TimeUSec'] });
-    return Number(String(unwrapVariant(body[0])));
+    const p = await timedateAllProps();
+    if (p.TimeUSec == null) return null;
+    // the read-side uint64 arrives as a BigInt (JSON.stringify throws) —
+    // String() first, then Number (safe: ~1.79e15 usec is inside 2^53).
+    return Number(String(unwrapVariant(p.TimeUSec)));
 }
 async function timeNtpEnabled() {
-    const body = await timesyncTransport({ destination: TIME_DATE_DEST, path: TIME_DATE_PATH,
-        interface: 'org.freedesktop.DBus.Properties', member: 'Get', signature: 'ss',
-        body: [TIME_DATE_IFACE, 'NTPEnabled'] });
-    return !!unwrapVariant(body[0]);
+    const p = await timedateAllProps();
+    if (p.NTPEnabled != null) return !!unwrapVariant(p.NTPEnabled);
+    if (p.NTP != null) return !!unwrapVariant(p.NTP); // older-systemd alias
+    return null;
 }
 /* (a)+(b) manual set: re-check the gate HERE (a CLI could have enabled
    NTP after the page loaded) + the exact xbb SetTime body. */
@@ -2892,7 +2908,48 @@ function initElectron() {
         win.on('maximize', () => { if (!win.isDestroyed()) win.unmaximize(); });
         win.on('minimize', () => { if (!win.isDestroyed()) win.restore(); });
 
-        win.once('ready-to-show', () => win.show());
+        // ---- kiosk content-size re-assert (round-T-fix bug 3) --------------
+        // The window is useContentSize + fullscreen. On some Wayland/compositor
+        // setups an external re-layout can leave the WEB-CONTENTS view stuck at
+        // its initial 1280x800 while the window is taller — the bottom then shows
+        // the window background (the user's "empty white space taking the bottom
+        // half; the app can't be moved/resized because it is a fixed kiosk). The
+        // app never resizes the window itself, so this only CLAMPS drift: if the
+        // content size has stopped matching the full primary display, re-assert it.
+        // Healthy state (content == work area) -> the 4px tolerance makes this a
+        // NO-OP (no thrash). Uses the real display size (NOT a hardcoded 1280x800)
+        // so it is correct at any VM resolution.
+        let kioskReasserting = false;
+        function kioskReassert() {
+            if (!win || win.isDestroyed() || kioskReasserting) return;
+            try {
+                const disp = (electron.screen && electron.screen.getPrimaryDisplay)
+                    ? electron.screen.getPrimaryDisplay() : null;
+                if (!disp || !disp.workArea) return;
+                const cs = win.getContentSize();
+                const w = disp.workArea.width, h = disp.workArea.height;
+                if (Math.abs(cs[0] - w) > 4 || Math.abs(cs[1] - h) > 4) {
+                    kioskReasserting = true;
+                    console.error('kiosk content-size drift ' + JSON.stringify(cs) + ' -> display ' + JSON.stringify([w, h]) + '; re-asserting');
+                    try { win.setContentSize(w, h, false); } catch (e) {}
+                    try { win.setFullScreen(true); } catch (e) {}
+                    setTimeout(() => { kioskReasserting = false; }, 500);
+                }
+            } catch (e) { /* headless / no display — nothing to clamp */ }
+        }
+        win.on('resize', kioskReassert);
+        win.on('blur', kioskReassert);
+        win.on('focus', kioskReassert);
+        // the most direct trigger: the web-contents VIEW resized (stuck at
+        // 800px while the window is taller).
+        win.webContents.on('resize', kioskReassert);
+
+        win.once('ready-to-show', () => {
+            win.show();
+            // the initial kiosk/fullscreen layout can already be desynced
+            // (contents pinned at 800px) — correct it once after show.
+            setTimeout(kioskReassert, 300);
+        });
         win.loadFile(path.join(__dirname, 'ui', 'index.html'));
         win.on('closed', () => { mainWin = null; });
         // round L: a running journal follow (-f child) dies with the window.

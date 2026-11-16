@@ -1656,6 +1656,71 @@ function ok(name, cond, extra = '') {
           // clear it again so the rest of the section (hold/refresh-now) sees a clean doc
           await m.refreshTimerWrite('');
         }
+        // ---- the kiosk content-size clamp (round-T-fix bug 3) ----
+        // The VM symptom: an external re-layout left the web-contents view stuck
+        // at 1280x800 while the window was taller (bottom half = window
+        // background). The app never resizes the window itself — it CLAMPS drift
+        // (re-assert the content size to the full display). Unit-test it
+        // deterministically: a richer fake electron with a 1920x1080 display,
+        // fire the captured 'resize' handler, and assert the clamp re-asserts
+        // on drift (800 != 1080) and is a NO-OP when healthy.
+        {
+          const WIRE2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-wire2-'));
+          process.env.UCM_STATE_DIR = WIRE2;
+          let lastWin = null;
+          global.UCM_FAKE_ELECTRON = {
+            app: { requestSingleInstanceLock: () => true, on: () => {}, whenReady: () => Promise.resolve(), quit: () => {} },
+            BrowserWindow: class {
+              constructor() {
+                lastWin = this;
+                this._h = {}; this._wc = {};
+                this.webContents = { on: (c, fn) => { this._wc[c] = fn; }, send: () => {}, setWindowOpenHandler: () => {}, executeJavaScript: () => Promise.resolve(null) };
+                this.on = (c, fn) => { (this._h[c] = this._h[c] || []).push(fn); };
+                this.once = (c, fn) => { (this._h[c] = this._h[c] || []).push(fn); };
+                this.loadFile = () => {};
+                this.isDestroyed = () => false; this.isVisible = () => true;
+                this.setAlwaysOnTop = () => {}; this.focus = () => {}; this.unmaximize = () => {}; this.restore = () => {}; this.show = () => {};
+                this._cs = [1280, 800]; this._contentSet = 0; this._fsSet = 0;
+                this.getContentSize = () => this._cs;
+                this.setContentSize = (w, h) => { this._cs = [w, h]; this._contentSet += 1; };
+                this.setFullScreen = () => { this._fsSet += 1; };
+              }
+            },
+            ipcMain: { handle: () => {}, on: () => {} },
+            session: { fromPartition: (n) => ({ name: n, webRequest: { onHeadersReceived: () => {} }, on: () => {} }), defaultSession: { webRequest: { onHeadersReceived: () => {} }, localAuthenticated: false } },
+            screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
+          };
+          process.env.UCM_FAKE_ELECTRON = '1';
+          try {
+            delete require.cache[require.resolve(path.join(__dirname, '..', 'main.js'))];
+            require(path.join(__dirname, '..', 'main.js'));
+            await new Promise((r) => setImmediate(r));
+            await new Promise((r) => setImmediate(r));
+            ok('kiosk clamp: the window wired its resize handler (round-T-fix bug 3)',
+               lastWin && Array.isArray(lastWin._h['resize']) && lastWin._h['resize'].length >= 1);
+            // drift: content 1280x800 vs display 1920x1080 -> the clamp re-asserts.
+            // (defensive: if the handler is absent the ok() above already fired;
+            //  the forEach must not CRASH the suite on that mutation.)
+            if (Array.isArray(lastWin._h['resize'])) lastWin._h['resize'].forEach((fn) => fn());
+            ok('kiosk clamp: a DRIFTED content size (stuck 800px on a 1080 display) is re-asserted to the full display',
+               JSON.stringify(lastWin._cs) === JSON.stringify([1920, 1080]) && lastWin._contentSet === 1 && lastWin._fsSet === 1,
+               JSON.stringify({ cs: lastWin._cs, contentSet: lastWin._contentSet, fsSet: lastWin._fsSet }));
+            // healthy: content now matches the display -> a further resize is a NO-OP.
+            await new Promise((r) => setTimeout(r, 600)); // let the re-assert debounce clear
+            if (Array.isArray(lastWin._h['resize'])) lastWin._h['resize'].forEach((fn) => fn());
+            lastWin._wc['resize'] && lastWin._wc['resize']();
+            ok('kiosk clamp: when the content size ALREADY matches the display it is a NO-OP (no thrash)',
+               lastWin._contentSet === 1 && lastWin._fsSet === 1 && JSON.stringify(lastWin._cs) === JSON.stringify([1920, 1080]),
+               JSON.stringify({ contentSet: lastWin._contentSet, fsSet: lastWin._fsSet }));
+          } finally {
+            delete process.env.UCM_FAKE_ELECTRON;
+            delete global.UCM_FAKE_ELECTRON;
+            delete require.cache[require.resolve(path.join(__dirname, '..', 'main.js'))];
+            process.env.UCM_STATE_DIR = STATE;
+            try { fs.rmSync(WIRE2, { recursive: true, force: true }); } catch {}
+          }
+        }
+
         // ---- the TIME card (round T: set-time + timezone + topbar clock) ----
         // (a) the bundled IANA zone list (main.js listTimezones — the file the
         //      renderer's <select> is built from; every entry must pass
@@ -1669,26 +1734,60 @@ function ok(name, cond, extra = '') {
              zones.every((z) => m.timezoneValid(z)));
           ok('timezones: the common zones are present (Etc/UTC + a few)',
              zones.includes('Etc/UTC') && zones.includes('Europe/Berlin') && zones.includes('America/New_York') && zones.includes('Asia/Tokyo'));
+          // round-T-fix bug 2 (structural): the zone <select> must NOT carry a
+          // permanent `disabled` attribute in the markup — the round-T bug. The
+          // enable logic lives in loadSystem (the harness locks the runtime
+          // state); this locks the markup so the attribute can't regress.
+          const idxHtml = fs.readFileSync(path.join(__dirname, '..', 'ui', 'index.html'), 'utf8');
+          const zoneSelTag = (idxHtml.match(/<select[^>]*id="timeZoneSelect"[^>]*>/) || [''])[0];
+          ok('zone select: the markup carries NO permanent disabled attribute (round-T-fix bug 2)',
+             !!zoneSelTag && /disabled/.test(zoneSelTag) === false, zoneSelTag);
           ok('timezoneValid: junk is rejected (not a zone grammar)',
              m.timezoneValid('') === false && m.timezoneValid('a/b/c/d') === false && m.timezoneValid('has space') === false
              && m.timezoneValid('Europe/Berlin') === true && m.timezoneValid('Etc/GMT+5') === true && m.timezoneValid(5) === false);
+          // round-T-fix bug 2: a MISSING/CORRUPT bundled list degrades to an
+          // EMPTY array (the picker stays usable) — it must NOT throw (that
+          // would blank the whole time read, the VM symptom). Point the seam at
+          // a bad path, exercise the degrade, then restore the real bundled list.
+          const badZoneFile = path.join(STATE, 'ucm-badzones-' + process.pid + '.json');
+          m.__setTimeZonesFile('/nonexistent/ucm-zones.json');
+          let deg = null, degErr = null;
+          try { deg = m.listTimezones(); } catch (e) { degErr = e; }
+          ok('listTimezones: a MISSING bundled file degrades to an EMPTY list (no throw)',
+             degErr === null && Array.isArray(deg) && deg.length === 0, degErr && degErr.message);
+          fs.writeFileSync(badZoneFile, 'not-a-json', 'utf8');
+          m.__setTimeZonesFile(badZoneFile);
+          let deg2 = null, deg2Err = null;
+          try { deg2 = m.listTimezones(); } catch (e) { deg2Err = e; }
+          ok('listTimezones: a CORRUPT bundled file degrades to an EMPTY list (no throw)',
+             deg2Err === null && Array.isArray(deg2) && deg2.length === 0, deg2Err && deg2Err.message);
+          m.__setTimeZonesFile(null); // restore the real bundled list
+          try { fs.unlinkSync(badZoneFile); } catch (e) {}
         }
         // (b) set-time: the NTP gate (checked in main at write time) + the
         //      EXACT SetTime(xbb) D-Bus body (injected transport, the 49h
         //      signature-verification idiom).
         {
           const tCalls = [];
+          // the read is Properties.Get**All** (the round-T-fix bug 1: the
+          // per-property Get(ss) is REJECTED by systemd). The fake returns the
+          // full props map (Variant-wrapped, as dbus-next does).
           m.__setTimesyncTransport(async (spec) => {
             tCalls.push(spec);
-            if (spec.member === 'Get') {
-              if (spec.body && spec.body[1] === 'NTPEnabled') return [{ signature: 'b', value: false }];
-              if (spec.body && spec.body[1] === 'Timezone') return [{ signature: 's', value: 'Europe/Berlin' }];
-              if (spec.body && spec.body[1] === 'TimeUSec') return [{ signature: 't', value: 1794771882397771n }];
+            if (spec.member === 'GetAll') {
+              return [{ NTPEnabled: { signature: 'b', value: false }, Timezone: { signature: 's', value: 'Europe/Berlin' }, TimeUSec: { signature: 't', value: 1794771882397771n } }];
             }
             return [];
           });
           const usec = 1794770000000000;
           const r1 = await m.timeSet(usec);
+          // BUG-1 REGRESSION LOCK: the NTP gate read MUST use Properties.GetAll
+          // (the working idiom), NOT the per-property Get(ss) that systemd
+          // rejects ("Unknown interface ... or property NTPEnabled").
+          const propCall = tCalls.find((c) => c.member === 'Get' || c.member === 'GetAll');
+          ok('timeSet gate: the NTP read uses Properties.GetAll (the per-property Get(ss) is rejected by systemd — round-T bug 1)',
+             !!propCall && propCall.member === 'GetAll' && propCall.signature === 's' && JSON.stringify(propCall.body) === JSON.stringify(['org.freedesktop.timedate1']),
+             propCall ? JSON.stringify([propCall.member, propCall.signature, propCall.body.map(String)]) : 'no prop call');
           const setCall = tCalls.find((c) => c.member === 'SetTime');
           ok('timeSet: returns ok and calls SetTime', r1.ok === true && !!setCall);
           ok('timeSet: the body is EXACTLY [usec, 0, false] with the xbb signature (the container introspection truth)',
@@ -1696,7 +1795,7 @@ function ok(name, cond, extra = '') {
              setCall ? JSON.stringify([setCall.signature, setCall.body.map(String)]) : 'no call');
           // the GATE: with NTP on, a manual set is refused BEFORE any SetTime.
           m.__setTimesyncTransport(async (spec) => {
-            if (spec.member === 'Get' && spec.body && spec.body[1] === 'NTPEnabled') return [{ signature: 'b', value: true }];
+            if (spec.member === 'GetAll') return [{ NTPEnabled: { signature: 'b', value: true } }];
             throw new Error('SetTime must never be reached while NTP is on');
           });
           let gateErr = null;

@@ -3531,12 +3531,17 @@ async function loadSystem() {
             }
         }
         if (timeBtn) timeBtn.disabled = ntpOn;
-        // the zone list: 497 <option>s (the real IANA list, bundled).
+        // the zone list: the real IANA list (bundled in build/data/timezones.json).
+        // The timezone picker is NOT NTP-gated (a timezone is meaningful whether
+        // or not time is synced) — it must be ENABLED whenever it has options.
+        // (round-T-fix bug 2: the markup carried a permanent `disabled` and this
+        // line never cleared it, so the pulldown was hard-locked to Etc/UTC.)
         if (zoneSel) {
             zoneSel.innerHTML = '';
             const zones = tr.zones || [];
             for (const z of zones) zoneSel.appendChild(new Option(z, z));
             zoneSel.value = (tr.zone && zones.includes(tr.zone)) ? tr.zone : (zones[0] || '');
+            zoneSel.disabled = zones.length === 0; // only disabled if the list is empty
         }
         if (zoneBtn) zoneBtn.disabled = !zoneSel || !zoneSel.value;
     }

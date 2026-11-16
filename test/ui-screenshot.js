@@ -6543,6 +6543,7 @@ function mockFactoryJs() {
         timeBtn: (document.querySelector('#timeSetBtn') || {}).disabled,
         zoneN: document.querySelector('#timeZoneSelect') ? document.querySelector('#timeZoneSelect').options.length : null,
         zoneVal: (document.querySelector('#timeZoneSelect') || {}).value,
+        zoneDisabled: (document.querySelector('#timeZoneSelect') || {}).disabled,
         zoneBtn: (document.querySelector('#timeZoneApplyBtn') || {}).disabled,
         clockSw: (document.querySelector('#showClockSwitch') || {}).checked,
         clockState: (document.querySelector('#showClockState') || {}).textContent || null,
@@ -6557,6 +6558,11 @@ function mockFactoryJs() {
     if (t0.noteHidden || (t0.timeNote || '').indexOf('time sync is on') < 0) console.log('PAGE ERROR: with NTP on the Time card must show the sync note (got ' + JSON.stringify(t0.timeNote) + ') (round T)');
     if (t0.timeInp !== true || t0.timeBtn !== true) console.log('PAGE ERROR: with NTP on the manual time set must be disabled (got ' + JSON.stringify([t0.timeInp, t0.timeBtn]) + ') (round T)');
     if (t0.zoneN < 30) console.log('PAGE ERROR: the timezone picker must carry the bundled zone list (got ' + JSON.stringify(t0.zoneN) + ') (round T)');
+    // BUG-2 LOCK: the timezone picker must be SELECTABLE (enabled) with options —
+    // the round-T markup carried a permanent `disabled` and loadSystem never cleared
+    // it, so the pulldown was hard-locked to the preselected zone (Etc/UTC).
+    if (t0.zoneDisabled !== false || t0.zoneN < 30 || !t0.zoneVal)
+        console.log('PAGE ERROR: the timezone picker must be ENABLED with the bundled list (not hard-locked to a single zone) (got disabled=' + JSON.stringify(t0.zoneDisabled) + ', n=' + JSON.stringify(t0.zoneN) + ', val=' + JSON.stringify(t0.zoneVal) + ') (round-T-fix bug 2)');
     if (t0.zoneVal !== 'Etc/UTC') console.log('PAGE ERROR: the timezone picker must preselect the LIVE zone (got ' + JSON.stringify(t0.zoneVal) + ') (round T)');
     if (t0.zoneBtn !== false) console.log('PAGE ERROR: the timezone apply must be enabled (the zone is not gated by NTP) (round T)');
     if (t0.clockSw !== false || t0.clockState !== 'Off') console.log('PAGE ERROR: the topbar clock must default OFF (got ' + JSON.stringify([t0.clockSw, t0.clockState]) + ') (round T)');
