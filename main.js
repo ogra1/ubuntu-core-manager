@@ -402,9 +402,6 @@ function statusPayload() {
         // round A: the appearance pref ('light' | 'dark') — the renderer maps
         // 'dark' to the vanilla <html>.is-dark class (live theme switch).
         appearance: appearancePref,
-        // round T: the topbar-clock pref ('on' | 'off') — the renderer
-        // shows/hides the topbar clock from it (the appearance idiom).
-        showClock: showClockValue(),
         // round I: the local pages list (embedded localhost web UIs) — the
         // renderer renders the sidebar entries + the <webview> views.
         localPages: localPages.map((e) => ({ name: e.name, url: e.url })),
@@ -2199,12 +2196,11 @@ async function setGlobalRefreshNow() {
  *     Timezone — already granted by the EXISTING timeserver-control
  *     plug (Get{,All} on timedate1), so no new plug.
  *
- * (f) TOPBAR CLOCK = a pure UI pref (show-clock.pref, the
- *     appearance.ipfwd idiom — $SNAP_COMMON, 0600, console-
- *     privileged, rides the status payload like appearance). The
- *     clock itself renders from new Date() in the renderer (the
- *     local time of the OS = exactly what a kiosk topbar should
- *     show); the pref only switches it on/off.
+ * (f) TOPBAR CLOCK = PERMANENT (round-T-fix8): the "Show clock in top
+ *     bar" toggle + pref + IPC were removed after bug-3; the clock is
+ *     always shown in the page title and the renderer updates it every
+ *     second from new Date() (the local time of the OS). No main-side
+ *     state, no status-payload field, no IPC.
  * ------------------------------------------------------------------ */
 /* The IANA zone list (bundled — see 8g(d)). */
 function timeZonesPath() {
@@ -2290,46 +2286,6 @@ async function timezoneWrite(zone) {
     if (!timezoneValid(zone)) throw new Error('invalid timezone: ' + JSON.stringify(zone));
     await setSnapConfig('core', { 'system.timezone': zone });
     return zone;
-}
-
-/* (f) the topbar-clock pref (the appearance idiom: a small 0600 file in
-   $SNAP_COMMON, value on the status payload, console-privileged set). */
-let SHOW_CLOCKS = ['on', 'off'];
-let DEFAULT_SHOW_CLOCK = 'off';
-let showClockPref = 'off';
-function showClockPrefPath() {
-    return process.env.UCM_SHOW_CLOCK_PREF || (stateDir() ? path.join(stateDir(), 'show-clock.pref') : null);
-}
-function showClockPrefRead() {
-    const p = showClockPrefPath();
-    if (!p) return DEFAULT_SHOW_CLOCK;
-    try {
-        const v = fs.readFileSync(p, 'utf8').trim();
-        return SHOW_CLOCKS.includes(v) ? v : DEFAULT_SHOW_CLOCK;
-    } catch { return DEFAULT_SHOW_CLOCK; }
-}
-function showClockPrefWrite(v) {
-    const p = showClockPrefPath();
-    if (!p) return; // dev mode (no state dir) — nothing durable
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, v, { mode: 0o600 });
-}
-function showClockValue() {
-    // Read at CALL time (the ipfwd idiom, NOT the appearance module-load
-    // cache): the pref is a one-word 0600 file, and call-time reads keep the
-    // UCM_SHOW_CLOCK_PREF seam (integration tests) working on the same
-    // required instance.
-    return showClockPrefRead();
-}
-function getShowClock() {
-    return { value: showClockValue(), allowed: SHOW_CLOCKS.slice(), default: DEFAULT_SHOW_CLOCK };
-}
-function setShowClock(v) {
-    if (typeof v !== 'string' || !SHOW_CLOCKS.includes(v)) {
-        throw new Error('invalid show-clock: ' + JSON.stringify(v) + ' (allowed: ' + SHOW_CLOCKS.join(', ') + ')');
-    }
-    showClockPrefWrite(v);
-    return getShowClock();
 }
 
 /* ---- 3. power / scheduled shutdown (login1 over D-Bus) --------------- */
@@ -2692,7 +2648,7 @@ const api = {
     // round T: the System-page Time card (set-time + timezone + topbar clock)
     listTimezones, timezoneValid, timeNowUsec, timeNowZone, timeNtpEnabled,
     timeSet, timezoneRead, timezoneWrite,
-    getShowClock, setShowClock, __setTimeZonesFile, statusPayload,
+    __setTimeZonesFile, statusPayload,
     parseTimesyncNtp, formatTimesyncNtp, __setTimesyncTransport,
     // round L: System page (journal / refresh schedule / power)
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
@@ -3189,7 +3145,6 @@ function initElectron() {
     }));
     ipcMain.handle('system:time-set', guard(async (value) => { requireAuth(); return timeSet(value); }));
     ipcMain.handle('system:timezone-write', guard(async (zone) => { requireAuth(); return timezoneWrite(zone); }));
-    ipcMain.handle('settings:set-show-clock', guard((value) => { requireAuth(); const p = setShowClock(value); pushAuthStatus(); return p; }));
     // ip forwarding (network-control interface; reads open, writes are
     // console-privileged like the other system changes)
     // network devices (round 53): the live list (open) + the per-device

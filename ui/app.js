@@ -128,9 +128,6 @@ const state = {
     // round L: the System page's power card (the live scheduled shutdown,
     // read from logind on view entry; {active, action, usec}).
     scheduled: null,
-    // round T: the Time card's topbar-clock pref. 'off' seeds the FIRST
-    // paint before core.auth.status() lands the real pref.
-    showClock: 'off',
     // optional store auth
     storeAuthenticated: false,
     storeUsername: null,
@@ -379,11 +376,6 @@ function applyAuthPayload(p) {
     // (undefined) falls back to the current value. (`!= null` was wrong: it
     // kept the stale default and hid a persisted "off" on load.)
     state.timeoutMs = p.timeoutMs !== undefined ? p.timeoutMs : state.timeoutMs;
-    // round T: the topbar-clock pref rides the status payload (the
-    // appearance idiom) — an explicit 'off' must stick, only an ABSENT
-    // field (undefined) falls back.
-    state.showClock = p.showClock !== undefined ? (p.showClock === 'on' ? 'on' : 'off') : state.showClock;
-    syncShowClock(state.showClock);
     // round A: the appearance rides the status payload. An explicit value
     // (including 'light') must stick; only an ABSENT field (undefined) falls
     // back — the same !==undefined contract as timeoutMs. Flipping
@@ -3453,16 +3445,20 @@ function clockFmt(d) {
     return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
 }
 let __clockTimer = null;
+// round-T-fix8: the topbar clock is PERMANENT (the show-clock toggle + pref +
+// IPC + status-payload field are removed — bug 3). It always shows and updates
+// every second (the same one-second textContent writer the session chip already
+// runs in this topbar, which has never caused the desync). No show/hide
+// transition, no payload push, no toggle.
 function updateTopbarClock() {
     const el = $('#topbarClock');
     if (!el) return;
-    el.classList.toggle('ucm-hidden', state.showClock !== 'on');
-    if (state.showClock === 'on') el.textContent = clockFmt(new Date());
+    el.textContent = clockFmt(new Date());
 }
 function startTopbarClock() {
     if (__clockTimer) return;
     updateTopbarClock();
-    __clockTimer = setInterval(() => { if (state.showClock === 'on') updateTopbarClock(); }, 1000);
+    __clockTimer = setInterval(updateTopbarClock, 1000);
 }
 async function loadSystem() {
     // Refresh schedule (core config; the shape-robust read lives in main.js).
@@ -3583,22 +3579,6 @@ async function doSetZone() {
     }
 }
 
-async function doShowClock(on) {
-    const sw = $('#showClockSwitch');
-    try {
-        await core.settings.setShowClock(on ? 'on' : 'off');
-        // the pushed status payload does the actual show/hide (applyAuthPayload).
-        syncShowClock(on ? 'on' : 'off');
-        toast('positive', on ? 'Topbar clock on' : 'Topbar clock off', on ? 'The local time is now shown in the top bar.' : 'The topbar clock is hidden.');
-    } catch (e) { toastErr(e); if (sw) sw.checked = !on; }
-}
-function syncShowClock(value) {
-    state.showClock = value === 'on' ? 'on' : 'off';
-    const sw = $('#showClockSwitch'); const st = $('#showClockState');
-    if (sw) sw.checked = state.showClock === 'on';
-    if (st) st.textContent = state.showClock === 'on' ? 'On' : 'Off';
-    updateTopbarClock();
-}
 
 function renderScheduled() {
     const row = $('#scheduledRow'); const msg = $('#scheduledMsg'); const btn = $('#scheduledCancelBtn');
@@ -4018,8 +3998,6 @@ function wire() {
     if (timeBtn) timeBtn.addEventListener('click', () => doSetTime());
     const zoneBtn = $('#timeZoneApplyBtn');
     if (zoneBtn) zoneBtn.addEventListener('click', () => doSetZone());
-    const clockSw = $('#showClockSwitch');
-    if (clockSw) clockSw.addEventListener('change', (e) => doShowClock(e.target.checked));
     // Round 48k: Escape cancels the topmost confirmation dialog — the same as
     // its Cancel button (every confirm's Cancel handler is just box.remove()).
     // Registered here, before any modal can open, so this listener runs before

@@ -256,10 +256,6 @@ function mockFactoryJs() {
            main.js setLockTimeout + the pref). Default '15' = the shipped
            15 min; 'off' = no auto-lock (timeoutMs null, no expiresAt). */
         let __lockTimeout = '15';
-        /* round T: the topbar-clock pref (mock of main.js showClockPref).
-           Default 'off' = the shipped default (no clock in the topbar). */
-        let __showClock = 'off';
-        let __showClockCalls = 0;
         let __lockCalls = 0;
         /* round A: the appearance (light/dark) — mock of main.js appearancePref
            + setAppearance. Default 'light' = the shipped default (the light
@@ -276,7 +272,6 @@ function mockFactoryJs() {
             expiresAt: (localAuthed && __lockTimeout !== 'off') ? Date.now() + Number(__lockTimeout) * 60000 : null,
             timeoutMs: (__lockTimeout === 'off') ? null : Number(__lockTimeout) * 60000,
             appearance: __appearance,
-            showClock: __showClock,
             localPages: __localPages.map((e) => ({ name: e.name, url: e.url, id: 'lp-' + __localPages.indexOf(e) })),
             storeAuthenticated: false,
             storeUsername: null,
@@ -378,20 +373,6 @@ function mockFactoryJs() {
                     return { list: __localPages.map((e) => ({ name: e.name, url: e.url })), max: 10 };
                 },
                 __localpages: () => ({ value: __localPages, calls: __localPagesCalls }),
-                // round T: the topbar-clock pref (mirror of main.js
-                // setShowClock: validate, persist, PUSH the status payload —
-                // the renderer's applyAuthPayload + syncShowClock run the
-                // real path, exactly like setAppearance).
-                async setShowClock(v) {
-                    const allowed = ['on', 'off'];
-                    if (!allowed.includes(v)) throw new Error('invalid show-clock: ' + v);
-                    __showClockCalls += 1;
-                    __showClock = v;
-                    const p = status();
-                    __SUBS.forEach((f) => { try { f(p); } catch (e) {} });
-                    return { value: v, allowed, default: 'off' };
-                },
-                __showclock: () => ({ value: __showClock, calls: __showClockCalls }),
             },
             store: {
                 // Backend-only (not used by the UI anymore); kept so the
@@ -6545,11 +6526,8 @@ function mockFactoryJs() {
         zoneVal: (document.querySelector('#timeZoneSelect') || {}).value,
         zoneDisabled: (document.querySelector('#timeZoneSelect') || {}).disabled,
         zoneBtn: (document.querySelector('#timeZoneApplyBtn') || {}).disabled,
-        clockSw: (document.querySelector('#showClockSwitch') || {}).checked,
-        clockState: (document.querySelector('#showClockState') || {}).textContent || null,
-        clock: on('#topbarClock'),
+        clockVisible: !!document.querySelector('#topbarClock') && !document.querySelector('#topbarClock').classList.contains('ucm-hidden'),
         clockText: (document.querySelector('#topbarClock') || {}).textContent || null,
-        sc: (window.__mockCore.settings.__showclock ? window.__mockCore.settings.__showclock() : null),
         m: (window.__mockCore.machine.__t ? window.__mockCore.machine.__t() : null),
       };
     });
@@ -6565,8 +6543,8 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the timezone picker must be ENABLED with the bundled list (not hard-locked to a single zone) (got disabled=' + JSON.stringify(t0.zoneDisabled) + ', n=' + JSON.stringify(t0.zoneN) + ', val=' + JSON.stringify(t0.zoneVal) + ') (round-T-fix bug 2)');
     if (t0.zoneVal !== 'Etc/UTC') console.log('PAGE ERROR: the timezone picker must preselect the LIVE zone (got ' + JSON.stringify(t0.zoneVal) + ') (round T)');
     if (t0.zoneBtn !== false) console.log('PAGE ERROR: the timezone apply must be enabled (the zone is not gated by NTP) (round T)');
-    if (t0.clockSw !== false || t0.clockState !== 'Off') console.log('PAGE ERROR: the topbar clock must default OFF (got ' + JSON.stringify([t0.clockSw, t0.clockState]) + ') (round T)');
-    if (t0.clock !== true) console.log('PAGE ERROR: the topbar clock element must be HIDDEN by default (round T)');
+    if (t0.clockVisible !== true) console.log('PAGE ERROR: the topbar clock must be PERMANENTLY visible (no toggle, round-T-fix8)');
+    if (!/\d\d:\d\d:\d\d/.test(t0.clockText || '')) console.log('PAGE ERROR: the topbar clock must render HH:MM:SS (got ' + JSON.stringify(t0.clockText) + ') (round-T-fix8)');
 
     // (t1) turn NTP OFF via the shared toggle path (the Network sync switch's
     // mock method — the SAME flag the gate reads) -> the manual rows enable.
@@ -6663,77 +6641,23 @@ function mockFactoryJs() {
     if (t5b.zoneVal !== 'Australia/Sydney') console.log('PAGE ERROR: a timezone set OUTSIDE the app must preselect on re-entry (got ' + JSON.stringify(t5b.zoneVal) + ') (round T)');
     if (t5b.zoneCalls !== 1) console.log('PAGE ERROR: re-entry must not write the timezone (got ' + JSON.stringify(t5b.zoneCalls) + ') (round T)');
 
-    // (t6) the topbar clock toggle: ON -> the topbar shows a ticking HH:MM:SS;
-    // OFF -> hidden + the pref back to the shipped default.
-    await page.click('#showClockSwitch');
-    await wait(300);
+    // (t6) round-T-fix8: the topbar clock is PERMANENT (the toggle + pref +
+    // IPC are removed). Guard: it is visible by default and TICKS (a 1s
+    // interval on the renderer's new Date). POLL for the change (up to 3.5s) —
+    // a fixed wait is load-flaky: two reads can land in the same wall second.
     let t6 = await page.evaluate(() => {
       const c = document.querySelector('#topbarClock');
-      return {
-        hidden: c ? c.classList.contains('ucm-hidden') : null,
-        text: c ? c.textContent : null,
-        sc: window.__mockCore.settings.__showclock(),
-        sw: (document.querySelector('#showClockSwitch') || {}).checked,
-        state: (document.querySelector('#showClockState') || {}).textContent || null,
-      };
+      return { visible: c ? !c.classList.contains('ucm-hidden') : null, text: c ? c.textContent : null };
     });
-    if (t6.hidden !== false) console.log('PAGE ERROR: the topbar clock must be VISIBLE when the toggle is on (round T)');
-    if (!/\d\d:\d\d:\d\d/.test(t6.text || '')) console.log('PAGE ERROR: the topbar clock must render HH:MM:SS (got ' + JSON.stringify(t6.text) + ') (round T)');
-    if (t6.sc.value !== 'on' || t6.sc.calls !== 1 || t6.sw !== true || t6.state !== 'On') console.log('PAGE ERROR: the toggle must persist the show-clock pref + sync the row (got ' + JSON.stringify([t6.sc, t6.sw, t6.state]) + ') (round T)');
-    // the clock must actually TICK (a 1s interval on the renderer's new Date).
-    // POLL for the change (up to 3.5s) — a fixed 1.2s wait is load-flaky: both
-    // reads can land inside the SAME wall second on a busy container.
+    if (t6.visible !== true) console.log('PAGE ERROR: the topbar clock must be visible (permanent, no toggle) (round-T-fix8)');
+    if (!/\d\d:\d\d:\d\d/.test(t6.text || '')) console.log('PAGE ERROR: the topbar clock must render HH:MM:SS (got ' + JSON.stringify(t6.text) + ') (round-T-fix8)');
     const t6tick1 = t6.text;
     let t6tick2 = t6tick1;
     for (let i = 0; i < 14 && t6tick2 === t6tick1; i++) {
       await wait(250);
       t6tick2 = await page.evaluate(() => (document.querySelector('#topbarClock') || {}).textContent || null);
     }
-    if (t6tick2 === t6tick1) console.log('PAGE ERROR: the topbar clock must TICK (the 1s interval - the text did not advance over 3.5s: ' + JSON.stringify([t6tick1, t6tick2]) + ') (round T)');
-    // the LIVE-payload path: a status push carrying the pref (a boot/re-push,
-    // NOT a UI action) must apply it too (applyAuthPayload -> syncShowClock).
-    // Direct mock calls (no UI) so the UI click count stays owned by t6/t6b.
-    await page.evaluate(() => window.__mockCore.settings.setShowClock('off'));
-    await wait(300);
-    let t6c = await page.evaluate(() => {
-      const c = document.querySelector('#topbarClock');
-      return {
-        hidden: c ? c.classList.contains('ucm-hidden') : null,
-        sc: window.__mockCore.settings.__showclock(),
-        sw: (document.querySelector('#showClockSwitch') || {}).checked,
-        state: (document.querySelector('#showClockState') || {}).textContent || null,
-      };
-    });
-    if (t6c.hidden !== true || t6c.sc.value !== 'off' || t6c.sw !== false || t6c.state !== 'Off')
-        console.log('PAGE ERROR: a status push with the pref OFF must hide the clock + sync the row (got ' + JSON.stringify(t6c) + ') (round T)');
-    await page.evaluate(() => window.__mockCore.settings.setShowClock('on'));
-    await wait(300);
-    let t6d = await page.evaluate(() => {
-      const c = document.querySelector('#topbarClock');
-      return {
-        hidden: c ? c.classList.contains('ucm-hidden') : null,
-        sc: window.__mockCore.settings.__showclock(),
-        sw: (document.querySelector('#showClockSwitch') || {}).checked,
-        state: (document.querySelector('#showClockState') || {}).textContent || null,
-      };
-    });
-    if (t6d.hidden !== false || t6d.sc.value !== 'on' || t6d.sw !== true || t6d.state !== 'On')
-        console.log('PAGE ERROR: a status push with the pref ON (no UI action) must show the clock + sync the row (got ' + JSON.stringify(t6d) + ') (round T)');
-    // the UI click OFF (the switch is now checked=true via the payload sync)
-    // returns the pref to the shipped default.
-    await page.click('#showClockSwitch');
-    await wait(300);
-    let t6b = await page.evaluate(() => {
-      const c = document.querySelector('#topbarClock');
-      return {
-        hidden: c ? c.classList.contains('ucm-hidden') : null,
-        sc: window.__mockCore.settings.__showclock(),
-        sw: (document.querySelector('#showClockSwitch') || {}).checked,
-        state: (document.querySelector('#showClockState') || {}).textContent || null,
-      };
-    });
-    if (t6b.hidden !== true) console.log('PAGE ERROR: the topbar clock must be HIDDEN again when the toggle is off (round T)');
-    if (t6b.sc.value !== 'off' || t6b.sc.calls !== 4 || t6b.sw !== false || t6b.state !== 'Off') console.log('PAGE ERROR: the toggle-off must restore the pref + row (got ' + JSON.stringify([t6b.sc, t6b.sw, t6b.state]) + ') (round T)');
+    if (t6tick2 === t6tick1) console.log('PAGE ERROR: the topbar clock must TICK (the 1s interval - the text did not advance over 3.5s: ' + JSON.stringify([t6tick1, t6tick2]) + ') (round-T-fix8)');
 
     // (t7) PRISTINE: NTP back on (section 3i's state), the wall clock back to
     // "now", the timezone back to the live default.

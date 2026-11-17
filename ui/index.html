@@ -158,10 +158,10 @@
     <main class="ucm-main">
         <div class="ucm-topbar">
             <p class="p-heading--4" id="topbarTitle">Dashboard</p>
-            <!-- round T: the optional TOPBAR CLOCK (shown when the Time
-                 card's "Show clock in top bar" is on; the renderer updates
-                 it every second from the local time). -->
-            <span class="ucm-clock ucm-hidden" id="topbarClock"></span>
+            <!-- round-T-fix8: PERMANENT topbar clock (the "Show clock" toggle
+                 was removed after bug-3: the pref/IPC/interval machinery is
+                 gone, the clock is always shown and updated every second). -->
+            <span class="ucm-clock" id="topbarClock"></span>
             <span class="ucm-session-chip" id="sessionChip" title="Console locks after 15 minutes without activity">
                 <i class="p-icon--clock"></i><span id="sessionChipText">active</span>
             </span>
@@ -587,16 +587,6 @@
                             </div>
                             <div class="ucm-sys__row ucm-sys__actions">
                                 <button class="p-button ucm-sys__btn" type="button" id="timeZoneApplyBtn" disabled>Apply time zone</button>
-                            </div>
-                            <!-- the topbar-clock toggle (the 48a/round-C orange p-switch idiom,
-                                 like the hold row). Pref rides the status payload. -->
-                            <div class="ucm-sys__row ucm-sys__holdrow">
-                                <span class="ucm-sys__holdlabel">Show clock in top bar</span>
-                                <label class="p-switch ucm-sys__holdsw" title="Show the local time in the top bar of every page.">
-                                    <input class="p-switch__input" type="checkbox" id="showClockSwitch">
-                                    <span class="p-switch__slider"></span>
-                                </label>
-                                <span id="showClockState" class="ucm-sys__now">Off</span>
                             </div>
                         </div>
                     </div>

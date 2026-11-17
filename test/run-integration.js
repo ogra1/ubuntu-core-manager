@@ -542,7 +542,6 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:refresh-now']);
             ok('time-card handlers registered (round T: time read/set + timezone write, auth-gated)',
                 !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
-            ok('show-clock handler registered (round T, auth-gated)', !!handlers['settings:set-show-clock']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',
@@ -1837,35 +1836,6 @@ function ok(name, cond, extra = '') {
           ok('timezoneRead: an absent stored zone RESOLVES TO THE LIVE SYSTEM ZONE (external config, never 404)',
              live === 'Pacific/Honolulu', JSON.stringify(live));
           state.timezone = 'Etc/UTC';
-        }
-        // (d) the topbar-clock pref (the appearance idiom: a 0600 file, the
-        //      status payload, validate-on-set).
-        {
-          // the pref path seam (the ipfwd idiom — call-time env read, so the
-          // SAME required instance is usable, no re-require dance).
-          const pref = path.join(STATE, 'show-clock-t.pref');
-          process.env.UCM_SHOW_CLOCK_PREF = pref;
-          try {
-            const sc0 = m.getShowClock();
-            ok('show-clock: the default is OFF (no clock in the topbar until asked)',
-               sc0.value === 'off' && sc0.default === 'off' && JSON.stringify(sc0.allowed) === JSON.stringify(['on', 'off']), JSON.stringify(sc0));
-            m.setShowClock('on');
-            ok('show-clock: set persists to the 0600 pref file + reflects in get',
-               fs.readFileSync(pref, 'utf8') === 'on' && m.getShowClock().value === 'on');
-            let badSc = null;
-            try { m.setShowClock('sometimes'); } catch (e) { badSc = e; }
-            ok('show-clock: an unknown value is rejected (nothing written)',
-               !!badSc && m.getShowClock().value === 'on', badSc && badSc.message);
-            m.setShowClock('off');
-            ok('show-clock: off sticks (the explicit value, not "absent")', m.getShowClock().value === 'off');
-            m.setShowClock('on');
-            ok('show-clock: the STATUS PAYLOAD carries the pref (the renderer shows/hides the clock from it)',
-               m.statusPayload().showClock === 'on');
-            m.setShowClock('off');
-          } finally {
-            delete process.env.UCM_SHOW_CLOCK_PREF;
-            try { fs.unlinkSync(pref); } catch (e) {}
-          }
         }
 
         // ---- the global auto-refresh HOLD (round S: the 'Pause auto-refresh'

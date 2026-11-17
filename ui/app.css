@@ -1580,7 +1580,7 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    and the session chip. The bundle's chip is 12.8px ink on a themed
    surface; the clock matches (mono, small, muted) so it reads as chrome,
    not content. .ucm-hidden (display:none) removes it entirely when off. */
-.ucm-topbar .ucm-clock { font-family: "Ubuntu Mono variable", monospace; font-size: .8rem; color: #666; margin-left: .9rem; }
+.ucm-topbar .ucm-clock { font-family: "Ubuntu Mono variable", monospace; font-size: .8rem; color: #666; margin-left: .9rem; } /* round-T-fix8: permanent (no ucm-hidden) */
 .is-dark .ucm-topbar .ucm-clock { color: #a8a8a8; }
 .is-dark .ucm-sys__timenote { color: #8c8c8c; }
 .ucm-sys__schedform { display: grid; grid-template-columns: auto 11rem auto 15rem auto; column-gap: .75rem; align-items: center; margin-top: 1rem; }
