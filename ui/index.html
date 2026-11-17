@@ -564,15 +564,15 @@
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Time</p></div>
                         <div class="ucm-sys__body">
                             <p class="ucm-lp__help">
-                                Set the time manually (only when time sync is off) or pick the device's time zone.
+                                Set the time manually (if time sync is off on the Network page) and pick the devices time zone
                             </p>
-                            <div class="ucm-sys__kvrow">
-                                <dt>Current time</dt>
-                                <dd>
-                                    <span id="timeNow" class="ucm-sys__now">—</span>
-                                    <span id="timeNtpState" class="ucm-sys__timenote"></span>
-                                </dd>
-                            </div>
+                            <!-- round T-fix11: the "Current time" line was
+                                 removed — it only showed a stale snapshot of
+                                 the wall clock taken when the page was opened,
+                                 and its "(time sync is on …)" note restated the
+                                 card subtitle. The topbar clock carries the
+                                 live time; the NTP state greys the set-time
+                                 row (see app.js loadSystem). -->
                             <div class="ucm-sys__row ucm-sys__formrow">
                                 <label class="p-form__label" for="timeSetInput">Set time</label>
                                 <input class="p-form-validation__input ucm-sys__inp" type="datetime-local" id="timeSetInput" disabled>
@@ -581,6 +581,10 @@
                             <div class="ucm-sys__row ucm-sys__actions">
                                 <button class="p-button ucm-sys__btn" type="button" id="timeSetBtn" disabled>Set time</button>
                             </div>
+                            <!-- round T-fix11: the hairline moves between the
+                                 two form groups (was below the removed
+                                 Current-time row). -->
+                            <div class="ucm-sys__sep" role="separator"></div>
                             <div class="ucm-sys__row ucm-sys__formrow">
                                 <label class="p-form__label" for="timeZoneSelect">Time zone</label>
                                 <select class="ucm-sys__zone" id="timeZoneSelect"></select>

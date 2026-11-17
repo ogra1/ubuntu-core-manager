@@ -5862,8 +5862,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
         if (gS.helps[1].indexOf('When snapd may automatically refresh snaps.') !== 0 || /install/.test(gS.helps[1]))
             console.log('PAGE ERROR: the refresh card help must say "automatically refresh" (not install) (got ' + JSON.stringify(gS.helps[1]) + ') (round R)');
-        if (gS.helps[2] !== 'Set the time manually (only when time sync is off) or pick the device\'s time zone.')
-            console.log('PAGE ERROR: the Time card help is missing / wrong (got ' + JSON.stringify(gS.helps[2]) + ') (round T)');
+        if (gS.helps[2] !== 'Set the time manually (if time sync is off on the Network page) and pick the devices time zone')
+            console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round T / T-fix11)');
         if (gS.helps[3] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
             console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[3]) + ') (round R)');
     } else {
@@ -6513,13 +6513,26 @@ function mockFactoryJs() {
     // (t6) restores it ON so 5s-p and the run end pristine.
     await wait(150);
     let t0 = await page.evaluate(() => {
-      const on = (id) => { const x = document.querySelector(id); return x ? x.classList.contains('ucm-hidden') : null; };
       return {
         card: !!document.querySelector('#view-system .p-card .p-heading--5') && Array.prototype.some.call(
           document.querySelectorAll('#view-system .p-card .p-heading--5'), (h) => h.textContent.trim() === 'Time'),
-        timeNow: (document.querySelector('#timeNow') || {}).textContent || null,
-        timeNote: (document.querySelector('#timeNtpState') || {}).textContent || null,
-        noteHidden: on('#timeNtpState'),
+        // round T-fix11: the "Current time" kvrow was removed — it showed a
+        // stale snapshot of the wall clock (taken when the page was opened)
+        // and a redundant "(time sync is on …)" note. The topbar clock carries
+        // the live time; the NTP state greys the set-time row. Guard: the
+        // spans must be GONE from the card.
+        timeNowGone: !document.querySelector('#timeNow') && !document.querySelector('#timeNtpState'),
+        sep: (() => {
+          const card = Array.prototype.slice.call(document.querySelectorAll('#view-system .p-card'))
+            .find((c) => { const h = c.querySelector('.p-heading--5'); return h && h.textContent.trim() === 'Time'; });
+          if (!card) return null;
+          const setInp = card.querySelector('#timeSetInput');
+          const zoneInp = card.querySelector('#timeZoneSelect');
+          const sep = card.querySelector('.ucm-sys__sep');
+          if (!sep || !setInp || !zoneInp) return null;
+          const s = sep.getBoundingClientRect(), a = setInp.getBoundingClientRect(), b = zoneInp.getBoundingClientRect();
+          return { present: true, between: s.top > a.bottom && s.top < b.top };
+        })(),
         timeInp: (document.querySelector('#timeSetInput') || {}).disabled,
         timeBtn: (document.querySelector('#timeSetBtn') || {}).disabled,
         zoneN: document.querySelector('#timeZoneSelect') ? document.querySelector('#timeZoneSelect').options.length : null,
@@ -6551,8 +6564,8 @@ function mockFactoryJs() {
       };
     });
     if (!t0.card) console.log('PAGE ERROR: the Time card must sit between the refresh schedule and power (round T)');
-    if (!/\d\d:\d\d:\d\d/.test(t0.timeNow || '')) console.log('PAGE ERROR: the current-time line must read a live HH:MM:SS wall clock (got ' + JSON.stringify(t0.timeNow) + ') (round T)');
-    if (t0.noteHidden || (t0.timeNote || '').indexOf('time sync is on') < 0) console.log('PAGE ERROR: with NTP on the Time card must show the sync note (got ' + JSON.stringify(t0.timeNote) + ') (round T)');
+    if (t0.timeNowGone !== true) console.log('PAGE ERROR: the Time card must NOT carry the removed "Current time" line / sync note (round T-fix11)');
+    if (!t0.sep || !t0.sep.present || !t0.sep.between) console.log('PAGE ERROR: the Time card hairline must sit BETWEEN the set-time and time-zone groups (got ' + JSON.stringify(t0.sep) + ') (round T-fix11)');
     if (t0.timeInp !== true || t0.timeBtn !== true) console.log('PAGE ERROR: with NTP on the manual time set must be disabled (got ' + JSON.stringify([t0.timeInp, t0.timeBtn]) + ') (round T)');
     if (t0.zoneN < 30) console.log('PAGE ERROR: the timezone picker must carry the bundled zone list (got ' + JSON.stringify(t0.zoneN) + ') (round T)');
     // BUG-2 LOCK: the timezone picker must be SELECTABLE (enabled) with options —
@@ -6599,12 +6612,10 @@ function mockFactoryJs() {
       return {
         timeInp: (document.querySelector('#timeSetInput') || {}).disabled,
         timeBtn: (document.querySelector('#timeSetBtn') || {}).disabled,
-        noteHidden: (document.querySelector('#timeNtpState') || {}).classList ? document.querySelector('#timeNtpState').classList.contains('ucm-hidden') : null,
         inpVal: (document.querySelector('#timeSetInput') || {}).value,
       };
     });
     if (t1.timeInp !== false || t1.timeBtn !== false) console.log('PAGE ERROR: with NTP off the manual time set must be enabled (got ' + JSON.stringify([t1.timeInp, t1.timeBtn]) + ') (round T)');
-    if (t1.noteHidden !== true) console.log('PAGE ERROR: with NTP off the sync note must disappear (round T)');
     if (!/\d{4}-\d\d-\d\dT\d\d:\d\d/.test(t1.inpVal || '')) console.log('PAGE ERROR: the set-time field must prefill with the local current time (got ' + JSON.stringify(t1.inpVal) + ') (round T)');
 
     // (t2) a direct set with NTP back ON must be REFUSED (the main-side gate)
@@ -6632,26 +6643,32 @@ function mockFactoryJs() {
     let t3 = await page.evaluate(() => {
       const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification'));
       const set = toasts.find((t) => (t.querySelector('.p-notification__title') || {}).textContent === 'Time set');
+      const t = window.__mockCore.machine.__t();
+      const d = new Date(t.timenow / 1000); // stored UTC usec -> LOCAL (timezone-safe round-trip)
+      const p = (x) => String(x).padStart(2, '0');
       return {
-        timeNow: (document.querySelector('#timeNow') || {}).textContent || null,
-        calls: window.__mockCore.machine.__t().timeSetCalls,
+        wall: p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()),
+        calls: t.timeSetCalls,
         toast: set ? ((set.querySelector('.p-notification__message') || {}).textContent || null) : null,
-        toastCount: toasts.filter((t) => (t.querySelector('.p-notification__title') || {}).textContent === 'Time set').length,
+        toastCount: toasts.filter((t2) => (t2.querySelector('.p-notification__title') || {}).textContent === 'Time set').length,
       };
     });
-    if (t3.timeNow !== '09:30:00') console.log('PAGE ERROR: after a set the current-time line must read the set minute (got ' + JSON.stringify(t3.timeNow) + ') (round T)');
+    // round T-fix11: the "Current time" line was removed, so the exact-set-
+    // minute proof renders the stored UTC usec back to LOCAL (exactly what the
+    // display used to show) instead of reading a DOM node.
+    if (t3.wall !== '09:30:00') console.log('PAGE ERROR: after a set the wall clock must be exactly the set minute (got ' + JSON.stringify(t3.wall) + ') (round T / T-fix11)');
     if (t3.calls !== 1) console.log('PAGE ERROR: the set-time button must call core.machine.timeSet exactly once (got ' + JSON.stringify(t3.calls) + ') (round T)');
     if (t3.toastCount !== 1 || !t3.toast) console.log('PAGE ERROR: the set-time success toast is missing (got ' + JSON.stringify([t3.toastCount, t3.toast]) + ') (round T)');
 
-    // (t4) the LIVE read wins: an outside wall-clock change (the CLI) must be
-    // shown on re-entry.
-    const t4usec = new Date('2026-11-16T12:00:00').getTime() * 1000;
-    await page.evaluate((u) => window.__mockCore.machine.__settime(u), t4usec);
-    await page.click('.ucm-side a[data-view="dashboard"]');
-    await page.click('.ucm-side a[data-view="system"]');
-    await wait(600);
-    let t4 = await page.evaluate(() => ({ timeNow: (document.querySelector('#timeNow') || {}).textContent || null }));
-    if (t4.timeNow !== '12:00:00') console.log('PAGE ERROR: a wall-clock change made OUTSIDE the app must show on re-entry (got ' + JSON.stringify(t4.timeNow) + ') (round T)');
+    // (t4) round T: the wall clock was read LIVE on re-entry. round T-fix11
+    // removed the "Current time" display, so an outside (CLI) wall-clock
+    // change has NO observable UI effect on this card anymore — the live read
+    // still runs (loadSystem re-fetches usec + zone + ntp + zones) and its
+    // remaining observable effects are the NTP gate (t1) and the zone
+    // preselect (t5), so this drive is dropped rather than asserted against
+    // the mock (the house "the UI can't observe it" rule). The pristine reset
+    // in t7 still clears the mock wall clock.
+
 
     // (t5) the timezone: apply Europe/London -> the core conf holds it (the
     // real confSet path: 250ms settle) + toast; then an OUTSIDE zone change

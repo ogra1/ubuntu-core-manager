@@ -3441,15 +3441,11 @@ function sysSetFieldErr(inp, msgEl, text) {
 
 function clockMin(d) {
     // 'HH:MM' 24-hour local time — the permanent topbar idiom (mono, compact;
-    // no seconds — the topbar is orientation, the Time card carries the full
+    // no seconds — the topbar is orientation; round T-fix11 removed the
+    // Time card's "Current time" line, so the topbar is the only displayed
     // wall clock). round T-fix9.
     const p = (x) => String(x).padStart(2, '0');
     return p(d.getHours()) + ':' + p(d.getMinutes());
-}
-function clockSec(d) {
-    // 'HH:MM:SS' — the Time card's "Current time" line (the full wall clock,
-    // and the set-time drive's exact target). round T-fix9.
-    return clockMin(d) + ':' + String(d.getSeconds()).padStart(2, '0');
 }
 let __clockTimer = null;
 // round-T-fix8: the topbar clock is PERMANENT (the show-clock toggle + pref +
@@ -3508,22 +3504,24 @@ async function loadSystem() {
     }
     // Round T: the TIME card. One IPC reads the LIVE wall clock + timezone +
     // the NTP flag + the bundled zone list (main.js timeRead). The manual
-    // rows are gated by the NTP flag (the Network page's "Sync time from
-    // internet" toggle drives the same property): sync ON = greyed out,
+    // set-time rows are gated by the NTP flag (the Network page's "Sync time
+    // from internet" toggle drives the same property): sync ON = greyed out,
     // because a manual set would just be overwritten by the next sync.
+    // (round T-fix11: the "Current time" display line was removed — the
+    // topbar clock is the live time, the NTP note was redundant with the
+    // card subtitle.)
     const timeInp = $('#timeSetInput'); const timeBtn = $('#timeSetBtn');
     const zoneSel = $('#timeZoneSelect'); const zoneBtn = $('#timeZoneApplyBtn');
-    const timeNote = $('#timeNtpState'); const timeNowEl = $('#timeNow');
+    // round T-fix11: the "Current time" kvrow (with its redundant
+    // "(time sync is on …)" note) was removed from the card — the topbar
+    // clock carries the live time, and the NTP state is shown by the greyed
+    // set-time row. tr.usec is still read (timeRead returns it) but no longer
+    // displayed on this card.
     let tr = null;
     try { tr = await core.machine.timeRead(); }
     catch (e) { /* timedate1/bundled list unavailable — leave the rows at their HTML defaults */ }
     if (tr) {
-        if (tr.usec != null && timeNowEl) timeNowEl.textContent = clockSec(new Date(tr.usec / 1000)); // timedate1 usec -> ms
         const ntpOn = tr.ntp === true;
-        if (timeNote) {
-            timeNote.textContent = ntpOn ? '(time sync is on — manual time is disabled)' : '';
-            timeNote.classList.toggle('ucm-hidden', !ntpOn);
-        }
         if (timeInp) {
             timeInp.disabled = ntpOn;
             if (!ntpOn) {
@@ -3558,8 +3556,8 @@ async function doSetTime() {
     btn.disabled = true;
     try {
         await core.machine.timeSet(Math.round((local - new Date().getTimezoneOffset() * 60000) * 1000)); // local -> UTC usec
-        const nowEl = $('#timeNow');
-        if (nowEl) nowEl.textContent = clockSec(new Date(local));
+        // round T-fix11: no more "Current time" line to update — the topbar
+        // clock (1s interval) reflects the new wall time on its own.
         toast('positive', 'Time set', 'The system clock was set manually.');
     } catch (e) { toastErr(e); }
     finally { btn.disabled = false; }

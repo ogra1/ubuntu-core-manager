@@ -1575,7 +1575,6 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    track) — a 497-zone list needs the room. The NTP-gate note sits to the
    right of the current-time value (small, muted, mono). */
 .ucm-sys__zone { grid-column: 2; width: 100%; margin-bottom: 0; }
-.ucm-sys__timenote { margin-left: .6rem; font-family: "Ubuntu Mono variable", monospace; font-size: .72rem; color: #888; }
 /* the PERMANENT topbar clock (round T; the toggle removed in T-fix8):
    between the page title and the session chip. A middot hairline (::before)
    separates it from the title so it reads as chrome, not a title
@@ -1594,7 +1593,6 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-topbar .ucm-clock { font-family: "Ubuntu Mono variable", monospace; font-size: .8rem; color: #666; position: relative; top: 4px; }
 .ucm-topbar .ucm-clock::before { content: '\b7'; margin-right: 1rem; }
 .is-dark .ucm-topbar .ucm-clock { color: #a8a8a8; }
-.is-dark .ucm-sys__timenote { color: #8c8c8c; }
 .ucm-sys__schedform { display: grid; grid-template-columns: auto 11rem auto 15rem auto; column-gap: .75rem; align-items: center; margin-top: 1rem; }
 .ucm-sys__schedform .p-form__label { padding: 0; margin: 0; font-size: .9rem; color: #555; }
 .ucm-sys__schedform .ucm-kv--select, .ucm-sys__schedform .ucm-sys__inp { margin-bottom: 0; width: 100%; }
