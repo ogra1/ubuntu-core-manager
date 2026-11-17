@@ -25,11 +25,14 @@
 
 * { box-sizing: border-box; }
 
+:root { color-scheme: light only; } /* round T-fix12: NATIVE popup controls (<input type=datetime-local> calendar in the Time + power cards, <select> dropdowns) theme off the document color-scheme, which Chromium defaults to LIGHT — so they rendered WHITE under .is-dark. Set on :root only (color-scheme is inherited, so body + controls follow); .is-dark flips the whole subtree to dark. */
 html, body {
     height: 100%;
     margin: 0;
     background: var(--ucm-grey-50);
     color: var(--ucm-grey-dark);
+    /* round T-fix12: the NATIVE popup controls theme off the document's
+       color-scheme — see the :root rule above. */
     overflow: hidden;              /* kiosk: the SPA owns scrolling */
     -webkit-user-select: none;
     user-select: none;
@@ -412,7 +415,7 @@ html, body {
    body text and every element that inherits it (shell, view, toasts, the
    stat/cpu/netgraph "now" values, chip values). It is used ONLY as a text
    color (never a bg/border), so flipping it has no surface side-effects. */
-.is-dark { --ucm-grey-dark: #f2f2f2; }
+.is-dark { --ucm-grey-dark: #f2f2f2; color-scheme: dark; } /* round T-fix12: dark native popups */
 .is-dark .ucm-topbar { background: #1a1a1a; border-bottom-color: #333; }
 .is-dark .ucm-stat { background: #262626; border-color: #333; }
 .is-dark .ucm-deploy { background: #262626; border-color: #333; }

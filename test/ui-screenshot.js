@@ -1735,8 +1735,13 @@ function mockFactoryJs() {
             sliderBg: getComputedStyle(slider).backgroundColor,
             cardBg: getComputedStyle(card).backgroundColor,
             isDark: document.documentElement.classList.contains('is-dark'),
+            colorScheme: getComputedStyle(document.documentElement).colorScheme,
           };
         });
+        // round T-fix12: the light theme pins color-scheme: light only (so the
+        // native popups are light); the dark flip is asserted in aDarkUi below.
+        if (aCard.colorScheme !== 'light only')
+            console.log('PAGE ERROR: the LIGHT theme must pin color-scheme: light only (native popups light) — got ' + JSON.stringify(aCard.colorScheme) + ' (round T-fix12)');
         if (aCard.cardTitle !== 'Appearance')
             console.log('PAGE ERROR: the Appearance card title is wrong (got ' + JSON.stringify(aCard.cardTitle) + ') (round C)');
         if (JSON.stringify(aCard.rows) !== JSON.stringify(['Theme']))
@@ -1781,6 +1786,7 @@ function mockFactoryJs() {
             mainColor: getComputedStyle(document.querySelector('.ucm-main')).color,
             statBg: getComputedStyle(document.querySelector('.ucm-stat')).backgroundColor,
             statLabel: getComputedStyle(document.querySelector('.ucm-stat__label')).color,
+            colorScheme: getComputedStyle(document.documentElement).colorScheme,
           };
         });
         if (aDarkUi.mock.value !== 'dark' || aDarkUi.mock.calls !== aBase + 1)
@@ -1806,6 +1812,11 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the dark stat labels must be the muted light grey (#a8a8a8) — got ' + aDarkUi.statLabel + ' (round C)');
         if (aDarkUi.mainColor !== 'rgb(242, 242, 242)')
             console.log('PAGE ERROR: the dark base text must be near-white (the --ucm-grey-dark var flip) — got ' + aDarkUi.mainColor + ' (the #111 inherited text would be unreadable on dark) (round C)');
+        // round T-fix12: the dark theme flips color-scheme to dark so the NATIVE
+        // popup controls (datetime-local calendar, select dropdown) render dark
+        // instead of white (the user's dark-mode report).
+        if (aDarkUi.colorScheme !== 'dark')
+            console.log('PAGE ERROR: the DARK theme must set color-scheme: dark (native popups dark, not white) — got ' + JSON.stringify(aDarkUi.colorScheme) + ' (round T-fix12)');
         await page.screenshot({ path: path.join(SHOTS, '4c-settings-theme-dark.png'), fullPage: true });
 
         // Leaving and re-entering the settings view: the persisted "dark" must
@@ -5862,7 +5873,7 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
         if (gS.helps[1].indexOf('When snapd may automatically refresh snaps.') !== 0 || /install/.test(gS.helps[1]))
             console.log('PAGE ERROR: the refresh card help must say "automatically refresh" (not install) (got ' + JSON.stringify(gS.helps[1]) + ') (round R)');
-        if (gS.helps[2] !== 'Set the time manually (if time sync is off on the Network page) and pick the devices time zone')
+        if (gS.helps[2] !== 'Set the time manually (if time sync is off on the Network page) and pick the device\'s time zone')
             console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round T / T-fix11)');
         if (gS.helps[3] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
             console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[3]) + ') (round R)');

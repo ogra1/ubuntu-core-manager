@@ -2765,7 +2765,7 @@ function initElectron() {
             minimizable: false,
             maximizable: false,
             autoHideMenuBar: true,
-            backgroundColor: '#f7f7f7',
+            backgroundColor: '#262626', // round T-fix12: aubergine (matches the dark theme) — the pre-map flash reads as "loading" instead of a white blast
             show: false,
             webPreferences: {
                 preload: path.join(__dirname, 'preload.js'),

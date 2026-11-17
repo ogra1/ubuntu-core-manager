@@ -1670,8 +1670,9 @@ function ok(name, cond, extra = '') {
           global.UCM_FAKE_ELECTRON = {
             app: { requestSingleInstanceLock: () => true, on: () => {}, whenReady: () => Promise.resolve(), quit: () => {} },
             BrowserWindow: class {
-              constructor() {
+              constructor(opts) {
                 lastWin = this;
+                this._opts = opts || {};
                 this._h = {}; this._wc = {};
                 this.webContents = { on: (c, fn) => { this._wc[c] = fn; }, send: () => {}, setWindowOpenHandler: () => {}, executeJavaScript: () => Promise.resolve(null) };
                 this.on = (c, fn) => { (this._h[c] = this._h[c] || []).push(fn); };
@@ -1697,6 +1698,13 @@ function ok(name, cond, extra = '') {
             await new Promise((r) => setImmediate(r));
             ok('kiosk clamp: the window wired its resize handler (round-T-fix bug 3)',
                lastWin && Array.isArray(lastWin._h['resize']) && lastWin._h['resize'].length >= 1);
+            // round T-fix12: the pre-map startup flash is the kiosk backgroundColor.
+            // It used to be near-white (#f7f7f7) — a white blast before the app
+            // maps. It is now the aubergine (#262626) so the flash matches the
+            // dark theme and reads as "loading". Pin the shipped value.
+            ok('kiosk window: the backgroundColor is the aubergine dark (no white startup flash)',
+               lastWin && lastWin._opts && lastWin._opts.backgroundColor === '#262626',
+               JSON.stringify(lastWin && lastWin._opts && lastWin._opts.backgroundColor));
             // drift: content 1280x800 vs display 1920x1080 -> the clamp re-asserts.
             // (defensive: if the handler is absent the ok() above already fired;
             //  the forEach must not CRASH the suite on that mutation.)
