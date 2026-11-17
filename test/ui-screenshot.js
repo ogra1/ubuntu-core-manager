@@ -6528,6 +6528,25 @@ function mockFactoryJs() {
         zoneBtn: (document.querySelector('#timeZoneApplyBtn') || {}).disabled,
         clockVisible: !!document.querySelector('#topbarClock') && !document.querySelector('#topbarClock').classList.contains('ucm-hidden'),
         clockText: (document.querySelector('#topbarClock') || {}).textContent || null,
+        // round T-fix9: the topbar clock geometry + style (the ink-nudge, the
+        // middot separator, the uniform 1rem gaps). gap = title border-box
+        // right -> clock border-box left (the flex gap; pre-fix this was 16px
+        // + the round-T margin-left 14.4px = ~30.4px).
+        clockStyle: (() => {
+          const c = document.querySelector('#topbarClock');
+          if (!c) return null;
+          const cs = getComputedStyle(c);
+          const be = getComputedStyle(c, '::before');
+          const t = document.querySelector('#topbarTitle');
+          return {
+            top: cs.top,
+            position: cs.position,
+            mid: be.content,
+            midMr: be.marginRight,
+            midFam: (be.fontFamily || '').slice(0, 24),
+            gap: (t && c) ? c.getBoundingClientRect().left - t.getBoundingClientRect().left - t.getBoundingClientRect().width : null,
+          };
+        })(),
         m: (window.__mockCore.machine.__t ? window.__mockCore.machine.__t() : null),
       };
     });
@@ -6544,7 +6563,28 @@ function mockFactoryJs() {
     if (t0.zoneVal !== 'Etc/UTC') console.log('PAGE ERROR: the timezone picker must preselect the LIVE zone (got ' + JSON.stringify(t0.zoneVal) + ') (round T)');
     if (t0.zoneBtn !== false) console.log('PAGE ERROR: the timezone apply must be enabled (the zone is not gated by NTP) (round T)');
     if (t0.clockVisible !== true) console.log('PAGE ERROR: the topbar clock must be PERMANENTLY visible (no toggle, round-T-fix8)');
-    if (!/\d\d:\d\d:\d\d/.test(t0.clockText || '')) console.log('PAGE ERROR: the topbar clock must render HH:MM:SS (got ' + JSON.stringify(t0.clockText) + ') (round-T-fix8)');
+    // round T-fix9: the topbar clock is HH:MM (NO seconds — the full wall
+    // clock with seconds lives on the Time card's "Current time" line).
+    if (!/^\d\d:\d\d$/.test((t0.clockText || '').trim())) console.log('PAGE ERROR: the topbar clock must render HH:MM (no seconds, round-T-fix9) (got ' + JSON.stringify(t0.clockText) + ')');
+    // round T-fix9: the INK alignment — the 12.8px mono ink centers ~2px higher
+    // than the 24px sans title ink (different font metrics), so the clock is
+    // nudged down 2px to line up the INK centres (measured: title cy 27.0 vs
+    // clock 25.0 pre-fix). A box-centre guard can't see this (the flex boxes
+    // ARE centred), so pin the nudge directly.
+    if (t0.clockStyle && (t0.clockStyle.position !== 'relative' || t0.clockStyle.top !== '2px'))
+        console.log('PAGE ERROR: the topbar clock must carry the 2px ink-alignment nudge (got ' + JSON.stringify(t0.clockStyle && { position: t0.clockStyle.position, top: t0.clockStyle.top }) + ') (round-T-fix9)');
+    // round T-fix9: a MIDDOT hairline separates the clock from the page title
+    // (it reads as chrome, not a title continuation) — mono, matching the
+    // clock's ink, with 16px trailing space.
+    if (t0.clockStyle && (t0.clockStyle.mid || '').indexOf('·') < 0)
+        console.log('PAGE ERROR: the topbar clock must carry a middot separator before it (got ' + JSON.stringify(t0.clockStyle && t0.clockStyle.mid) + ') (round-T-fix9)');
+    if (t0.clockStyle && (t0.clockStyle.midMr !== '16px' || !/mono/i.test(t0.clockStyle.midFam)))
+        console.log('PAGE ERROR: the topbar middot must be mono with 16px trailing space (got ' + JSON.stringify(t0.clockStyle && { midMr: t0.clockStyle.midMr, midFam: t0.clockStyle.midFam }) + ') (round-T-fix9)');
+    // round T-fix9: UNIFORM spacing — the topbar flex gap (1rem = 16px) is the
+    // ONLY spacing between the title and the clock (the round-T margin-left:
+    // .9rem double-gap is gone; pre-fix measured ~30.4px).
+    if (t0.clockStyle && !(t0.clockStyle.gap >= 15.5 && t0.clockStyle.gap <= 16.5))
+        console.log('PAGE ERROR: the title-to-clock spacing must be the uniform 1rem flex gap (got ' + JSON.stringify(t0.clockStyle.gap) + 'px — the round-T margin-left double-gap?) (round-T-fix9)');
 
     // (t1) turn NTP OFF via the shared toggle path (the Network sync switch's
     // mock method — the SAME flag the gate reads) -> the manual rows enable.
@@ -6642,22 +6682,30 @@ function mockFactoryJs() {
     if (t5b.zoneCalls !== 1) console.log('PAGE ERROR: re-entry must not write the timezone (got ' + JSON.stringify(t5b.zoneCalls) + ') (round T)');
 
     // (t6) round-T-fix8: the topbar clock is PERMANENT (the toggle + pref +
-    // IPC are removed). Guard: it is visible by default and TICKS (a 1s
-    // interval on the renderer's new Date). POLL for the change (up to 3.5s) —
-    // a fixed wait is load-flaky: two reads can land in the same wall second.
+    // IPC are removed). round T-fix9: it is HH:MM (no seconds), so the old
+    // "poll for a per-second text change" tick guard no longer applies — the
+    // minute only changes every 60s. LIVENESS is instead proven BOUNDARY-PROOF:
+    // the 1s interval means the displayed HH:MM lags "now" by < one tick
+    // (~1.1s), so it must equal the current minute OR the minute we're within
+    // 1.1s of rolling over to. A frozen/never-started clock still shows its
+    // boot minute, which by the time t6 runs (many seconds after load, after
+    // the t0..t5 drives) is no longer current -> FAILS.
     let t6 = await page.evaluate(() => {
       const c = document.querySelector('#topbarClock');
-      return { visible: c ? !c.classList.contains('ucm-hidden') : null, text: c ? c.textContent : null };
+      const now = new Date();
+      const p = (x) => String(x).padStart(2, '0');
+      const cand = (d) => p(d.getHours()) + ':' + p(d.getMinutes());
+      return {
+        visible: c ? !c.classList.contains('ucm-hidden') : null,
+        text: c ? c.textContent : null,
+        cur: cand(now),
+        justPrev: cand(new Date(now.getTime() - 1100)),
+      };
     });
     if (t6.visible !== true) console.log('PAGE ERROR: the topbar clock must be visible (permanent, no toggle) (round-T-fix8)');
-    if (!/\d\d:\d\d:\d\d/.test(t6.text || '')) console.log('PAGE ERROR: the topbar clock must render HH:MM:SS (got ' + JSON.stringify(t6.text) + ') (round-T-fix8)');
-    const t6tick1 = t6.text;
-    let t6tick2 = t6tick1;
-    for (let i = 0; i < 14 && t6tick2 === t6tick1; i++) {
-      await wait(250);
-      t6tick2 = await page.evaluate(() => (document.querySelector('#topbarClock') || {}).textContent || null);
-    }
-    if (t6tick2 === t6tick1) console.log('PAGE ERROR: the topbar clock must TICK (the 1s interval - the text did not advance over 3.5s: ' + JSON.stringify([t6tick1, t6tick2]) + ') (round-T-fix8)');
+    if (!/^\d\d:\d\d$/.test((t6.text || '').trim())) console.log('PAGE ERROR: the topbar clock must render HH:MM (no seconds, round-T-fix9) (got ' + JSON.stringify(t6.text) + ')');
+    if (!(t6.text === t6.cur || t6.text === t6.justPrev))
+        console.log('PAGE ERROR: the topbar clock must be LIVE (a fresh HH:MM within one tick of now — the 1s interval ran; got text=' + JSON.stringify(t6.text) + ' cur=' + JSON.stringify(t6.cur) + ' justPrev=' + JSON.stringify(t6.justPrev) + ') (round-T-fix9)');
 
     // (t7) PRISTINE: NTP back on (section 3i's state), the wall clock back to
     // "now", the timezone back to the live default.

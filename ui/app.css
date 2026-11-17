@@ -1576,11 +1576,18 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    right of the current-time value (small, muted, mono). */
 .ucm-sys__zone { grid-column: 2; width: 100%; margin-bottom: 0; }
 .ucm-sys__timenote { margin-left: .6rem; font-family: "Ubuntu Mono variable", monospace; font-size: .72rem; color: #888; }
-/* the optional TOPBAR CLOCK (round T): a compact pill between the title
-   and the session chip. The bundle's chip is 12.8px ink on a themed
-   surface; the clock matches (mono, small, muted) so it reads as chrome,
-   not content. .ucm-hidden (display:none) removes it entirely when off. */
-.ucm-topbar .ucm-clock { font-family: "Ubuntu Mono variable", monospace; font-size: .8rem; color: #666; margin-left: .9rem; } /* round-T-fix8: permanent (no ucm-hidden) */
+/* the PERMANENT topbar clock (round T; the toggle removed in T-fix8):
+   between the page title and the session chip. A middot hairline (::before)
+   separates it from the title so it reads as chrome, not a title
+   continuation; the topbar flex gap (1rem) spaces every element uniformly,
+   so the round-T margin-left:.9rem double-gap is gone (title 1rem middot,
+   middot 1rem clock, clock 1rem chip). Mono + small + muted: it matches the
+   chip's 12.8px ink. round T-fix9.
+   position:relative; top:2px = INK alignment: the 12.8px mono ink centers
+   ~2px HIGHER than the 24px sans title ink even though the flex boxes are
+   centred (font metrics) — measured pre-fix: title cy 27.0 vs clock cy 25.0. */
+.ucm-topbar .ucm-clock { font-family: "Ubuntu Mono variable", monospace; font-size: .8rem; color: #666; position: relative; top: 2px; }
+.ucm-topbar .ucm-clock::before { content: '\b7'; margin-right: 1rem; }
 .is-dark .ucm-topbar .ucm-clock { color: #a8a8a8; }
 .is-dark .ucm-sys__timenote { color: #8c8c8c; }
 .ucm-sys__schedform { display: grid; grid-template-columns: auto 11rem auto 15rem auto; column-gap: .75rem; align-items: center; margin-top: 1rem; }

@@ -3439,10 +3439,17 @@ function sysSetFieldErr(inp, msgEl, text) {
     if (msgEl) msgEl.textContent = text || '';
 }
 
-function clockFmt(d) {
-    // 'HH:MM:SS' 24-hour local time — the kiosk topbar idiom (mono, compact).
+function clockMin(d) {
+    // 'HH:MM' 24-hour local time — the permanent topbar idiom (mono, compact;
+    // no seconds — the topbar is orientation, the Time card carries the full
+    // wall clock). round T-fix9.
     const p = (x) => String(x).padStart(2, '0');
-    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function clockSec(d) {
+    // 'HH:MM:SS' — the Time card's "Current time" line (the full wall clock,
+    // and the set-time drive's exact target). round T-fix9.
+    return clockMin(d) + ':' + String(d.getSeconds()).padStart(2, '0');
 }
 let __clockTimer = null;
 // round-T-fix8: the topbar clock is PERMANENT (the show-clock toggle + pref +
@@ -3453,7 +3460,7 @@ let __clockTimer = null;
 function updateTopbarClock() {
     const el = $('#topbarClock');
     if (!el) return;
-    el.textContent = clockFmt(new Date());
+    el.textContent = clockMin(new Date());
 }
 function startTopbarClock() {
     if (__clockTimer) return;
@@ -3511,7 +3518,7 @@ async function loadSystem() {
     try { tr = await core.machine.timeRead(); }
     catch (e) { /* timedate1/bundled list unavailable — leave the rows at their HTML defaults */ }
     if (tr) {
-        if (tr.usec != null && timeNowEl) timeNowEl.textContent = clockFmt(new Date(tr.usec / 1000)); // timedate1 usec -> ms
+        if (tr.usec != null && timeNowEl) timeNowEl.textContent = clockSec(new Date(tr.usec / 1000)); // timedate1 usec -> ms
         const ntpOn = tr.ntp === true;
         if (timeNote) {
             timeNote.textContent = ntpOn ? '(time sync is on — manual time is disabled)' : '';
@@ -3552,7 +3559,7 @@ async function doSetTime() {
     try {
         await core.machine.timeSet(Math.round((local - new Date().getTimezoneOffset() * 60000) * 1000)); // local -> UTC usec
         const nowEl = $('#timeNow');
-        if (nowEl) nowEl.textContent = clockFmt(new Date(local));
+        if (nowEl) nowEl.textContent = clockSec(new Date(local));
         toast('positive', 'Time set', 'The system clock was set manually.');
     } catch (e) { toastErr(e); }
     finally { btn.disabled = false; }

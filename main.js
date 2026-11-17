@@ -2144,11 +2144,13 @@ async function setGlobalRefreshNow() {
 }
 
 /* ------------------------------------------------------------------ *
- * 8g. Time card (round T): manual time + timezone + topbar clock
+ * 8g. Time card (round T): manual time + timezone (the topbar clock is
+ * PERMANENT — the round-T toggle was removed in T-fix8)
  *
  * The user asked for a "Time" card on the System page (between the
  * refresh schedule and power) with: a manual SET-TIME control, a
- * timezone picker, and a toggle for the topbar clock.
+ * timezone picker, and a toggle for the topbar clock. The toggle was
+ * removed in T-fix8 (bug 3) — the topbar clock is now permanent.
  *
  * MECHANISMS (all source-verified against local snapd @8d4d073 in
  * container snapd-sign-patch /root/snapd — the standing rule):
