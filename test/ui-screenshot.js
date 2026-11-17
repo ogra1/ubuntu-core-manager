@@ -6566,13 +6566,16 @@ function mockFactoryJs() {
     // round T-fix9: the topbar clock is HH:MM (NO seconds — the full wall
     // clock with seconds lives on the Time card's "Current time" line).
     if (!/^\d\d:\d\d$/.test((t0.clockText || '').trim())) console.log('PAGE ERROR: the topbar clock must render HH:MM (no seconds, round-T-fix9) (got ' + JSON.stringify(t0.clockText) + ')');
-    // round T-fix9: the INK alignment — the 12.8px mono ink centers ~2px higher
-    // than the 24px sans title ink (different font metrics), so the clock is
-    // nudged down 2px to line up the INK centres (measured: title cy 27.0 vs
-    // clock 25.0 pre-fix). A box-centre guard can't see this (the flex boxes
-    // ARE centred), so pin the nudge directly.
-    if (t0.clockStyle && (t0.clockStyle.position !== 'relative' || t0.clockStyle.top !== '2px'))
-        console.log('PAGE ERROR: the topbar clock must carry the 2px ink-alignment nudge (got ' + JSON.stringify(t0.clockStyle && { position: t0.clockStyle.position, top: t0.clockStyle.top }) + ') (round-T-fix9)');
+    // round T-fix10: the clock is centered on the page-title CAPTION, not on
+    // the bar. The 24px title's cap-height ink sits ~2px BELOW the topbar's
+    // geometric (flex) center, so the committed 2px (round T-fix9) read as
+    // bar-centered on the VM — the user asked for caption-centered, hence
+    // +2px -> 4px. A box-centre guard can't see this (the flex boxes ARE
+    // centred) and the container's exact variable-font ink offset differs from
+    // the VM's, so pin the SHIPPED nudge value (the VM is the visual
+    // authority); a revert to 2px/0px fires this.
+    if (t0.clockStyle && (t0.clockStyle.position !== 'relative' || t0.clockStyle.top !== '4px'))
+        console.log('PAGE ERROR: the topbar clock must carry the 4px caption-ink nudge (got ' + JSON.stringify(t0.clockStyle && { position: t0.clockStyle.position, top: t0.clockStyle.top }) + ') (round-T-fix10)');
     // round T-fix9: a MIDDOT hairline separates the clock from the page title
     // (it reads as chrome, not a title continuation) — mono, matching the
     // clock's ink, with 16px trailing space.
