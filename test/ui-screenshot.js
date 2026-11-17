@@ -560,6 +560,7 @@ function mockFactoryJs() {
                     }, a === 'refresh' ? 400 : 1200); // refresh (channel switch) settles fast;
                     // remove/disable/etc. keep the 1.2s window so the inline
                     // confirm cards stay visible for their shots (rounds 45/47c)
+                    // AND the T-fix14 busy-button (spinner) read lands mid-flight
                     return { id, change: id };
                 },
                 async component(n, a, c) {
@@ -581,6 +582,14 @@ function mockFactoryJs() {
                    one dotted key (null = delete the leaf). When the app unsets a
                    whole top-level key (the confWipeTop ghost-tree fix) the top
                    entry is deleted outright, so no hollow subtree survives. */
+                // Round T-fix14: the 4c remove drive runs a REAL remove (the
+                // button spinner needs the full click -> settle path), so the
+                // harness erases htop. Restore the seed entry after it, like
+                // the __settime/__setzone outside-change escapes.
+                __restoresnap: (n) => {
+                    if (SNAPS.some((x) => x.name === n)) return;
+                    SNAPS = SNAPS.concat([{ name: n, version: '3.3.0', revision: 5533, channel: 'stable', 'tracking-channel': 'latest/stable', status: 'active', type: 'app', confinement: 'strict' }]);
+                },
                 // Round 48g: confGet (the bridge surface) reads __store — the
                 // app's LIVE doc, seeded from CONF and mutated by confSet — so
                 // the rendered tree always matches what the app sent.
@@ -3454,7 +3463,45 @@ function mockFactoryJs() {
         if (!btn) throw new Error('store row Install button missing');
         btn.click();
     });
-    await wait(900); // 250ms mock install settle + margin
+    // ---- 4a-busy. Round T-fix14: while the install runs (mock settles at
+    // 250ms), the Install button must show the BUSY state: the Vanilla
+    // is-processing class (opacity 1, overriding the .is-disabled 0.33
+    // dim) + a spinning .p-icon--spinner appended after the label.
+    // ~120ms after the click we are inside the 250ms settle window (the
+    // sync part of installFromRow runs before its first await, so the busy
+    // state is already on the button).
+    await wait(120);
+    const busy1 = await page.evaluate(() => {
+        const btn = document.querySelector('#snapSearchBody button.p-button--brand');
+        if (!btn) return { error: 'install button missing' };
+        const sp = btn.querySelector('.p-icon--spinner');
+        const cs = sp ? getComputedStyle(sp) : null;
+        return {
+            text: btn.textContent.trim(),
+            processing: btn.classList.contains('is-processing'),
+            opacity: getComputedStyle(btn).opacity,
+            spin: !!sp,
+            animName: cs ? cs.animationName : null,
+            animDur: cs ? cs.animationDuration : null,
+            animIter: cs ? cs.animationIterationCount : null,
+            spinImg: cs ? cs.backgroundImage : null,
+        };
+    });
+    if (busy1.error) console.log('PAGE ERROR: ' + busy1.error + ' (round T-fix14)');
+    else {
+        if (busy1.text !== 'Installing…') console.log('PAGE ERROR: the busy Install button does not read Installing (got ' + JSON.stringify(busy1.text) + ', round T-fix14)');
+        if (!busy1.processing) console.log('PAGE ERROR: the busy Install button lacks the Vanilla is-processing class (round T-fix14)');
+        else if (busy1.opacity !== '1') console.log('PAGE ERROR: the busy Install button is dimmed (opacity ' + busy1.opacity + ' — .is-processing must override the .is-disabled 0.33, round T-fix14)');
+        if (!busy1.spin) console.log('PAGE ERROR: the busy Install button has no .p-icon--spinner (round T-fix14)');
+        else {
+            if (busy1.animName !== 'spin') console.log('PAGE ERROR: the install spinner is not the bundle spin animation (got ' + busy1.animName + ', round T-fix14)');
+            if (busy1.animDur !== '1s' || busy1.animIter !== 'infinite') console.log('PAGE ERROR: the install spinner does not spin 1s infinite (got ' + busy1.animDur + ' ' + busy1.animIter + ', round T-fix14)');
+            if ((busy1.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: the install spinner has no SVG glyph (background ' + (busy1.spinImg || 'none') + ' — round T-fix14)');
+            else if ((busy1.spinImg || '').indexOf('hsl(0%2C0%%2C100%)') === -1) console.log('PAGE ERROR: the install spinner glyph is not the WHITE variant (black on the orange button would be invisible; background ' + busy1.spinImg.slice(0,60) + '…, round T-fix14)');
+        }
+    }
+    await page.screenshot({ path: path.join(SHOTS, '11-install-busy.png') });
+    await wait(450); // 250ms mock install settle + margin
     const autoHide = await page.evaluate(() => ({
         hidden: !!document.querySelector('#snapSearchResults.ucm-hidden'),
         rows: document.querySelectorAll('#snapSearchBody tr').length,
@@ -4587,6 +4634,59 @@ function mockFactoryJs() {
     });
     if (JSON.stringify(rmBtns) !== JSON.stringify(['Remove?', 'Cancel']))
         console.log('PAGE ERROR: the remove confirm button is not "Remove?" (it must not carry the redundant snap name, round 48i): ' + JSON.stringify(rmBtns));
+    // ---- 4c-busy. Round T-fix14: clicking Remove? must swap the button to
+    // the BUSY state (Removing… + is-processing + the spinning
+    // .p-icon--spinner) while the change runs — the mock's remove settles at
+    // 1.2s, so ~900ms after the click we are mid-flight.
+    await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        if (!box) throw new Error('remove confirm row missing');
+        Array.from(box.querySelectorAll('button')).find((x) => x.textContent.trim() === 'Remove?').click();
+    });
+    await wait(900);
+    const busy2 = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-confirm');
+        if (!box) return { error: 'confirm row gone (settle too fast?)' };
+        const b = Array.from(box.querySelectorAll('button'))[0];
+        const sp = b.querySelector('.p-icon--spinner');
+        const cs = sp ? getComputedStyle(sp) : null;
+        return {
+            text: b.textContent.trim(),
+            processing: b.classList.contains('is-processing'),
+            spin: !!sp,
+            animName: cs ? cs.animationName : null,
+            spinImg: cs ? cs.backgroundImage : null,
+        };
+    });
+    if (busy2.error) console.log('PAGE ERROR: ' + busy2.error + ' (round T-fix14)');
+    else {
+        if (busy2.text !== 'Removing…') console.log('PAGE ERROR: the busy Remove button does not read Removing (got ' + JSON.stringify(busy2.text) + ', round T-fix14)');
+        if (!busy2.processing) console.log('PAGE ERROR: the busy Remove button lacks is-processing (round T-fix14)');
+        if (!busy2.spin) console.log('PAGE ERROR: the busy Remove button has no .p-icon--spinner (round T-fix14)');
+        else if (busy2.animName !== 'spin') console.log('PAGE ERROR: the remove spinner is not the bundle spin animation (got ' + busy2.animName + ', round T-fix14)');
+        if ((busy2.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: the remove spinner has no SVG glyph (round T-fix14)');
+        else if ((busy2.spinImg || '').indexOf('hsl(0%2C0%%2C100%)') === -1) console.log('PAGE ERROR: the remove spinner glyph is not the WHITE variant (black on the red button would be invisible; background ' + busy2.spinImg.slice(0,60) + '…, round T-fix14)');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '12-remove-busy.png'), fullPage: true });
+    // The drive ran a REAL remove — the mock's 1.2s settle filters htop OUT
+    // of SNAPS. Wait past it, restore the seed entry, and RE-ENTER the view
+    // (the house idiom) so the table re-reads: the later 4d/4f drives need
+    // htop again, and this proves the pristine state at the same time (the
+    // settle took the confirm row down and no spinner survives anywhere).
+    await wait(900); // past the 1.2s mock remove settle
+    await page.evaluate(() => { window.__mockCore.snaps.__restoresnap('htop'); });
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(400);
+    await page.click('.ucm-side a[data-view="snaps"]');
+    await wait(700);
+    const busyGone = await page.evaluate(() => ({
+        confirmGone: !document.querySelector('.ucm-confirm'),
+        spinGone: !document.querySelector('.p-icon--spinner'),
+        htopBack: !!Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name')).find((n) => n.textContent.trim() === 'htop'),
+    }));
+    if (!busyGone.confirmGone) console.log('PAGE ERROR: the remove confirm row is still up after the change settled (round T-fix14)');
+    if (!busyGone.spinGone) console.log('PAGE ERROR: a .p-icon--spinner survived the settled remove (round T-fix14)');
+    if (!busyGone.htopBack) console.log('PAGE ERROR: the harness restore failed — htop is missing from the installed card (round T-fix14)');
     // dismiss the confirm card so it does not affect later shots
     await page.evaluate(() => {
         const box = document.querySelector('.ucm-confirm');

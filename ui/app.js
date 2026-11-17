@@ -1722,6 +1722,9 @@ function confirmRemove(name) {
     const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Remove?' });
     b.onclick = async () => {
         b.classList.add('is-disabled');
+        b.textContent = 'Removing…';
+        b.classList.add('is-processing');
+        b.insertAdjacentHTML('beforeend', ' <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>');
         try {
             const change = await core.snaps.action(name, 'remove');
             toast('positive', 'Removal started', `${name} is being removed by snapd.`);
@@ -1731,7 +1734,13 @@ function confirmRemove(name) {
                 toast('negative', 'Removal finished with an error', `${name}: ${done.err || done.status}`);
             }
         } catch (e) { toastErr(e); }
-        finally { box.remove(); }
+        finally {
+            b.textContent = 'Remove?';
+            b.classList.remove('is-processing');
+            const sp = b.querySelector('.p-icon--spinner');
+            if (sp) sp.remove();
+            box.remove();
+        }
     };
     const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancel.onclick = () => box.remove();
@@ -1796,6 +1805,8 @@ async function installFromRow(name, channel, btn) {
     if (!btn) return;
     btn.classList.add('is-disabled');
     btn.textContent = 'Installing…';
+    btn.classList.add('is-processing');
+    btn.insertAdjacentHTML('beforeend', ' <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>');
     try {
         const change = await core.snaps.install(name, channel);
         toast('positive', 'Install started', `${name} is being installed from channel ${channel}.`);
@@ -1813,6 +1824,9 @@ async function installFromRow(name, channel, btn) {
     } finally {
         btn.classList.remove('is-disabled');
         btn.textContent = 'Install';
+        btn.classList.remove('is-processing');
+        const sp = btn.querySelector('.p-icon--spinner');
+        if (sp) sp.remove();
     }
 }
 
