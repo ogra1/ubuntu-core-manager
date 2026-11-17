@@ -1589,7 +1589,7 @@ function setLockTimeout(v) {
  * this round — round B adds the Appearance card + toggle.
  */
 const APPEARANCES = ['light', 'dark'];
-const DEFAULT_APPEARANCE = 'light';
+const DEFAULT_APPEARANCE = 'dark'; // round T-fix13: dark is the shipped default (the kiosk is a dark-themed admin console); a stored pref still wins
 
 function appearancePrefPath() {
     return process.env.UCM_APPEARANCE_PREF || (stateDir() ? path.join(stateDir(), 'appearance.pref') : null);
@@ -2921,8 +2921,8 @@ function initElectron() {
                     let probe;
                     try {
                         probe = await win.webContents.executeJavaScript(
-                            "({ bridge: typeof window.ucmCore, boot: !!(document.querySelector('#setupView') || document.querySelector('#loginView')) })",
-                            false);
+                            "({ bridge: typeof window.ucmCore, boot: !!(document.querySelector('#setupView') || document.querySelector('#loginView')), dark: document.documentElement.classList.contains('is-dark') })",
+                            false); // round T-fix13: dark = the real app booted dark (the shipped default, no pref)
                     } catch (err) {
                         probe = { error: String((err && err.message) || err) };
                     }

@@ -258,9 +258,9 @@ function mockFactoryJs() {
         let __lockTimeout = '15';
         let __lockCalls = 0;
         /* round A: the appearance (light/dark) — mock of main.js appearancePref
-           + setAppearance. Default 'light' = the shipped default (the light
-           suite is the light-regression proof). */
-        let __appearance = 'light';
+           + setAppearance. round T-fix13: Default 'dark' = the shipped default
+           (dark kiosk); the harness hands off to light after asserting it. */
+        let __appearance = 'dark';
         let __appearanceCalls = 0;
         /* round I: local pages (embedded localhost web UIs) — mock of main.js
            localPages + setLocalPages. Default [] = a fresh console (no pages). */
@@ -349,6 +349,10 @@ function mockFactoryJs() {
                     return { value: v, allowed, default: 'light' };
                 },
                 __appearance: () => ({ value: __appearance, calls: __appearanceCalls }),
+                // round T-fix13: persist-only (no set-call count, no push) — the
+                // harness uses it to hand the run off to LIGHT after asserting the
+                // dark default, so __appearanceCalls stays owned by the tests.
+                __setappearance: (v) => { if (!['light', 'dark'].includes(v)) throw new Error('invalid appearance: ' + v); __appearance = v; return __appearance; },
                 // round I: local pages (mock of main.js setLocalPages). The mock
                 // mirrors main.js: VALIDATE (loopback + name + dupes) then persist
                 // + PUSH status to __SUBS (like setAppearance) — so the renderer's
@@ -1232,36 +1236,23 @@ function mockFactoryJs() {
 
     // ---- 1. FIRST BOOT: setup view (create local password) ----
     await wait(600);
+    // round T-fix13: the app boots DARK (the shipped default) — <html> carries
+    // is-dark in the markup before core.auth.status() lands, and the mock
+    // default is dark, so the very first paint is dark (no light flash).
+    const bootsDark = await page.evaluate(() => ({
+        isDark: document.documentElement.classList.contains('is-dark'),
+        appearance: window.__mockCore.settings.__appearance().value,
+    }));
+    if (bootsDark.isDark !== true || bootsDark.appearance !== 'dark')
+        console.log('PAGE ERROR: the app must boot DARK by default (round T-fix13) (got ' + JSON.stringify(bootsDark) + ')');
     await page.screenshot({ path: path.join(SHOTS, '1-setup.png') });
 
-    // ---- 1b. round E: the INITIAL SETUP card is a dark card (it shares the
-    //      .ucm-login chrome with the lock/login prompt). The run starts LIGHT
-    //      (the shipped default), so force dark via the MOCK (which persists
-    //      through status pushes), read the setup card + note, then revert to
-    //      light so the rest of the run is the light regression proof.
-    const setupCard = await page.evaluate(() => {
-        const card = document.querySelector('#setupView .ucm-login__card');
-        const note = document.querySelector('#setupView .ucm-lockscreen-note');
-        const light = {
-            isDark: document.documentElement.classList.contains('is-dark'),
-            cardBg: card ? getComputedStyle(card).backgroundColor : null,
-            noteColor: note ? getComputedStyle(note).color : null,
-            // round H: the gate copy — pin the EXACT (de-worded) strings.
-            noteText: note ? note.textContent.trim() : null,
-            footText: (() => { const f = document.querySelector('#setupView .ucm-login__foot'); return f ? f.textContent.trim() : null; })(),
-        };
-        return { light };
-    });
-    if (setupCard.light.isDark !== false)
-        console.log('PAGE ERROR: 1b must start in the default light state (round E)');
-    if (setupCard.light.cardBg !== 'rgb(255, 255, 255)')
-        console.log('PAGE ERROR: the light setup card must be white (got ' + setupCard.light.cardBg + ') (round E)');
-    if (setupCard.light.noteText !== 'Set a local administrator password.')
-        console.log('PAGE ERROR: the setup note must read exactly "Set a local administrator password." (got ' + JSON.stringify(setupCard.light.noteText) + ') (round H)');
-    if (setupCard.light.footText !== 'This step only appears when no local password exists.')
-        console.log('PAGE ERROR: the setup foot must read exactly "This step only appears when no local password exists." (got ' + JSON.stringify(setupCard.light.footText) + ') (round H)');
-    await page.evaluate(() => document.documentElement.classList.add('is-dark'));
-    await wait(300);
+    // ---- 1b. round E: the INITIAL SETUP card (shares the .ucm-login chrome
+    //      with the lock/login prompt). round T-fix13: the run now starts DARK
+    //      (the shipped default), so we READ the dark card/note first, then
+    //      hand the run off to LIGHT (the mock default set to light + a status
+    //      push, which sticks through the session-activity re-pushes) so the
+    //      rest of the suite stays the light-coverage regression proof.
     const setupDark = await page.evaluate(() => {
         const card = document.querySelector('#setupView .ucm-login__card');
         const note = document.querySelector('#setupView .ucm-lockscreen-note');
@@ -1272,11 +1263,13 @@ function mockFactoryJs() {
             cardBg: card ? getComputedStyle(card).backgroundColor : null,
             headBorder: head ? getComputedStyle(head).borderBottomWidth : null,
             noteColor: note ? getComputedStyle(note).color : null,
+            noteText: note ? note.textContent.trim() : null,
+            footText: (() => { const f = document.querySelector('#setupView .ucm-login__foot'); return f ? f.textContent.trim() : null; })(),
             bodyColor: body ? getComputedStyle(body).color : null,
         };
     });
     if (setupDark.isDark !== true)
-        console.log('PAGE ERROR: 1b — forcing dark via the mock must flip <html>.is-dark (round E)');
+        console.log('PAGE ERROR: 1b must start in the default DARK state (round T-fix13; was light in round E)');
     if (setupDark.cardBg !== 'rgb(38, 38, 38)')
         console.log('PAGE ERROR: E4 — the dark setup card must be #262626 (got ' + setupDark.cardBg + ') (round E)');
     if (setupDark.headBorder !== '1px')
@@ -1284,10 +1277,37 @@ function mockFactoryJs() {
     if (setupDark.noteColor !== 'rgb(208, 208, 208)')
         console.log('PAGE ERROR: E4 — the dark setup note must be light (#d0d0d0, got ' + setupDark.noteColor + ') (round E)');
     if (setupDark.bodyColor !== 'rgb(242, 242, 242)')
-        console.log('PAGE ERROR: E4 — the dark setup body text must be near-white (var flip, got ' + setupDark.bodyColor + ') (round E)');
-    // revert to light (the run continues as the light regression proof)
-    await page.evaluate(() => document.documentElement.classList.remove('is-dark'));
-    await wait(200);
+        console.log('PAGE ERROR: E4 — the dark setup body must be near-white (var flip, got ' + setupDark.bodyColor + ') (round E)');
+    // round H: the gate copy — pin the EXACT (de-worded) strings (theme-independent).
+    if (setupDark.noteText !== 'Set a local administrator password.')
+        console.log('PAGE ERROR: the setup note must read exactly "Set a local administrator password." (got ' + JSON.stringify(setupDark.noteText) + ') (round H)');
+    if (setupDark.footText !== 'This step only appears when no local password exists.')
+        console.log('PAGE ERROR: the setup foot must read exactly "This step only appears when no local password exists." (got ' + JSON.stringify(setupDark.footText) + ') (round H)');
+    // HAND OFF to LIGHT: persist the mock default to light + push a status so
+    // <html> drops is-dark. The stored value (not just the class) must be
+    // light, because the session-activity beacon re-pushes the full status on
+    // every mouse/keyboard event and applyAuthPayload would otherwise revert
+    // the theme to the stored (dark) default.
+    await page.evaluate(() => {
+        window.__mockCore.settings.__setappearance('light');
+        window.__mockCore.auth.__pushstatus();
+    });
+    await wait(300);
+    const setupLight = await page.evaluate(() => {
+        const card = document.querySelector('#setupView .ucm-login__card');
+        const note = document.querySelector('#setupView .ucm-lockscreen-note');
+        return {
+            isDark: document.documentElement.classList.contains('is-dark'),
+            cardBg: card ? getComputedStyle(card).backgroundColor : null,
+            noteColor: note ? getComputedStyle(note).color : null,
+        };
+    });
+    if (setupLight.isDark !== false)
+        console.log('PAGE ERROR: after the light handoff <html> must be light for the rest of the run (round T-fix13)');
+    if (setupLight.cardBg !== 'rgb(255, 255, 255)')
+        console.log('PAGE ERROR: the light setup card must be white (got ' + setupLight.cardBg + ') (round E)');
+    if (setupLight.noteColor !== 'rgb(68, 68, 68)')
+        console.log('PAGE ERROR: the light setup note must be the light-theme grey #444 (got ' + setupLight.noteColor + ') (round E)');
 
     // mismatch validation
     await page.type('#setupPassword', 'correct-horse');
@@ -1682,15 +1702,16 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the reset warning touches the header separator (gap ' + sL.warnTopGap + 'px, want ~19 = 1.2rem) (round 67)');
     }
 
-    // ---- 2c. round A: the appearance TOGGLE is live end-to-end. The default
-    //      is LIGHT — this is also the light-regression proof (the whole light
-    //      suite runs on this default and must stay green). Driving
-    //      settings.setAppearance flips <html>.is-dark through the SAME
-    //      status-payload path the real IPC push uses (no UI card in this
-    //      round — that is round B).
+    // ---- 2c. round A: the appearance TOGGLE is live end-to-end. round
+    //      T-fix13: the SHIPPED default is now DARK (asserted by the
+    //      bootsDark guard in section 1); the run was handed off to LIGHT at
+    //      1b, so this section starts light and drives the live dark<->light
+    //      round-trip (settings.setAppearance flips <html>.is-dark through the
+    //      SAME status-payload path the real IPC push uses; the round-trip
+    //      ending back in light keeps the whole rest of the suite green).
     const aLight = await page.evaluate(() => document.documentElement.classList.contains('is-dark'));
     if (aLight !== false)
-        console.log('PAGE ERROR: the default appearance must be light (<html> must NOT be .is-dark at load) (round A)');
+        console.log('PAGE ERROR: 2c must start in the LIGHT handed-off state (<html> must NOT be .is-dark) (round T-fix13)');
     await page.evaluate(() => window.__mockCore.settings.setAppearance('dark'));
     await wait(250);
     const aDark = await page.evaluate(() => document.documentElement.classList.contains('is-dark'));
@@ -3407,6 +3428,23 @@ function mockFactoryJs() {
     });
     if (clearBtn.text !== '') console.log('PAGE ERROR: the Store results close button is not icon-only (text ' + JSON.stringify(clearBtn.text) + ', round 47i)');
     if (!/clear/i.test(clearBtn.aria)) console.log('PAGE ERROR: the Store results close button has no aria-label (' + JSON.stringify(clearBtn.aria) + ', round 47i)');
+    // ---- 4a-esc. Round T-fix13: ESC closes the Store results — the same
+    // action as the icon-only X. The search field is focused (we just typed
+    // into it), so Escape reaches the element-level handler ->
+    // clearStoreResults. Every dialog/action is Esc-cancelable; the search
+    // results were the one without it.
+    await page.focus('#snapSearchName');
+    await page.keyboard.press('Escape');
+    await wait(250);
+    const escClosed = await page.evaluate(() => ({
+        hidden: !!document.querySelector('#snapSearchResults.ucm-hidden'),
+        rows: document.querySelectorAll('#snapSearchBody tr').length,
+    }));
+    if (!escClosed.hidden) console.log('PAGE ERROR: ESC must close the Store results card (round T-fix13)');
+    if (escClosed.rows !== 0) console.log('PAGE ERROR: ESC must clear the Store results rows (got ' + escClosed.rows + ', round T-fix13)');
+    // re-run the search so the install drive below still has the mosquitto row.
+    await page.keyboard.press('Enter');
+    await wait(700);
     // install mosquitto from its store row -> the card must hide on success
     await page.evaluate(() => {
         const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))

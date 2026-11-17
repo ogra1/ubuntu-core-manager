@@ -117,6 +117,11 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     const p = result.probe || {};
     ok('bridge object present (window.ucmCore)', p.bridge === 'object', JSON.stringify(p));
     ok('a gate view is visible (setup or login)', p.boot === true, JSON.stringify(p));
+    // round T-fix13: the app boots DARK by default (the kiosk is dark-themed).
+    // The electron STATE dir is fresh (no appearance.pref), so this proves the
+    // REAL main.js default + preload + app.js flip <html>.is-dark end-to-end —
+    // the mock harness can't observe this (it drives the theme itself).
+    ok('the real app boots DARK (the shipped default; fresh state = no pref)', p.dark === true, JSON.stringify(p));
 
     // ---- round I: the <webview> E2E (real sandbox/webviewTag). The probe
     // created a local password, seeded a GOOD (served) + a DEAD (unreachable)

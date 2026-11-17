@@ -1,5 +1,8 @@
 <!doctype html>
-<html lang="en">
+<!-- round T-fix13: the shipped default is DARK — the is-dark class is set in
+     the markup so the very first paint is dark (no light flash) before
+     core.auth.status() lands the real pref. -->
+<html lang="en" class="is-dark">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -415,12 +418,12 @@
                                          orange p-switch), not a pulldown. Off =
                                          Light, on = Dark. -->
                                     <label class="p-switch ucm-theme__sw" title="Color theme for the console — off is Light, on is Dark">
-                                        <input class="p-switch__input" type="checkbox" id="theme">
+                                        <input class="p-switch__input" type="checkbox" id="theme" checked> <!-- round T-fix13: default ON (dark) -->
                                         <span class="p-switch__slider"></span>
                                     </label>
                                     <!-- round D (I4): the Light/Dark value, synced
                                          from state.appearance by syncThemeLabel(). -->
-                                    <span id="themeLabel" class="ucm-theme__label">Light</span>
+                                    <span id="themeLabel" class="ucm-theme__label">Dark</span> <!-- round T-fix13: default label -->
                                 </dd>
                             </div>
                         </dl>

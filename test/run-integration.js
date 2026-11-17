@@ -608,7 +608,7 @@ function ok(name, cond, extra = '') {
                 if (handlers['settings:set-appearance']) {
                     const rA = await new Promise((res) => handlers['settings:set-appearance'](null, 'dark').then(res));
                     ok('settings:set-appearance("dark") returns the appearance payload',
-                        rA.ok === true && rA.result.value === 'dark' && rA.result.default === 'light', JSON.stringify(rA));
+                        rA.ok === true && rA.result.value === 'dark' && rA.result.default === 'dark', JSON.stringify(rA));
                     ok('the appearance is LIVE in the status payload (dark)',
                         mw.authStatus().appearance === 'dark', JSON.stringify(mw.authStatus()));
                     const lastA = sends.slice().reverse().find((x) => x.ch === 'auth-status-changed');
@@ -622,10 +622,12 @@ function ok(name, cond, extra = '') {
                         rBadA2.ok === false && /invalid appearance/.test(rBadA2.error), JSON.stringify(rBadA2));
                     ok('a rejected set does NOT change the appearance (still dark)',
                         mw.authStatus().appearance === 'dark', JSON.stringify(mw.authStatus()));
-                    // revert to the shipped default so later sections see light
-                    await new Promise((res) => handlers['settings:set-appearance'](null, 'light').then(res));
-                    ok('the appearance reverts to the shipped default (light)',
-                        mw.authStatus().appearance === 'light', JSON.stringify(mw.authStatus()));
+                    // round T-fix13: the shipped default is dark — set it back
+                    // (this section had driven it to dark already) so later
+                    // sections see the default.
+                    await new Promise((res) => handlers['settings:set-appearance'](null, 'dark').then(res));
+                    ok('the appearance reverts to the shipped default (dark)',
+                        mw.authStatus().appearance === 'dark', JSON.stringify(mw.authStatus()));
                 } else {
                     ok('settings:set-appearance handler registered', false);
                 }
@@ -1369,27 +1371,27 @@ function ok(name, cond, extra = '') {
         const PREF = path.join(dir, 'appearance.pref');
         process.env.UCM_APPEARANCE_PREF = PREF;
         const readPref = () => { try { return fs.readFileSync(PREF, 'utf8'); } catch { return null; } };
-        // no pref -> the shipped default (light)
+        // no pref -> the shipped default (dark — round T-fix13)
         let ga = m.getAppearance();
-        ok('no pref file -> the shipped default (light)',
-            ga.value === 'light' && ga.default === 'light', JSON.stringify(ga));
+        ok('no pref file -> the shipped default (dark)',
+            ga.value === 'dark' && ga.default === 'dark', JSON.stringify(ga));
         ok('the allowed set is light/dark',
             JSON.stringify(m.APPEARANCES) === JSON.stringify(['light', 'dark'])
-            && m.DEFAULT_APPEARANCE === 'light', JSON.stringify(m.APPEARANCES));
-        // set to dark -> persisted + reflected
-        const rDark = m.setAppearance('dark');
-        ok('setAppearance("dark") persists + reflects',
-            rDark.value === 'dark' && readPref() === 'dark', JSON.stringify(rDark));
-        ok('getAppearance reads the stored pref (dark)', m.getAppearance().value === 'dark', '');
-        // set back to light
+            && m.DEFAULT_APPEARANCE === 'dark', JSON.stringify(m.APPEARANCES));
+        // set to light -> persisted + reflected (the user can still choose light)
         const rLight = m.setAppearance('light');
         ok('setAppearance("light") persists + reflects',
             rLight.value === 'light' && readPref() === 'light', JSON.stringify(rLight));
+        ok('getAppearance reads the stored pref (light)', m.getAppearance().value === 'light', '');
+        // set back to the default
+        const rDark = m.setAppearance('dark');
+        ok('setAppearance("dark") persists + reflects',
+            rDark.value === 'dark' && readPref() === 'dark', JSON.stringify(rDark));
         // invalid values throw and leave the pref untouched
         for (const bad of ['blue', '', 'DARK', 'dark ', 1, null]) {
             let threw = false;
             try { m.setAppearance(bad); } catch (e) { threw = /invalid appearance/.test(e.message); }
-            ok('setAppearance rejects ' + JSON.stringify(bad), threw && m.getAppearance().value === 'light');
+            ok('setAppearance rejects ' + JSON.stringify(bad), threw && m.getAppearance().value === 'dark');
         }
         delete process.env.UCM_APPEARANCE_PREF;
         fs.rmSync(dir, { recursive: true, force: true });

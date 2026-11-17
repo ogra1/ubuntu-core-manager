@@ -119,9 +119,10 @@ const state = {
     // no auto-lock). The default 15 min only seeds the FIRST paint before
     // core.auth.status() lands the real pref.
     timeoutMs: 900000,
-    // round A: the appearance (light/dark). The default 'light' seeds the
-    // FIRST paint before core.auth.status() lands the real pref.
-    appearance: 'light',
+    // round A: the appearance (light/dark). The default 'dark' seeds the
+    // FIRST paint before core.auth.status() lands the real pref (round
+    // T-fix13: dark is the shipped default — the kiosk is dark-themed).
+    appearance: 'dark',
     // round I: local pages (embedded localhost web UIs). [] seeds the FIRST
     // paint before core.auth.status() lands the real list.
     localPages: [],
@@ -4073,7 +4074,16 @@ function wire() {
     // snaps — the search field is a search ONLY: Enter runs the search, never
     // installs. Per-row Install buttons (in the results card) do the install.
     $('#snapSearchBtn').addEventListener('click', searchStore);
-    $('#snapSearchName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchStore(); } });
+    $('#snapSearchName').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); searchStore(); }
+        // round T-fix13: ESC closes the store-results card — the same action
+        // as the card's icon-only X (#snapSearchClear -> clearStoreResults).
+        // Every dialog/action is Esc-cancelable; the search results were the
+        // one left without it. Element-level handler: while the field is
+        // focused it runs before the document-level confirm-Esc (which only
+        // acts on a .ucm-confirm — the two never coexist).
+        else if (e.key === 'Escape') { e.stopPropagation(); clearStoreResults(); }
+    });
     $('#snapSearchClear').addEventListener('click', clearStoreResults);
 
     // interfaces: no page-level Refresh (round 39) — the view
