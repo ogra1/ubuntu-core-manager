@@ -3485,6 +3485,10 @@ function mockFactoryJs() {
             animDur: cs ? cs.animationDuration : null,
             animIter: cs ? cs.animationIterationCount : null,
             spinImg: cs ? cs.backgroundImage : null,
+            h: +btn.getBoundingClientRect().height.toFixed(1),
+            ws: getComputedStyle(btn).whiteSpace,
+            tableLay: btn.closest('table') ? getComputedStyle(btn.closest('table')).tableLayout : null,
+            centerDiff: (function () { const tb = btn.getBoundingClientRect(); const sb = sp ? sp.getBoundingClientRect() : null; return sb ? +(((sb.top + sb.bottom) / 2) - ((tb.top + tb.bottom) / 2)).toFixed(1) : null; })(),
         };
     });
     if (busy1.error) console.log('PAGE ERROR: ' + busy1.error + ' (round T-fix14)');
@@ -3498,6 +3502,20 @@ function mockFactoryJs() {
             if (busy1.animDur !== '1s' || busy1.animIter !== 'infinite') console.log('PAGE ERROR: the install spinner does not spin 1s infinite (got ' + busy1.animDur + ' ' + busy1.animIter + ', round T-fix14)');
             if ((busy1.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: the install spinner has no SVG glyph (background ' + (busy1.spinImg || 'none') + ' — round T-fix14)');
             else if ((busy1.spinImg || '').indexOf('hsl(0%2C0%%2C100%)') === -1) console.log('PAGE ERROR: the install spinner glyph is not the WHITE variant (black on the orange button would be invisible; background ' + busy1.spinImg.slice(0,60) + '…, round T-fix14)');
+        }
+    }
+    if (!busy1.error) {
+        // round T-fix15: the busy Install button must stay on ONE line (label +
+        // spinner) - the real 1280x800 kiosk wrapped the spinner under the text.
+        // (a) the store table is off the bundle table-layout:fixed (auto),
+        // (b) the busy button is white-space:nowrap, (c) it renders one line
+        // (~36px, not the 60px two-line) with the spinner centred on the text
+        // line (centre delta ~0, not ~12 below it).
+        if (busy1.tableLay !== 'auto') console.log('PAGE ERROR: the store-results table must use table-layout:auto (got ' + JSON.stringify(busy1.tableLay) + ' - the bundle fixed layout starves the Install column and wraps the busy button, round T-fix15)');
+        if (busy1.ws !== 'nowrap') console.log('PAGE ERROR: the busy Install button is not white-space:nowrap (got ' + JSON.stringify(busy1.ws) + ', round T-fix15)');
+        if (busy1.spin) {
+            if (!(busy1.h >= 32 && busy1.h <= 40)) console.log('PAGE ERROR: the busy Install button wrapped to two lines (height ' + busy1.h + 'px, want ~36 one line - the spinner dropped under the text, round T-fix15)');
+            if (busy1.centerDiff == null || Math.abs(busy1.centerDiff) > 8) console.log('PAGE ERROR: the Install spinner is not on the label line (centre delta ' + JSON.stringify(busy1.centerDiff) + 'px from the button centre, round T-fix15)');
         }
     }
     await page.screenshot({ path: path.join(SHOTS, '11-install-busy.png') });
@@ -4656,6 +4674,9 @@ function mockFactoryJs() {
             spin: !!sp,
             animName: cs ? cs.animationName : null,
             spinImg: cs ? cs.backgroundImage : null,
+            h: +b.getBoundingClientRect().height.toFixed(1),
+            ws: getComputedStyle(b).whiteSpace,
+            centerDiff: (function () { const tb = b.getBoundingClientRect(); const sb = sp ? sp.getBoundingClientRect() : null; return sb ? +(((sb.top + sb.bottom) / 2) - ((tb.top + tb.bottom) / 2)).toFixed(1) : null; })(),
         };
     });
     if (busy2.error) console.log('PAGE ERROR: ' + busy2.error + ' (round T-fix14)');
@@ -4666,6 +4687,17 @@ function mockFactoryJs() {
         else if (busy2.animName !== 'spin') console.log('PAGE ERROR: the remove spinner is not the bundle spin animation (got ' + busy2.animName + ', round T-fix14)');
         if ((busy2.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: the remove spinner has no SVG glyph (round T-fix14)');
         else if ((busy2.spinImg || '').indexOf('hsl(0%2C0%%2C100%)') === -1) console.log('PAGE ERROR: the remove spinner glyph is not the WHITE variant (black on the red button would be invisible; background ' + busy2.spinImg.slice(0,60) + '…, round T-fix14)');
+    }
+    if (!busy2.error) {
+        // round T-fix15: the busy Remove? confirm button must ALSO stay on one
+        // line (label + spinner). It sits in a wide flex row (no fixed table
+        // cell) so it was never starved, but the nowrap + geometry guards lock
+        // that so it can never regress to a wrapped spinner.
+        if (busy2.ws !== 'nowrap') console.log('PAGE ERROR: the busy Remove? button is not white-space:nowrap (got ' + JSON.stringify(busy2.ws) + ', round T-fix15)');
+        if (busy2.spin) {
+            if (!(busy2.h >= 32 && busy2.h <= 40)) console.log('PAGE ERROR: the busy Remove? button wrapped to two lines (height ' + busy2.h + 'px, want ~36 one line, round T-fix15)');
+            if (busy2.centerDiff == null || Math.abs(busy2.centerDiff) > 8) console.log('PAGE ERROR: the Remove? spinner is not on the label line (centre delta ' + JSON.stringify(busy2.centerDiff) + 'px, round T-fix15)');
+        }
     }
     await page.screenshot({ path: path.join(SHOTS, '12-remove-busy.png'), fullPage: true });
     // The drive ran a REAL remove — the mock's 1.2s settle filters htop OUT
