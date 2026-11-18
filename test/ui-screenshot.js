@@ -5115,16 +5115,54 @@ function mockFactoryJs() {
             // confirm -> REFRESH with channel settles -> the channel row shows
             // the new current channel and the panel collapses
             await page.evaluate(() => document.querySelector('.ucm-info__picker .p-button--brand').click());
-            await wait(1500); // 400ms mock settle + info re-render
+    // ---- 4g-busy. Round T-fix17: while the channel switch runs (mock
+    // refresh settles at 400ms), the Switch CTA must show the same BUSY
+    // state as the snap Install / Remove buttons (round T-fix14): the
+    // Vanilla is-processing class (opacity 1, not the .is-disabled 0.33
+    // dim) + a spinning .p-icon--spinner in the WHITE variant + the
+    // label swap. Read at ~150ms, inside the settle window.
+    await wait(150);
+    const swBusy = await page.evaluate(() => {
+        const go = document.querySelector('.ucm-info__picker .p-button--brand');
+        if (!go) return { error: 'picker gone (settle too fast?)' };
+        const sp = go.querySelector('.p-icon--spinner');
+        const cs = sp ? getComputedStyle(sp) : null;
+        return {
+            text: go.textContent.trim(),
+            processing: go.classList.contains('is-processing'),
+            opacity: getComputedStyle(go).opacity,
+            spin: !!sp,
+            animName: cs ? cs.animationName : null,
+            animDur: cs ? cs.animationDuration : null,
+            animIter: cs ? cs.animationIterationCount : null,
+            spinImg: cs ? cs.backgroundImage : null,
+        };
+    });
+    if (swBusy.error) console.log('PAGE ERROR: ' + swBusy.error + ' (round T-fix17)');
+    else {
+        if (swBusy.text !== 'Switching\u2026') console.log('PAGE ERROR: the busy Switch CTA does not read Switching (got ' + JSON.stringify(swBusy.text) + ', round T-fix17)');
+        if (!swBusy.processing) console.log('PAGE ERROR: the busy Switch CTA lacks the Vanilla is-processing class (round T-fix17)');
+        else if (swBusy.opacity !== '1') console.log('PAGE ERROR: the busy Switch CTA is dimmed (opacity ' + swBusy.opacity + ' - .is-processing must override the .is-disabled 0.33, round T-fix17)');
+        if (!swBusy.spin) console.log('PAGE ERROR: the busy Switch CTA has no .p-icon--spinner (round T-fix17)');
+        else {
+            if (swBusy.animName !== 'spin') console.log('PAGE ERROR: the switch spinner is not the bundle spin animation (got ' + swBusy.animName + ', round T-fix17)');
+            if (swBusy.animDur !== '1s' || swBusy.animIter !== 'infinite') console.log('PAGE ERROR: the switch spinner does not spin 1s infinite (got ' + swBusy.animDur + ' ' + swBusy.animIter + ', round T-fix17)');
+            if ((swBusy.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: the switch spinner has no SVG glyph (background ' + (swBusy.spinImg || 'none') + ' - round T-fix17)');
+            else if ((swBusy.spinImg || '').indexOf('hsl(0%2C0%%2C100%)') === -1) console.log('PAGE ERROR: the switch spinner glyph is not the WHITE variant (black on the orange button would be invisible; background ' + swBusy.spinImg.slice(0,60) + '..., round T-fix17)');
+        }
+    }
+            await wait(1500); // remaining settle headroom after the 150ms busy read
             const after = await page.evaluate(() => {
                 const body = document.querySelector('.ucm-modal .ucm-info');
                 const dd = (label) => { for (const d of body.querySelectorAll('.ucm-kv > div')) if ((d.querySelector('dt')||{}).textContent === label) return d.querySelector('dd'); return null; };
                 const chDd = dd('Track/Channel');
                 return { cur: chDd ? (chDd.querySelector('.ucm-mono')||{}).textContent.trim() : null,
-                         pickerGone: !document.querySelector('.ucm-info__picker') };
+                         pickerGone: !document.querySelector('.ucm-info__picker'),
+                         spinnerAbsent: !document.querySelector('.ucm-info__picker .p-icon--spinner') };
             });
             if (after.cur !== '3.3/candidate') console.log('PAGE ERROR: channel row did not update to the new channel after the switch (' + after.cur + ')');
             if (!after.pickerGone) console.log('PAGE ERROR: the picker panel is still open after the switch completed');
+    if (!after.spinnerAbsent) console.log('PAGE ERROR: the switch spinner survived the settled switch (the CTA must restore its label + drop the spinner, round T-fix17)');
         }
     }
     await page.keyboard.down('Escape');

@@ -2226,6 +2226,20 @@ function openSnapInfo(name) {
             if (!target) return;
             go.disabled = true;
             cancel.disabled = true;
+            // round T-fix17: busy feedback for the channel switch - a
+            // switch is a REFRESH with the new channel, a potentially
+            // long-running download. Same busy idiom as the snap Install /
+            // Remove buttons (round T-fix14): the Vanilla .is-processing
+            // class (opacity 1, overriding the .is-disabled dim), the label
+            // swap, and the appended white spinning .p-icon--spinner
+            // (.p-button--base + .p-button--brand both flip to a WHITE
+            // glyph via the T-fix14 app.css rule - the bundle would draw
+            // black on the orange button in light). Restored in finally
+            // (the error path keeps the picker open, so the CTA comes
+            // back armed for a retry).
+            go.textContent = 'Switching\u2026';
+            go.classList.add('is-processing');
+            go.insertAdjacentHTML('beforeend', ' <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>');
             try {
                 // a channel switch is a REFRESH with the new channel (round
                 // 47g — `switch` only rewrites the tracking metadata, it does
@@ -2245,6 +2259,13 @@ function openSnapInfo(name) {
                     toast('negative', 'Channel switch finished with an error', `${nm}: ${done.err || done.status}`);
             } catch (e) {
                 toastErr(e);
+            } finally {
+                // round T-fix17: restore the CTA even on the error path
+                // (the picker stays open there - a retry must be possible).
+                go.textContent = 'Switch to ' + target;
+                go.classList.remove('is-processing');
+                const sp = go.querySelector('.p-icon--spinner');
+                if (sp) sp.remove();
             }
         };
         filter.focus();
