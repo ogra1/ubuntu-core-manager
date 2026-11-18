@@ -5247,22 +5247,59 @@ function mockFactoryJs() {
         // modal is open AND its z-index must sit above the modal's (the invariant
         // that keeps it in front, even if a tall card reaches near the top).
         await wait(150);
+        // round 47n toast read + round T-fix18 busy-button read, in the SAME
+        // +150ms moment (inside the 400ms mock component settle): the
+        // component Install CTA must show the T-fix14 busy state - and,
+        // because the button is a .p-button--base (unthemed), its spinner
+        // must be the BUNDLE default glyph: BLACK in this light-state run
+        // (the harness runs in the T-fix13 light handoff), NOT the white
+        // override the colored buttons get (round T-fix18).
         const compToast = await page.evaluate(() => {
             const t = document.querySelector('.ucm-toasts .p-notification');
-            if (!t) return null;
-            const r = t.getBoundingClientRect();
+            const btn = document.querySelector('.ucm-info__comp-btn');
+            const sp = btn ? btn.querySelector('.p-icon--spinner') : null;
+            const csp = sp ? getComputedStyle(sp) : null;
+            const r = t ? t.getBoundingClientRect() : null;
             const modal = document.querySelector('.ucm-modal');
             const toastc = document.querySelector('.ucm-toasts');
-            return { text: t.textContent, top: r.top,
-                     inVp: r.top >= 0 && r.top < window.innerHeight && r.width > 0,
-                     modalOpen: !!modal,
-                     toastZ: toastc ? getComputedStyle(toastc).zIndex : null,
-                     modalZ: modal ? getComputedStyle(modal).zIndex : null };
+            return {
+                text: t ? t.textContent : null,
+                top: r ? r.top : null,
+                inVp: r ? (r.top >= 0 && r.top < window.innerHeight && r.width > 0) : false,
+                modalOpen: !!modal,
+                toastZ: toastc ? getComputedStyle(toastc).zIndex : null,
+                modalZ: modal ? getComputedStyle(modal).zIndex : null,
+                // T-fix18 busy-button fields
+                btnText: btn ? btn.textContent.trim() : null,
+                btnProcessing: btn ? btn.classList.contains('is-processing') : null,
+                btnOpacity: btn ? getComputedStyle(btn).opacity : null,
+                spin: !!sp,
+                animName: csp ? csp.animationName : null,
+                animDur: csp ? csp.animationDuration : null,
+                animIter: csp ? csp.animationIterationCount : null,
+                spinImg: csp ? csp.backgroundImage : null,
+            };
         });
         if (!compToast || !compToast.modalOpen || !compToast.inVp)
             console.log('PAGE ERROR: the component-install toast is not visible while the modal is open (got ' + JSON.stringify(compToast) + ' — round 47n)');
         if (compToast && !(Number(compToast.toastZ) > Number(compToast.modalZ)))
             console.log('PAGE ERROR: the toast z-index is not above the modal (toast ' + compToast.toastZ + ' vs modal ' + compToast.modalZ + '), so it hides behind it (round 47n)');
+        // ---- T-fix18: the component Install button busy state (this drive
+        // installed the 'extra' component, so the label is Installing...). The
+        // component buttons are p-button--base (unthemed), so the spinner must
+        // be the BUNDLE default glyph: in this light-state run it is BLACK
+        // (fill %23000 in the serialized svg), NOT the white override that the
+        // colored brand/negative buttons get (round T-fix18 narrowing).
+        if (compToast.btnText !== 'Installing\u2026') console.log('PAGE ERROR: the busy component Install button does not read Installing (got ' + JSON.stringify(compToast.btnText) + ', round T-fix18)');
+        if (!compToast.btnProcessing) console.log('PAGE ERROR: the busy component button lacks the Vanilla is-processing class (round T-fix18)');
+        else if (compToast.btnOpacity !== '1') console.log('PAGE ERROR: the busy component button is dimmed (opacity ' + compToast.btnOpacity + ' - .is-processing must override the .is-disabled 0.33, round T-fix18)');
+        if (!compToast.spin) console.log('PAGE ERROR: the busy component button has no .p-icon--spinner (round T-fix18)');
+        else {
+            if (compToast.animName !== 'spin') console.log('PAGE ERROR: the component spinner is not the bundle spin animation (got ' + compToast.animName + ', round T-fix18)');
+            if (compToast.animDur !== '1s' || compToast.animIter !== 'infinite') console.log('PAGE ERROR: the component spinner does not spin 1s infinite (got ' + compToast.animDur + ' ' + compToast.animIter + ', round T-fix18)');
+            if ((compToast.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: the component spinner has no SVG glyph (background ' + (compToast.spinImg || 'none') + ' - round T-fix18)');
+            else if ((compToast.spinImg || '').indexOf('hsl(0%2C0%%2C100%)') !== -1) console.log('PAGE ERROR: the component (p-button--base) spinner uses the WHITE override - it must keep the bundle default (black in light), not the colored-button white (background ' + compToast.spinImg.slice(0,60) + '..., round T-fix18)');
+        }
         await wait(700); // 400ms mock settle + margin
         const comp2 = await page.evaluate(() => {
             const body = document.querySelector('.ucm-modal .ucm-info');

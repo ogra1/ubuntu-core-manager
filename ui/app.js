@@ -2106,6 +2106,20 @@ function openSnapInfo(name) {
         const nm = info.name;
         const act = installed ? 'remove' : 'install';
         if (btn) { btn.classList.add('is-disabled'); btn.disabled = true; }
+        // round T-fix18: busy feedback for component install/remove - same
+        // idiom as the snap Install / Remove / channel-Switch buttons
+        // (rounds T-fix14/T-fix17). The label + spinner are dropped again in
+        // the finally BEFORE the card re-render (which replaces the whole
+        // row with a fresh button), so no spinner can survive on success or
+        // error. NOTE the spinner uses the BUNDLE default theming here (the
+        // button is a p-button--base, not colored): black on the light
+        // theme, white on .is-dark - via the app.css rule that scopes the
+        // T-fix14 white override to the brand/negative buttons only.
+        if (btn) {
+            btn.textContent = installed ? 'Removing\u2026' : 'Installing\u2026';
+            btn.classList.add('is-processing');
+            btn.insertAdjacentHTML('beforeend', ' <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>');
+        }
         try {
             const change = await core.snaps.component(nm, act, c.name);
             toast('positive', (installed ? 'Component removal started' : 'Component install started'),
@@ -2119,6 +2133,17 @@ function openSnapInfo(name) {
             if (done && done.status && isChangeTerminal(done.status) && done.status.toLowerCase() !== 'done')
                 toast('negative', 'Component change finished with an error', nm + '+' + c.name + ': ' + (done.err || done.status));
         } catch (e) { toastErr(e); }
+        finally {
+            // round T-fix18: restore the button (the re-render below replaces
+            // the row on success; on the error path the row stays, so the
+            // Install/Remove label must come back for a retry).
+            if (btn) {
+                btn.textContent = installed ? 'Remove' : 'Install';
+                btn.classList.remove('is-processing');
+                const sp = btn.querySelector('.p-icon--spinner');
+                if (sp) sp.remove();
+            }
+        }
     }
 
     function renderChannelRow(nm, store) {

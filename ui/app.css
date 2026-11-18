@@ -416,22 +416,29 @@ html, body {
    stat/cpu/netgraph "now" values, chip values). It is used ONLY as a text
    color (never a bg/border), so flipping it has no surface side-effects. */
 .is-dark { --ucm-grey-dark: #f2f2f2; color-scheme: dark; } /* round T-fix12: dark native popups */
-/* round T-fix14: the Busy button spinner (Vanilla .is-processing +
-   .p-icon--spinner + .u-animation--spin, see installFromRow / confirmRemove
-   in ui/app.js) must spin in WHITE on the colored buttons. The bundle
-   draws p-icon--spinner as TWO stacked background layers — the
-   --vf-theme-light layer carries the BLACK svg, the --vf-theme-dark layer
-   the WHITE one — and its flag trick (--vf-FLAG-ON: initial,
-   --vf-FLAG-OFF: empty) keeps one layer active per theme with the active
-   one ON TOP: a LIGHT page renders the BLACK glyph, .is-dark renders
-   WHITE (probed: bundle-only light=black, dark=white). On a colored
-   button (orange brand / red negative) black is invisible, so force the
-   white layer for .is-processing buttons in BOTH app themes (app.css
-   loads after the bundle, same specificity, wins; the double %% in the
-   fill is how hsl(0,0%,100%) serializes). The bundle's own icon box
-   (1rem, inline-block, vertical-align nudge) + u-animation--spin
+/* round T-fix14 (busy-button spinner) + T-fix18 (narrowed to colored
+   buttons): the Install / Remove / channel-Switch busy spinners must
+   spin in WHITE on the COLORED buttons (orange .p-button--brand / red
+   .p-button--negative). The bundle draws .p-icon--spinner as TWO stacked
+   background layers - the --vf-theme-light layer carries the BLACK svg,
+   the --vf-theme-dark layer the WHITE one - and its flag trick
+   (--vf-FLAG-ON: initial, --vf-FLAG-OFF: empty) keeps one layer active
+   per theme with the active one ON TOP: a LIGHT page renders the BLACK
+   glyph, .is-dark renders WHITE (probed: bundle-only light=black,
+   dark=white). On a colored button black is invisible, so force the
+   white layer for those in BOTH app themes (app.css loads after the
+   bundle, same specificity, wins; the double %% in the fill is how
+   hsl(0,0%,100%) serializes).
+   round T-fix18: the selector is scoped to the --brand / --negative
+   variants ONLY. The snap COMPONENT install/remove buttons are
+   .p-button--base (unthemed) and must keep the BUNDLE default glyph -
+   black on light, white on .is-dark - which is exactly right on their
+   neutral background. Widening the rule to every .p-button.is-processing
+   would force a white glyph on the base button in light (invisible on a
+   light background), so the narrowing is load-bearing. The bundle's icon
+   box (1rem, inline-block, vertical-align nudge) + u-animation--spin
    (spin 1s infinite) do the rest. */
-.p-button.is-processing .p-icon--spinner { background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 13.5a5.488 5.488 0 004.183-1.929l1.317.76A6.988 6.988 0 018 15a6.988 6.988 0 01-5.5-2.669l1.316-.76A5.488 5.488 0 008 13.5zM6.999 1.071v1.52A5.502 5.502 0 002.815 9.84L1.5 10.6A7.002 7.002 0 016.764 1.11l.235-.038zM15 8c0 .918-.177 1.795-.498 2.6l-1.317-.761A5.502 5.502 0 009 2.59V1.07c3.392.485 6 3.403 6 6.929z' fill='hsl(0%2C0%%2C100%)' fill-rule='nonzero'/%3E%3C/svg%3E"); }
+.p-button--brand.is-processing .p-icon--spinner, .p-button--negative.is-processing .p-icon--spinner { background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 13.5a5.488 5.488 0 004.183-1.929l1.317.76A6.988 6.988 0 018 15a6.988 6.988 0 01-5.5-2.669l1.316-.76A5.488 5.488 0 008 13.5zM6.999 1.071v1.52A5.502 5.502 0 002.815 9.84L1.5 10.6A7.002 7.002 0 016.764 1.11l.235-.038zM15 8c0 .918-.177 1.795-.498 2.6l-1.317-.761A5.502 5.502 0 009 2.59V1.07c3.392.485 6 3.403 6 6.929z' fill='hsl(0%2C0%%2C100%)' fill-rule='nonzero'/%3E%3C/svg%3E"); }
 /* round T-fix15: the store-results table must NOT stay on the bundle
    table{table-layout:fixed} rule (it forces six EQUAL columns and starves
    the Install column to ~140px inner, so the busy Installing label + the
