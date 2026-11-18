@@ -234,6 +234,41 @@ function mockFactoryJs() {
     return `
     window.__mockCore = (function () {
         const __store = {};
+        // round T-fix19: the DASHBOARD seed changes carry FULL detail
+        // (tasks + per-task log + progress + ready-time) so both the
+        // list (changes()) and the detail (change(id) -> the change-
+        // detail modal) read the SAME objects. Live snapd /v2/changes
+        // returns full Change objects (tasks included); the list UI
+        // simply ignores the extras. change(id) falls back to these for
+        // the seeded ids (the dynamic changes live in CHANGES).
+        const SEED_CHANGES = {
+            '14': { id: '14', kind: 'install-snap', summary: 'Install snap "mosquitto"', status: 'Done',
+                    'spawn-time': '2026-10-28T08:12:00Z', 'ready-time': '2026-10-28T08:13:05Z',
+                    tasks: [
+                        { id: '21', kind: 'download-snap', summary: 'Download snap "mosquitto" (2.0.19) from channel "latest/stable"', status: 'Done',
+                          'spawn-time': '2026-10-28T08:12:02Z', 'ready-time': '2026-10-28T08:12:20Z',
+                          log: ['Downloading mosquitto 2.0.19 (amd64, 4.6 MiB)', 'Verifying sha3-384 hash', 'Downloaded to /var/lib/snapd/cache'] },
+                        { id: '22', kind: 'setup-snap', summary: 'Unpack and setup snap "mosquitto" (2.0.19)', status: 'Done',
+                          'spawn-time': '2026-10-28T08:12:21Z', 'ready-time': '2026-10-28T08:12:44Z' },
+                        { id: '23', kind: 'connect-plug', summary: 'Auto-connect 2 plugs', status: 'Done',
+                          'spawn-time': '2026-10-28T08:12:45Z', 'ready-time': '2026-10-28T08:12:58Z' },
+                    ] },
+            '15': { id: '15', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Doing',
+                    'spawn-time': '2026-10-28T09:00:00Z',
+                    tasks: [
+                        { id: '30', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Doing',
+                          progress: { done: 3, total: 10 }, 'spawn-time': '2026-10-28T09:00:10Z' },
+                        { id: '31', kind: 'run-service', summary: 'Restart snap service "core24"', status: 'Done',
+                          'spawn-time': '2026-10-28T09:00:05Z', 'ready-time': '2026-10-28T09:00:08Z' },
+                    ] },
+            '16': { id: '16', kind: 'connect-plug', summary: 'Connect firefox:network to core24:network', status: 'Done',
+                    'spawn-time': '2026-10-28T09:30:00Z', 'ready-time': '2026-10-28T09:30:12Z',
+                    tasks: [
+                        { id: '40', kind: 'connect-plug', summary: 'Connect firefox:network to core24:network', status: 'Done',
+                          'spawn-time': '2026-10-28T09:30:01Z', 'ready-time': '2026-10-28T09:30:09Z',
+                          log: ['Applying interface connection', 'firefox:network -> core24:network ok'] },
+                    ] },
+        };
         let __puts = 0;
         let SNAPS = ${JSON.stringify(SNAPS)};
         const CONF = ${JSON.stringify(SNAP_CONF)};
@@ -467,7 +502,7 @@ function mockFactoryJs() {
                 },
 
                 async change(id) {
-                    const c = CHANGES[id];
+                    const c = CHANGES[id] || SEED_CHANGES[id];
                     if (!c) throw new Error('unknown change ' + id);
                     // live snapd shows the in-flight change as "Do" between "Doing"
                     // and the terminal state — the UI must keep polling through it.
@@ -475,12 +510,13 @@ function mockFactoryJs() {
                     return c;
                 },
                 async changes() {
-                    // live snapd shape: string summary, hyphenated spawn-time,
-                    // and NO guaranteed order (the UI must sort newest-first).
+                    // live snapd shape: full Change objects, string summary,
+                    // hyphenated spawn-time, and NO guaranteed order (the UI
+                    // must sort newest-first).
                     return [
-                        { id: '14', kind: 'install-snap', summary: 'Install snap "mosquitto"', status: 'Done', 'spawn-time': '2026-10-28T08:12:00Z' },
-                        { id: '16', kind: 'connect-plug', summary: 'Connect firefox:network to core24:network', status: 'Done', 'spawn-time': '2026-10-28T09:30:00Z' },
-                        { id: '15', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T09:00:00Z' },
+                        SEED_CHANGES['14'],
+                        SEED_CHANGES['16'],
+                        SEED_CHANGES['15'],
                     ];
                 },
                 async netplan() { return JSON.parse(JSON.stringify(__netDoc)); },
@@ -1443,8 +1479,8 @@ function mockFactoryJs() {
         if (!rows.every((r) => r.length === 4 && r.every((c) => c.length > 0)))
             console.log('PAGE ERROR: change table has empty cells (' + JSON.stringify(rows) + ')');
         // sorted newest-first: 09:30, 09:00, 08:12 (the mock is 08:12, 09:30, 09:00)
-        if (rows.length === 3 && rows[0][0] !== 'connect-plug')
-            console.log('PAGE ERROR: changes not sorted newest-first (' + JSON.stringify(rows.map((r) => r[0])) + ')');
+        if (rows.length === 3 && rows[0][0] !== '16 connect-plug')
+            console.log('PAGE ERROR: changes not sorted newest-first or the change cell is not the active "<id> <kind>" (got ' + JSON.stringify(rows[0][0]) + ', round T-fix19)');
         // spawned column: full 'dd.mm.yyyy hh:mm' stamp (same format as the
         // Uptime refresh lines). Assert the SHAPE + the date piece; the
         // time-of-day is TZ-dependent (mock is UTC, harness renders local).
@@ -1464,6 +1500,95 @@ function mockFactoryJs() {
         else if (Math.max(cw[0], cw[1], cw[2]) >= cw[3] / 2)
             console.log('PAGE ERROR: changes columns not content-hugging (widths ' + JSON.stringify(cw) + ')');
     }
+
+    // ---- T-fix19: clicking a Recent-changes row opens the change-detail
+    // modal (the in-app `snap change <id>`). The Change cell is active
+    // (ID mono + kind, pointer cursor, dotted hover, a title). Drive the
+    // newest row (16 connect-plug): the pane must render the CLI shape -
+    // a task table (Status/Spawn/Ready/Summary) + the per-task LOG block
+    // (a 60-dot rule, the task summary, the log lines). No filter row (the
+    // journal's is deliberately not reused). Esc closes. Then drive row 15
+    // (an in-progress Doing task) to pin the " (NN.NN%)" progress suffix
+    // and the dash Ready column for a not-ready task.
+    const chgPre = await page.evaluate(() => {
+        const cell = document.querySelector('#dashChangesBody .ucm-change-kind');
+        const cs = cell ? getComputedStyle(cell) : null;
+        const id = cell ? cell.querySelector('span.ucm-mono') : null;
+        return { hasCell: !!cell, idText: id ? id.textContent.trim() : null,
+                 cellText: cell ? cell.textContent.trim() : null, cursor: cs ? cs.cursor : null,
+                 title: cell ? cell.getAttribute('title') : null };
+    });
+    if (!chgPre.hasCell) console.log('PAGE ERROR: the change cell is not the active .ucm-change-kind (round T-fix19)');
+    if (chgPre.hasCell && chgPre.idText !== '16') console.log('PAGE ERROR: the change cell must lead with the change ID (got ' + JSON.stringify(chgPre.idText) + ', round T-fix19)');
+    if (chgPre.hasCell && chgPre.cellText !== '16 connect-plug') console.log('PAGE ERROR: the change cell must show "<id> <kind>" (got ' + JSON.stringify(chgPre.cellText) + ', round T-fix19)');
+    if (chgPre.hasCell && chgPre.cursor !== 'pointer') console.log('PAGE ERROR: the change cell is not clickable (cursor ' + chgPre.cursor + ', round T-fix19)');
+    if (chgPre.hasCell && chgPre.title !== 'Show change details') console.log('PAGE ERROR: the change cell has no title affordance (got ' + JSON.stringify(chgPre.title) + ', round T-fix19)');
+    await page.evaluate(() => document.querySelector('#dashChangesBody .ucm-change-kind').click());
+    await wait(500);
+    const chgModal = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal--changes');
+        if (!box) return { error: 'no change-detail modal' };
+        const pre = box.querySelector('.ucm-change__lines');
+        const cs = pre ? getComputedStyle(pre) : null;
+        const txt = pre ? pre.textContent : '';
+        return {
+            headText: (box.querySelector('.ucm-modal__head .p-heading--5') || {}).textContent || null,
+            hasClose: !!box.querySelector('.ucm-modal__head button[aria-label=Close]'),
+            ws: cs ? cs.whiteSpace : null, bg: cs ? cs.backgroundColor : null,
+            noFilters: !box.querySelector('.ucm-journal__filters, .ucm-info__picker'),
+            hasTaskHeader: txt.indexOf('Status\tSpawn\tReady\tSummary') !== -1,
+            hasTaskRow: /Done\t\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}\t\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}\tConnect firefox:network to core24:network/.test(txt),
+            hasDotRule: txt.indexOf('......................................................................') !== -1,
+            hasLogLine: txt.indexOf('Applying interface connection') !== -1,
+            logAfterRule: txt.indexOf('Applying interface connection') > txt.indexOf('......................................................................'),
+            hasSummary: txt.indexOf('Connect firefox:network to core24:network') !== -1,
+            showsId: /Change 16/.test(txt),
+        };
+    });
+    if (chgModal.error) console.log('PAGE ERROR: ' + chgModal.error + ' (round T-fix19)');
+    else {
+        if (chgModal.headText !== 'Change details') console.log('PAGE ERROR: the change modal head is wrong (got ' + JSON.stringify(chgModal.headText) + ', round T-fix19)');
+        if (!chgModal.hasClose) console.log('PAGE ERROR: the change modal has no close button (round T-fix19)');
+        if (chgModal.ws !== 'pre') console.log('PAGE ERROR: the change pane is not white-space:pre (got ' + JSON.stringify(chgModal.ws) + ' - the task columns / dot rule would collapse, round T-fix19)');
+        if (chgModal.bg !== 'rgb(26, 26, 26)') console.log('PAGE ERROR: the change pane is not the terminal surface (bg ' + chgModal.bg + ', round T-fix19)');
+        if (!chgModal.noFilters) console.log('PAGE ERROR: the change modal must have NO filter row (no journal filter row or picker present, round T-fix19)');
+        if (!chgModal.hasTaskHeader) console.log('PAGE ERROR: the change modal has no task table header (round T-fix19)');
+        if (!chgModal.hasTaskRow) console.log('PAGE ERROR: the change modal has no tab-separated task row (round T-fix19)');
+        if (!chgModal.hasDotRule) console.log('PAGE ERROR: the change modal is missing the 60-dot log rule (round T-fix19)');
+        if (!chgModal.hasLogLine) console.log('PAGE ERROR: the change modal is missing the task log lines (round T-fix19)');
+        if (!chgModal.logAfterRule) console.log('PAGE ERROR: the task log must come after its dot rule (round T-fix19)');
+        if (!chgModal.showsId) console.log('PAGE ERROR: the change modal must surface the change ID (round T-fix19)');
+    }
+    await page.screenshot({ path: path.join(SHOTS, '3c-change-details.png') });
+    await page.keyboard.press('Escape');
+    await wait(300);
+    const chgGone1 = await page.evaluate(() => !document.querySelector('.ucm-modal--changes'));
+    if (!chgGone1) console.log('PAGE ERROR: Esc did not close the change-detail modal (round T-fix19)');
+    // drive 15: an in-progress change - the Doing task must carry the
+    // " (NN.NN%)" progress suffix and its Ready column is a dash.
+    await page.evaluate(() => {
+        const cell = Array.from(document.querySelectorAll('#dashChangesBody .ucm-change-kind'))
+            .find((c) => c.querySelector('span.ucm-mono') && c.querySelector('span.ucm-mono').textContent.trim() === '15');
+        if (!cell) throw new Error('change 15 cell missing');
+        cell.click();
+    });
+    await wait(500);
+    const chgDoing = await page.evaluate(() => {
+        const box = document.querySelector('.ucm-modal--changes');
+        const pre = box ? box.querySelector('.ucm-change__lines') : null;
+        const txt = pre ? pre.textContent : '';
+        return {
+            hasDoingPct: /Doing\t\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}\t\u2014\tConfigure snap "core24" \(30\.00%\)/.test(txt),
+            noLogBlock: txt.indexOf('......................................................................') === -1,
+            statusReady: /Ready/.test(txt),
+        };
+    });
+    if (!chgDoing.hasDoingPct) console.log('PAGE ERROR: the in-progress Doing task must show a percent suffix and a dash Ready (got no match, round T-fix19)');
+    if (!chgDoing.noLogBlock) console.log('PAGE ERROR: a change whose tasks have no log must show no log block (round T-fix19)');
+    await page.keyboard.press('Escape');
+    await wait(300);
+    const chgGone2 = await page.evaluate(() => !document.querySelector('.ucm-modal--changes'));
+    if (!chgGone2) console.log('PAGE ERROR: Esc did not close the second change-detail modal (round T-fix19)');
 
     // System + Model cards (round 20): device identity moved from the System
     // card into the 'Model' stat card (snapd version left the strip; it

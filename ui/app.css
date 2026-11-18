@@ -1670,6 +1670,27 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     font-family: "Ubuntu Mono variable", monospace; font-size: .72rem; line-height: 1.55;
     max-height: calc(100vh - 16rem); overflow: auto; white-space: pre-wrap; word-break: break-word;
     border-radius: .25rem; }
+/* round T-fix19: the Recent-changes Change (kind) cell is the row's click
+   target -> the change-detail modal (the in-app `snap change <id>`), exactly
+   like the snap-name cell opens snap-info. Pointer + a faint dotted underline
+   on hover (kept subtle so the table stays calm, the .ucm-snaps-name idiom).
+   The kind is semantically a name, so it carries the same mid-grey. The ID
+   is intentionally NOT shown in the list - it lives in the modal. */
+.ucm-change-kind { font-weight: 600; color: #3b3b3b; cursor: pointer; }
+.ucm-change-kind:hover { text-decoration: underline dotted; }
+.is-dark .ucm-change-kind { color: #e8e8e8; }
+/* round T-fix19: the change-detail modal reuses the .ucm-modal chrome. The
+   card is a bit WIDER than the default (the task table + a 60-dot log rule
+   are wide) and its body is ONE scrollable, terminal-styled pane
+   (.ucm-change__lines - the .ucm-journal__lines logic): a theme-independent
+   dark surface in monospace. white-space:pre (NOT pre-wrap) so the fixed
+   60-dot rule and the tab-aligned task columns never wrap or collapse -
+   exactly how the journal reads. No filter row (the journal's is not reused). */
+.ucm-modal--changes .ucm-modal__card { max-width: 60rem; }
+.ucm-change__lines { margin: 0; padding: .8rem 1rem; background: #1a1a1a; color: #e8e8e8;
+    font-family: "Ubuntu Mono variable", monospace; font-size: .72rem; line-height: 1.55;
+    max-height: calc(100vh - 12rem); overflow: auto; white-space: pre;
+    border-radius: .25rem; }
 /* dark mode: only the app-chrome carriers the bundle doesn't flip */
 .is-dark .ucm-sys__kvrow { border-bottom-color: #3a3a3a; }
 .is-dark .ucm-sys__kvrow dt { color: #a8a8a8; }

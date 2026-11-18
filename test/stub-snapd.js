@@ -236,8 +236,18 @@ function makeServer(socketPath, state) {
             if (chRe && req.method === 'GET') {
                 const c = state.changes.find((x) => x.id === chRe[1]);
                 if (!c) return json(res, 404, { kind: 'not-found', message: `cannot find change ${chRe[1]}` });
-                // real snapd: result = { id, kind, summary: "<string>", status, tasks, ... }
-                return json(res, 200, { id: c.id, kind: c.kind, summary: (c.summary && c.summary.message) || c.summary, status: c.status, 'spawn-time': c['spawn-time'] });
+                // real snapd: result = the FULL Change object - { id, kind,
+                // summary: "<string>", status, ready, err, spawn-time,
+                // ready-time, tasks[] (each with id/kind/summary/status/log/
+                // progress/spawn-time/ready-time) } (client/change.go). The
+                // round T-fix19 change-detail modal renders tasks + logs, so
+                // the stub must carry them (the old reduced shape lied).
+                return json(res, 200, { id: c.id, kind: c.kind, summary: (c.summary && c.summary.message) || c.summary,
+                    status: c.status, ready: c.status !== 'Doing', err: c.err || null,
+                    'spawn-time': c['spawn-time'], 'ready-time': c['ready-time'] || null,
+                    tasks: (c.tasks || []).map((t) => ({ id: t.id, kind: t.kind, summary: t.summary,
+                        status: t.status, log: t.log || [], progress: t.progress || { done: 0, total: 0 },
+                        'spawn-time': t['spawn-time'] || c['spawn-time'], 'ready-time': t['ready-time'] || null })) });
             }
 
             // ---- snaps --------------------------------------------------------
@@ -693,10 +703,22 @@ if (require.main === module) {
         // app never mutates it here (the SetTime/zone writes are
         // integration-injected / VM-only) — tests set it directly.
         timezone: 'Etc/UTC',         netplan: NETPLAN_DOC, changes: [
-        // seed changes: live shape (string summary, hyphenated spawn-time).
-        // Deliberately NOT in newest-first order — the UI must sort.
-        { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },
-        { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T10:00:00Z' },
+        // seed changes: live shape (string summary, hyphenated spawn-time)
+        // + FULL detail (tasks with per-task log/progress/ready-time) - the
+        // round T-fix19 change-detail modal reads /v2/changes/{id} and the
+        // live object carries tasks. Deliberately NOT in newest-first order
+        // (the UI must sort); seed '2' is not ready yet (no ready-time).
+        { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done',
+          'spawn-time': '2026-10-28T09:00:00Z', 'ready-time': '2026-10-28T09:00:42Z',
+          tasks: [ { id: '11', kind: 'download-snap', summary: 'Download snap "htop"', status: 'Done',
+                     'spawn-time': '2026-10-28T09:00:01Z', 'ready-time': '2026-10-28T09:00:10Z',
+                     log: ['Downloading htop 3.3.0 (amd64)', 'Verifying hash'] },
+                    { id: '12', kind: 'setup-snap', summary: 'Unpack and setup snap "htop"', status: 'Done',
+                     'spawn-time': '2026-10-28T09:00:11Z', 'ready-time': '2026-10-28T09:00:41Z' } ] },
+        { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Doing',
+          'spawn-time': '2026-10-28T10:00:00Z',
+          tasks: [ { id: '21', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Doing',
+                     progress: { done: 2, total: 8 }, 'spawn-time': '2026-10-28T10:00:05Z' } ] },
     ] };
     makeServer(sock, state).then(() => {
         console.log('stub snapd listening on ' + sock);

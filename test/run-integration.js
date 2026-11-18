@@ -37,9 +37,22 @@ function ok(name, cond, extra = '') {
         // seed changes in the LIVE shape (string summary, hyphenated spawn-time)
         // and NOT in newest-first order — [4] asserts the field names and the
         // renderer sorts; keep the stub honest.
+        // seed changes in the LIVE shape (string summary, hyphenated
+        // spawn-time) + FULL detail (tasks with log/progress/ready-time) -
+        // the round T-fix19 change-detail asserts read /v2/changes/{id}. NOT
+        // in newest-first order (the renderer sorts); seed '2' is not ready.
         changes: [
-            { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done', 'spawn-time': '2026-10-28T09:00:00Z' },
-            { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Ready', 'spawn-time': '2026-10-28T10:00:00Z' },
+            { id: '1', kind: 'install-snap', summary: 'Install snap "htop"', status: 'Done',
+              'spawn-time': '2026-10-28T09:00:00Z', 'ready-time': '2026-10-28T09:00:42Z',
+              tasks: [ { id: '11', kind: 'download-snap', summary: 'Download snap "htop"', status: 'Done',
+                         'spawn-time': '2026-10-28T09:00:01Z', 'ready-time': '2026-10-28T09:00:10Z',
+                         log: ['Downloading htop 3.3.0 (amd64)', 'Verifying hash'] },
+                        { id: '12', kind: 'setup-snap', summary: 'Unpack and setup snap "htop"', status: 'Done',
+                         'spawn-time': '2026-10-28T09:00:11Z', 'ready-time': '2026-10-28T09:00:41Z' } ] },
+            { id: '2', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Doing',
+              'spawn-time': '2026-10-28T10:00:00Z',
+              tasks: [ { id: '21', kind: 'configure-snap', summary: 'Configure snap "core24"', status: 'Doing',
+                         progress: { done: 2, total: 8 }, 'spawn-time': '2026-10-28T10:00:05Z' } ] },
         ],
         netplan: { network: { version: 2, ethernets: { eth0: { dhcp4: true } } } } };
     await makeServer(SOCK, state);
@@ -176,6 +189,36 @@ function ok(name, cond, extra = '') {
         clist.length >= 1 && clist.every((c) => typeof c.summary === 'string'
             && typeof c['spawn-time'] === 'string' && !('spawn_time' in c)),
         JSON.stringify(clist[0]).slice(0, 120));
+    // round T-fix19: the change-DETAIL shape (the change-detail modal reads
+    // getChange(id) -> GET /v2/changes/{id}). LIVE snapd (client/change.go)
+    // returns the FULL Change: tasks[] with per-task log + progress +
+    // hyphenated times, ready, err. The stub must be honest (the old reduced
+    // shape had no tasks).
+    const det1 = await m.getChange('1');
+    ok('change detail: full Change shape (ready, times, err, tasks[])',
+        det1.id === '1' && det1.ready === true && det1.err === null
+        && typeof det1['spawn-time'] === 'string' && typeof det1['ready-time'] === 'string'
+        && Array.isArray(det1.tasks) && det1.tasks.length === 2,
+        JSON.stringify(det1).slice(0, 160));
+    ok('change detail: task shape (kind/summary/status/log[]/progress/times)',
+        det1.tasks.every((t) => typeof t.kind === 'string' && typeof t.summary === 'string'
+            && typeof t.status === 'string' && Array.isArray(t.log)
+            && t.progress && typeof t.progress.done === 'number' && typeof t.progress.total === 'number'
+            && typeof t['spawn-time'] === 'string'),
+        JSON.stringify(det1.tasks[0]).slice(0, 160));
+    ok('change detail: a logged task carries its log lines',
+        det1.tasks[0].log.length === 2 && (det1.tasks[1].log || []).length === 0,
+        JSON.stringify([det1.tasks[0].log, det1.tasks[1].log || []]));
+    // a not-ready change: ready false, no ready-time, a Doing task with progress
+    const det2 = await m.getChange('2');
+    ok('change detail: an in-progress change is not ready (no ready-time, Doing task + progress)',
+        det2.ready === false && det2['ready-time'] == null
+        && det2.tasks[0].status === 'Doing' && det2.tasks[0].progress.done < det2.tasks[0].progress.total,
+        JSON.stringify(det2).slice(0, 160));
+    let badIdErr = null;
+    try { await m.getChange('12abc'); } catch (e) { badIdErr = e; }
+    ok('change detail: a non-numeric id is rejected before the socket',
+        !!badIdErr && /invalid change id/.test(badIdErr.message), badIdErr && badIdErr.message);
 
     console.log('\n[5] writes over the socket (store auth enforced)');
     let installErr = null;

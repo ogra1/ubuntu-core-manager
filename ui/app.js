@@ -618,12 +618,105 @@ function renderChanges() {
             || (c.err && c.err.message)
             || '';
         body.append(el('tr', {},
-            el('td', { text: c.kind || '—' }),
+            // round T-fix19: the Change cell is the row's click target -> the
+            // change-detail modal (the in-app `snap change <id>`), exactly like
+            // the snap-name cell opens snap-info. It shows the ID (mono, bold -
+            // the active part, matching `snap changes` whose first column is the
+            // ID) WITH the kind alongside (kept at a glance). Pointer + dotted
+            // hover underline + the title are the affordance.
+            el('td', { title: 'Show change details',
+                class: 'ucm-change-kind', onclick: () => openChangeDetail(c.id) },
+                el('span', { class: 'ucm-mono', text: String(c.id) }),
+                ' ' + (c.kind || '\u2014')),
             el('td', {}, el('span', { class: `p-status-label p-status-label--${tone}`, text: word })),
             el('td', { class: 'ucm-muted', text: fmtDm(when) }),
             el('td', { class: 'ucm-wrap ucm-muted', text }),
         ));
     });
+}
+
+/* round T-fix19: the change-detail modal. Clicking a Recent-changes row
+   (the kind cell) opens this - the in-app equivalent of `snap change <id>`
+   (alias `snap tasks <id>`). The body is ONE scrollable, terminal-styled
+   pane (.ucm-change__lines, the journal idiom) holding the change's full
+   text: a TASK table (Status / Spawn / Ready / Summary, with a percent
+   for an in-progress Doing task) + one LOG block per task that carries a
+   log (a dotted rule, the task summary, then its log lines). No filtering
+   for now (the journal viewer's filter row is deliberately NOT reused).
+   The detail comes from core.system.change(id) -> GET /v2/changes/{id}
+   (the same chain waitChangeSettled already uses). */
+function openChangeDetail(id) {
+    if (document.querySelector('.ucm-modal')) return; // one modal at a time
+    const box = el('div', { class: 'ucm-modal ucm-modal--changes' });
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    const closeModal = () => { document.removeEventListener('keydown', onKey); box.remove(); };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    document.addEventListener('keydown', onKey);
+
+    const inner = el('div', { class: 'ucm-modal__card' });
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
+        el('i', { class: 'p-icon--close ucm-info__close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'Change details', style: 'margin:0;' }),
+        close));
+    const bodyBox = el('div', { class: 'ucm-modal__body' });
+    const pre = el('pre', { class: 'ucm-change__lines' });
+    bodyBox.append(pre);
+    inner.append(bodyBox);
+    box.append(backdrop, inner);
+    document.body.append(box);
+    close.focus();
+
+    pre.textContent = 'Loading change\u2026';
+    (async () => {
+        try {
+            const chg = await core.system.change(String(id));
+            pre.textContent = changeDetailText(chg);
+        } catch (e) {
+            pre.textContent = 'Could not load the change details: ' + e.message;
+        }
+    })();
+}
+
+/* round T-fix19: render one change as text, mirroring `snap change <id>`
+   (snapd cmd/snapd/cli/cmd_changes.go cmdTasks.showChange): a short
+   context header (ID / kind / status / summary / spawned / ready - the
+   ID is the row the user clicked), then a tab-separated
+   TASK table (Status / Spawn / Ready / Summary - an in-progress Doing
+   task with a multi-step progress gets " (NN.NN%)") and, for each task
+   that carries a log, a block of a 60-dot rule, the task summary, and the
+   log lines. The pane is white-space:pre so the fixed rule + the
+   tab-separated rows read like the terminal. */
+function changeDetailText(chg) {
+    const d = (iso) => fmtDm(iso); // DD.MM.YYYY HH:MM, or — (== the CLI's '-') when null
+    const lines = [];
+    lines.push('Change ' + chg.id + '    ' + (chg.kind || '') + '    ' + (chg.status || ''));
+    if (chg.summary) lines.push(chg.summary);
+    lines.push('Spawned ' + d(chg['spawn-time']) + (chg['ready-time'] ? '    Ready ' + d(chg['ready-time']) : ''));
+    if (chg.err) lines.push('Error ' + chg.err);
+    const tasks = Array.isArray(chg.tasks) ? chg.tasks : [];
+    if (!tasks.length) {
+        lines.push('');
+        lines.push('No tasks recorded for this change.');
+        return lines.join('\n');
+    }
+    lines.push('');
+    lines.push('Status\tSpawn\tReady\tSummary');
+    for (const t of tasks) {
+        let summary = t.summary || '';
+        if (t.status === 'Doing' && t.progress && t.progress.total > 1)
+            summary += ' (' + (100 * t.progress.done / t.progress.total).toFixed(2) + '%)';
+        const ready = t['ready-time'] ? d(t['ready-time']) : '\u2014';
+        lines.push([t.status || '', d(t['spawn-time']), ready, summary].join('\t'));
+    }
+    for (const t of tasks) {
+        if (!Array.isArray(t.log) || !t.log.length) continue;
+        lines.push('');
+        lines.push('......................................................................');
+        lines.push(t.summary || '');
+        for (const l of t.log) lines.push(l);
+    }
+    return lines.join('\n');
 }
 
 function renderKV(sel, pairs) {
