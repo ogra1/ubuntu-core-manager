@@ -40,6 +40,14 @@
                 <i class="p-icon--information"></i>
                 Set a local administrator password.
             </p>
+            <div class="p-form__group" id="setupKeymapGroup">
+                <label class="p-form__label" for="setupKeymap">Keyboard layout</label>
+                <select class="p-form-validation__input" id="setupKeymap"></select>
+                <p class="p-form-help-text ucm-hidden" id="setupKeymapHelp">
+                    Changing the layout restarts the console &#8212; it will reopen automatically.
+                </p>
+                <p class="p-form-validation__message" id="setupKeymapMsg"></p>
+            </div>
             <div class="p-form__group" id="setupPasswordGroup">
                 <label class="p-form__label" for="setupPassword">Administrator password</label>
                 <input class="p-form-validation__input" type="password" id="setupPassword"
@@ -630,6 +638,19 @@
         </section>
 
     </main>
+</div>
+
+<!-- round KM: the first-boot keymap apply restarts the console (the
+     desktop frame picks the layout up on re-open). A full-screen,
+     NON-interactive overlay: the user is told what is happening and there
+     is nothing to click (on a real device the app dies a moment later and
+     reopens into setup with the new layout, ready for the password). -->
+<div id="keymapRestart" class="ucm-keymap-restart ucm-hidden" role="alert" aria-live="assertive">
+    <div class="ucm-keymap-restart__card">
+        <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>
+        <p class="p-heading--5">Applying keyboard layout&#8230;</p>
+        <p class="ucm-keymap-restart__note">The console is restarting &#8212; it will reopen automatically.</p>
+    </div>
 </div>
 
 <div class="ucm-toasts" id="toasts" aria-live="polite"></div>

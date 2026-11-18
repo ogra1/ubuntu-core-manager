@@ -51,7 +51,8 @@ const SESSION_WARN_MS = 60 * 1000;
 
 // Snap names: lowercase alphanumerics + hyphens, optional `snap_instance`
 // revision suffix (matches snapd's naming.InstanceName rules).
-const RE_SNAP_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+const RE_SNAP_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+const RE_KEYMAP_ID = /^[a-z][a-z0-9-]*$/; // round KM: xkb layout ids (base.lst) are lowercase alnum + hyphen;
 const RE_INSTANCE_SUFFIX = /^\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 // Channel = a store-issued channel: track[/risk[/branch]], e.g. "stable",
@@ -834,6 +835,83 @@ async function setSnapConfig(name, conf) {
     }
     if (Object.keys(body).length === 0) throw new Error('empty config payload');
     return snapdRequest('PUT', '/v2/snaps/' + encodeURIComponent(name) + '/conf', { body, auth: A() });
+}
+
+/** Round KM: KEYMAPS (ubuntu-frame).
+ * The keyboard layout the console uses is applied to the ubuntu-frame snap's
+ * external config: `snap set ubuntu-frame config="keymap=<id>"` over the
+ * socket is exactly PUT /v2/snaps/ubuntu-frame/conf {config:"keymap=<id>"}
+ * (setSnapConfig). The frame's configure hook validates the id against its
+ * bundled xkb-data and RESTARTS the frame on a change — under a running
+ * session that restarts the console with it (the app is a standalone daemon
+ * on the wayland socket: it reopens automatically when the socket reappears,
+ * so nothing here must wait for the change to settle). The list of valid
+ * layouts is therefore shipped INSIDE the app (build/data/keymaps.json, the
+ * ! layout section of /usr/share/X11/xkb/rules/base.lst, xkb-data 2.46-2 —
+ * the core24 generation; verified byte-for-byte against the user's paste)
+ * instead of stage-packing xkb-data: a stale bundled id can only be rejected
+ * by the frame's hook (the error surfaces), while a stage-package would drift
+ * with a revision of ANOTHER snap.
+
+ * Auth: the writes ride A() exactly like setSnapConfig — a root-launched
+ * kiosk's /run/snapd.socket is covered by root/polkit on the LIVE daemon
+ * (the A() comment), so the keymap applies at FIRST BOOT, before any store
+ * login and before the local password exists (the layout must be correct
+ * BEFORE the user types the password, else the stored characters no longer
+ * match the keys). The local gate is never consulted on this socket path.
+
+ * Read: the CURRENT layout comes from the conf DOCUMENT. Live snapd answers
+ * a single-key GET for an UNSET option with 400 option-not-found (verified
+ * in snapd daemon/api_snap_conf.go getSnapConf) — so readKeymap fetches the
+ * whole document (200, {} when empty) and scans the `config` value for the
+ * `keymap=<id>` token. null = "nothing applied" (fresh Core ships no
+ * keymap; the UI defaults the picker to English (US) and a 'us' pick then
+ * applies nothing, so a US kiosk never triggers a restart).
+ */
+function keymapsPath() {
+    return process.env.UCM_KEYMAPS || path.join(__dirname, 'build', 'data', 'keymaps.json');
+}
+let KEYMAPS_CACHE = null;
+function listKeymaps() {
+    if (KEYMAPS_CACHE) return KEYMAPS_CACHE;
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(keymapsPath(), 'utf8')); }
+    catch (e) {
+        // Missing/corrupt bundle list: degrade to EMPTY (the picker shows a
+        // plain default; a missing data file must NOT throw — same contract
+        // as listTimezones, round T).
+        console.error('listKeymaps: no usable bundled keymap list (' + keymapsPath() + '): ' + String((e && e.message) || e));
+        KEYMAPS_CACHE = [];
+        return KEYMAPS_CACHE;
+    }
+    const arr = Array.isArray(raw) ? raw : [];
+    KEYMAPS_CACHE = arr
+        .filter((e) => e && typeof e.id === 'string' && typeof e.label === 'string' && e.id.length > 0 && e.label.length > 0)
+        .map((e) => ({ id: e.id, label: e.label }));
+    return KEYMAPS_CACHE;
+}
+function keymapIds() {
+    return listKeymaps().map((e) => e.id);
+}
+/** The currently-applied keymap id, or null (fresh Core: nothing set). */
+async function readKeymap() {
+    const doc = await getSnapConfig('ubuntu-frame', null);
+    const cfg = doc && typeof doc === 'object' && typeof doc.config === 'string' ? doc.config : '';
+    const m = cfg.match(/(?:^|[;\s,])keymap=([A-Za-z0-9-]+)/);
+    return m ? m[1] : null;
+}
+/** Apply a bundled keymap id. Returns { change } (async, like every conf PUT)
+ * or {} when the id is already applied (no write, no frame restart). */
+async function applyKeymap(id) {
+    if (typeof id !== 'string' || !RE_KEYMAP_ID.test(id)) throw new Error('invalid keymap id: ' + JSON.stringify(id));
+    if (!keymapIds().includes(id)) throw new Error('unknown keymap: ' + JSON.stringify(id));
+    const cur = await readKeymap();
+    if (cur === id) return {};
+    // A fresh Core ships NO keymap and behaves as US — the picker's default
+    // (English (US)) on such a device must therefore be a NO-OP (no write,
+    // no console restart); only a deliberate change applies.
+    if (cur === null && id === 'us') return {};
+    return setSnapConfig('ubuntu-frame', { config: 'keymap=' + id });
 }
 
 /** Read the active netplan document as a parsed JS object.
@@ -2646,6 +2724,8 @@ const api = {
     listSnaps, getSnapInfo, searchSnaps, getChange,
     getSnapServices, controlSnapService,
     getSnapConfig, getNetplan, listInterfaces, confInferType,
+    // Round KM: the keyboard layout (ubuntu-frame)
+    listKeymaps, readKeymap, applyKeymap, keymapsPath, __setKeymapsFile: (p) => { process.env.UCM_KEYMAPS = p; KEYMAPS_CACHE = null; },
     timesyncStatus, timesyncSetEnabled, timesyncSetServer,
     // round T: the System-page Time card (set-time + timezone + topbar clock)
     listTimezones, timezoneValid, timeNowUsec, timeNowZone, timeNtpEnabled,
@@ -2920,8 +3000,39 @@ function initElectron() {
                 setTimeout(async () => {
                     let probe;
                     try {
-                        probe = await win.webContents.executeJavaScript(
-                            "({ bridge: typeof window.ucmCore, boot: !!(document.querySelector('#setupView') || document.querySelector('#loginView')), dark: document.documentElement.classList.contains('is-dark') })",
+                        // round KM: + the first-boot keymap step read through
+                        // the REAL bridge (list + current over the real stub
+                        // socket, no store login — rootOk). Poll up to 3 s for
+                        // the picker to settle (loaded, or errored).
+                        probe = await win.webContents.executeJavaScript(`
+                            (async () => {
+                                const t0 = Date.now();
+                                let km = null;
+                                while (Date.now() - t0 < 3000) {
+                                    const s = document.querySelector('#setupKeymap');
+                                    if (s) {
+                                        const g = s.closest('.p-form__group');
+                                        if (s.options.length > 0 || (g && g.classList.contains('is-error'))) {
+                                            km = { value: s.value, err: g ? g.classList.contains('is-error') : null, overlayEl: !!document.querySelector('#keymapRestart') };
+                                            break;
+                                        }
+                                    }
+                                    await new Promise((r) => setTimeout(r, 100));
+                                }
+                                // round KM: exercise the REAL preload 'apply'
+                                // channel with a no-op (a fresh device picking
+                                // English (US) writes nothing, no restart) — a
+                                // typo in the channel name would surface here.
+                                let applyNoop = null;
+                                try { applyNoop = JSON.stringify(await window.ucmCore.keymaps.apply('us')); }
+                                catch (e) { applyNoop = 'ERR:' + e.message; }
+                                return {
+                                    bridge: typeof window.ucmCore,
+                                    boot: !!(document.querySelector('#setupView') || document.querySelector('#loginView')),
+                                    dark: document.documentElement.classList.contains('is-dark'),
+                                    km: Object.assign({ applyNoop: applyNoop }, km || {}),
+                                };
+                            })()`,
                             false); // round T-fix13: dark = the real app booted dark (the shipped default, no pref)
                     } catch (err) {
                         probe = { error: String((err && err.message) || err) };
@@ -3128,6 +3239,21 @@ function initElectron() {
     ipcMain.handle('snaps:service', guard((name, app, action, opts) => { requireAuth(); return controlSnapService(name, app || null, action, opts || {}); }));
     ipcMain.handle('snaps:conf-get', guard((name, key) => getSnapConfig(name, key || null)));
     ipcMain.handle('snaps:conf-set', guard((name, conf) => { requireAuth(); return setSnapConfig(name, conf); }));
+    // Round KM: the keyboard layout (ubuntu-frame external config). The READ
+    // is open (the setup screen runs it at FIRST BOOT — no local gate, no
+    // store login). The WRITE is the console-privileged keymap apply, with
+    // the ONE extra door: it must ALSO work while !session.localInitialized
+    // (first boot), because the layout has to be in place BEFORE the
+    // administrator password is typed. (requireAuth() alone would lock the
+    // very screen that needs it. The password create still gates the rest of
+    // the console, so nothing sensitive is unlocked.)
+    ipcMain.handle('keymaps:list', guard(() => listKeymaps()));
+    ipcMain.handle('keymaps:current', guard(readKeymap));
+    ipcMain.handle('keymaps:apply', guard((id) => {
+        if (!session.localInitialized && !session.localAuthenticated) return applyKeymap(id);
+        requireAuth();
+        return applyKeymap(id);
+    }));
 
     // timesync / NTP (timeserver-control interface; reads are open, writes
     // are console-privileged like the other system changes)

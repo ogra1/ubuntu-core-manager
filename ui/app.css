@@ -820,6 +820,25 @@ html, body {
 .ucm-mono { font-family: "Ubuntu Mono variable", monospace; }
 .ucm-muted { color: #888; }
 .ucm-hidden { display: none !important; }
+/* round KM: the first-boot KEYMAP restart overlay. Full-screen + above
+   everything (toast 80 / modal 60). The surface is ALWAYS dark (the restart
+   is in flight; the page theme is irrelevant and the app may die mid-read),
+   so the text is white-forced and the bundle .p-icon--spinner gets the SAME
+   white-glyph override the T-fix14 colored-button rule uses (on a LIGHT page
+   the bundle spinner would draw the black glyph - invisible here). */
+.ucm-keymap-restart {
+    position: fixed; inset: 0; z-index: 100;
+    display: grid; place-items: center;
+    background: rgba(17, 17, 17, .94);
+    color: #fff;
+}
+.ucm-keymap-restart__card { text-align: center; padding: 2rem 2.5rem; }
+.ucm-keymap-restart__card .p-icon--spinner {
+    width: 2.25rem; height: 2.25rem; margin: 0 auto 1.1rem; display: block;
+}
+.ucm-keymap-restart .p-icon--spinner { background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 13.5a5.488 5.488 0 004.183-1.929l1.317.76A6.988 6.988 0 018 15a6.988 6.988 0 01-5.5-2.669l1.316-.76A5.488 5.488 0 008 13.5zM6.999 1.071v1.52A5.502 5.502 0 002.815 9.84L1.5 10.6A7.002 7.002 0 016.764 1.11l.235-.038zM15 8c0 .918-.177 1.795-.498 2.6l-1.317-.761A5.502 5.502 0 009 2.59V1.07c3.392.485 6 3.403 6 6.929z' fill='hsl(0%2C0%%2C100%)' fill-rule='nonzero'/%3E%3C/svg%3E"); }
+.ucm-keymap-restart__card .p-heading--5 { margin: 0 0 .6rem; color: #fff; }
+.ucm-keymap-restart__note { margin: 0; font-size: .9rem; color: rgba(255, 255, 255, .72); }
 .ucm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* ---- store connect modal --------------------------------------------- */

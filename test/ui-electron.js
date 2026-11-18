@@ -68,6 +68,10 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     const LP_SSL_URL = 'https://127.0.0.1:' + LPS_PORT;
     await makeServer(SOCK, {
         requests: [], snapActions: [], confSets: [], ifaceOps: [], changeSeq: 1, logoutCount: 0,
+        // round KM: the FRESH first-boot device — the root kiosk's socket is
+        // authorized via root/polkit without a store macaroon (the setup
+        // screen's keymap read + apply run before any store login).
+        rootOk: true,
         netplanYaml: 'network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n',
     });
 
@@ -122,6 +126,18 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     // REAL main.js default + preload + app.js flip <html>.is-dark end-to-end —
     // the mock harness can't observe this (it drives the theme itself).
     ok('the real app boots DARK (the shipped default; fresh state = no pref)', p.dark === true, JSON.stringify(p));
+    // round KM: the first-boot KEYMAP read over the REAL bridge (real preload
+    // channel + real main.js + the root-socket stub, no store login): the
+    // picker settles on the fresh-device default (English (US)) with no
+    // error, and the restart overlay element ships in the markup (hidden).
+    ok('first boot: the keymap picker loaded via the real bridge (value=us, no error)',
+        p.km && p.km.value === 'us' && p.km.err === false, JSON.stringify(p.km));
+    ok('first boot: the keymap restart overlay ships in the markup (hidden)',
+        p.km && p.km.overlayEl === true, JSON.stringify(p.km));
+    // the REAL preload apply channel, end-to-end: a no-op apply (US on a
+    // fresh device) resolves to {} through real main + real stub.
+    ok('first boot: the keymaps apply channel round-trips the no-op ({} — no write)',
+        p.km && p.km.applyNoop === '{}', JSON.stringify(p.km && p.km.applyNoop));
 
     // ---- round I: the <webview> E2E (real sandbox/webviewTag). The probe
     // created a local password, seeded a GOOD (served) + a DEAD (unreachable)

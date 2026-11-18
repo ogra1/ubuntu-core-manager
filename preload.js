@@ -168,6 +168,15 @@ const api = Object.freeze({
         setServer: invoke('timesync:set-server'),   // (string) — applies after a timesyncd restart
     }),
 
+    // ---- keyboard layout (round KM: ubuntu-frame external config) --------
+    // list is open (the first-boot setup screen runs it pre-gate); apply is
+    // console-privileged (see the keymaps:apply handler in main.js).
+    keymaps: Object.freeze({
+        list: invoke('keymaps:list'),          // => [{id, label}] (bundled, xkb-data 2.46)
+        current: invoke('keymaps:current'),    // => id|null (null = fresh Core, none set)
+        apply: invoke('keymaps:apply'),        // (id) => {change}|{} (async conf PUT; {} = already applied)
+    }),
+
     // ---- machine operations (round L: the System page) -------------------
     // Console-privileged. 'system' above is the system-INFO namespace; this
     // one is the system-OPERATIONS namespace (journal / refresh schedule /

@@ -167,7 +167,7 @@ function ok(name, cond, extra = '') {
         && m.modelSystemSnaps({ base: 'core24' }).size === 1,
         JSON.stringify(Array.from(m.modelSystemSnaps(mod))));
     const snaps = await m.listSnaps();
-    ok('listSnaps returns array of 4', Array.isArray(snaps) && snaps.length === 4, JSON.stringify(snaps).slice(0, 60));
+    ok('listSnaps returns array of 5 (round KM: the frame is seeded too)', Array.isArray(snaps) && snaps.length === 5, JSON.stringify(snaps).slice(0, 60));
     const find = await m.searchSnaps('fire');
     ok('store search filters', Array.isArray(find) && find.length === 1 && find[0].name === 'firefox', JSON.stringify(find).slice(0, 80));
     const conns = await m.listInterfaces();
@@ -753,6 +753,27 @@ function ok(name, cond, extra = '') {
                 } else {
                     ok('auth:reset handler registered', false);
                 }
+                // round KM: the keymaps:apply GATE (console-privileged, with
+                // the one first-boot door — the layout must be settable
+                // BEFORE the administrator password exists). Drive the three
+                // gate states through the auth handlers; the payload is the
+                // 'us' no-op (no socket write — [11.5] below reads the
+                // fresh-device state, so nothing may have been applied).
+                if (handlers['keymaps:apply']) {
+                    const rKmA = await new Promise((res) => handlers['keymaps:apply'](null, 'us').then(res));
+                    ok('keymaps:apply gate: FIRST BOOT (no local password) is allowed — the layout precedes the password',
+                        rKmA.ok === true && rKmA.result && !rKmA.result.id, JSON.stringify(rKmA));
+                    await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
+                    const rKmB = await new Promise((res) => handlers['keymaps:apply'](null, 'us').then(res));
+                    ok('keymaps:apply gate: an authenticated console is allowed (requireAuth)',
+                        rKmB.ok === true && rKmB.result && !rKmB.result.id, JSON.stringify(rKmB));
+                    await new Promise((res) => handlers['auth:logout'](null).then(res));
+                    const rKmC = await new Promise((res) => handlers['keymaps:apply'](null, 'us').then(res));
+                    ok('keymaps:apply gate: a locked-out console (initialized, not authenticated) is refused',
+                        rKmC.ok === false && /authentication required/.test(rKmC.error), JSON.stringify(rKmC));
+                } else {
+                    ok('keymaps:apply handler registered (round KM)', false);
+                }
             delete global.UCM_FAKE_ELECTRON;
         } finally {
             delete global.UCM_FAKE_ELECTRON;
@@ -873,6 +894,73 @@ function ok(name, cond, extra = '') {
         ok('setSnapConfig applies confInferType to the outgoing value',
             /body\[k\] = confInferType\(v\)/.test(ms), 'setSnapConfig does not call confInferType');
     }
+
+    console.log('\n[11.5] keyboard layout (round KM: the ubuntu-frame external config)');
+    // FIRST BOOT: the local password does not exist yet (the [10] reset left
+    // the session uninitialized) and there is NO store login — the root
+    // kiosk's /run/snapd.socket is authorized via root/polkit (state.rootOk
+    // models it). The keymap MUST be settable in exactly this state, because
+    // the layout has to be correct before the administrator password is
+    // typed. The read (keymaps:list / keymaps:current) is open, like every
+    // other socket read; the apply is console-privileged (later sections of
+    // this file run authenticated — see the [12] re-login below).
+    state.rootOk = true;
+    await m.storeLogout();
+    const kmList = m.listKeymaps();
+    ok('the bundled keymap list has 98 entries (xkb-data 2.46 base.lst, ! layout section)',
+        kmList.length === 98, String(kmList.length));
+    ok('the keymap list is shaped {id,label} and starts Albanian / ends Wolof (base.lst order)',
+        kmList[0] && kmList[0].id === 'al' && kmList[0].label === 'Albanian'
+        && kmList[kmList.length - 1].id === 'sn' && kmList[kmList.length - 1].label === 'Wolof',
+        JSON.stringify([kmList[0], kmList[kmList.length - 1]]));
+    const kmUs = kmList.find((x) => x.id === 'us');
+    ok('English (US) is offered (the fresh-device default)',
+        !!kmUs && kmUs.label === 'English (US)', JSON.stringify(kmUs));
+    // fresh Core: nothing applied -> null (NOT the 400 option-not-found the
+    // live daemon sends for a single-key GET of an unset option — the full
+    // doc read returns 200 {} and the app scans the `config` value).
+    let kmCur = 'unset';
+    try { kmCur = await m.readKeymap(); } catch (e) { kmCur = 'ERR:' + e.message; }
+    ok('first boot: no keymap applied (readKeymap -> null, not an error)',
+        kmCur === null, String(kmCur));
+    let kmErr1 = null;
+    try { await m.applyKeymap('not-a-keymap-xyz'); } catch (e) { kmErr1 = e; }
+    ok('applyKeymap rejects an id that is not in the bundled list (client-side, before any socket write)',
+        !!kmErr1 && /unknown keymap/.test(kmErr1.message), kmErr1 && kmErr1.message);
+    let kmErr2 = null;
+    try { await m.applyKeymap('de;dropbear-keys=x'); } catch (e) { kmErr2 = e; }
+    ok('applyKeymap rejects a malformed id (the id allow-list, before list membership)',
+        !!kmErr2 && /invalid keymap id/.test(kmErr2.message), kmErr2 && kmErr2.message);
+    let kmNoop = 'unset';
+    try { kmNoop = await m.applyKeymap('us'); } catch (e) { kmNoop = 'ERR:' + e.message; }
+    ok('a fresh device picking English (US) is a NO-OP (no write, no console restart)',
+        kmNoop && typeof kmNoop === 'object' && !kmNoop.id, JSON.stringify(kmNoop));
+    const kmPutN0 = state.confSets.length;
+    const kmPut = await m.applyKeymap('de');
+    ok('first-boot apply of German works WITHOUT a store login (root socket; the restart is the frame\'s, not snapd\'s)',
+        kmPut && kmPut.id, JSON.stringify(kmPut));
+    await new Promise((r) => setTimeout(r, 320)); // the stub conf change settles at 250ms
+    let kmCur2 = 'unset';
+    try { kmCur2 = await m.readKeymap(); } catch (e) { kmCur2 = 'ERR:' + e.message; }
+    ok('after the apply the current layout reads back as de', kmCur2 === 'de', String(kmCur2));
+    const kmLastPut = state.confSets[state.confSets.length - 1];
+    ok('the socket payload went to ubuntu-frame as {config: \"keymap=de\"} (the documented snap set form)',
+        kmLastPut && kmLastPut.name === 'ubuntu-frame'
+        && JSON.stringify(kmLastPut.data) === JSON.stringify({ config: 'keymap=de' }),
+        JSON.stringify(kmLastPut));
+    ok('exactly ONE conf write for the whole first-boot sequence (the US no-op wrote nothing)',
+        state.confSets.length === kmPutN0 + 1, String(state.confSets.length - kmPutN0));
+    let kmSame = 'unset';
+    try { kmSame = await m.applyKeymap('de'); } catch (e) { kmSame = 'ERR:' + e.message; }
+    ok('re-applying the current layout is a no-op (idempotent: no second write)',
+        kmSame && typeof kmSame === 'object' && !kmSame.id, JSON.stringify(kmSame));
+    const kmDoc = await m.getSnapConfig('ubuntu-frame');
+    ok('the frame conf doc now carries the config value (nested-doc read)',
+        kmDoc && kmDoc.config === 'keymap=de', JSON.stringify(kmDoc));
+    // restore the authenticated console (later sections write as the logged-in
+    // store session) and stop modelling the root-socket grant.
+    await m.storeLogin('admin@example.com', 'correct-horse');
+    state.rootOk = false;
 
     console.log('\n[12] snap services (snapd /v2/apps — chunk 48a)');
     // The UI services backend: GET /v2/apps?select=service&names=<snap> ->

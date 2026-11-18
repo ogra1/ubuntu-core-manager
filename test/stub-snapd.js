@@ -46,6 +46,14 @@ const SNAPS = [
         status: 'active', type: 'app', confinement: 'strict',
         private: false, installDate: '2026-02-01T00:00:00Z',
     },
+    {
+        // round KM: the desktop frame (the kiosk runs ON it). Its external
+        // config carries the keyboard layout (config: 'keymap=<id>'); the
+        // app reads/writes it via the standard conf routes.
+        name: 'ubuntu-frame', version: '2.4', revision: 720, channel: 'latest/stable',
+        status: 'active', type: 'app', confinement: 'strict',
+        private: false, installDate: '2026-01-01T00:00:00Z',
+    },
 ];
 
 // LIVE-VERIFIED /v2/interfaces topology (snapd 2.77): the result carries
@@ -83,13 +91,19 @@ function json(res, status, body) {
     res.end(raw);
 }
 
-function authFrom(req) {
+function authFrom(req, rootOk) {
     const h = req.headers['authorization'] || '';
     const root = h.match(/root="([^"]+)"/);
     const dis = [...h.matchAll(/discharge="([^"]+)"/g)].map((m) => m[1]);
+    // round KM: the LIVE /run/snapd.socket is owned by root and the kiosk
+    // is a ROOT daemon — snapd authorizes its writes via root/polkit
+    // WITHOUT a store macaroon (the main.js A() comment). state.rootOk
+    // models that (the first-boot keymap apply has no store login to
+    // borrow from).
     return {
-        ok: h.startsWith('Macaroon') && !!root && root[1] === 'stub-root-macaroon'
-            && dis.includes('stub-discharge-1'),
+        ok: (rootOk === true)
+            || (h.startsWith('Macaroon') && !!root && root[1] === 'stub-root-macaroon'
+                && dis.includes('stub-discharge-1')),
         root, dis,
     };
 }
@@ -126,13 +140,18 @@ function makeServer(socketPath, state) {
             service: { ssh: { 'listen-address': '22' } },
             proxy: {},
         },
+        // round KM: the frame's config doc is EMPTY on a fresh device (no
+        // keymap set -> the app defaults the picker to English (US), which
+        // then applies nothing). A keymap PUT lands here like any other
+        // conf write (config: 'keymap=<id>').
+        'ubuntu-frame': {},
     };
 
     fs.existsSync(socketPath) && fs.unlinkSync(socketPath);
     const server = http.createServer((req, res) => {
         const url = new URL(req.url, 'http://stub');
         const p = url.pathname;
-        const auth = authFrom(req);
+        const auth = authFrom(req, state.rootOk);
         const body = () => new Promise((resolve) => {
             const chunks = [];
             req.on('data', (c) => chunks.push(c));
