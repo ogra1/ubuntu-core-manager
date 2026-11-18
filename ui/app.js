@@ -4090,13 +4090,28 @@ function wire() {
     $('#snapSearchBtn').addEventListener('click', searchStore);
     $('#snapSearchName').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); searchStore(); }
-        // round T-fix13: ESC closes the store-results card — the same action
-        // as the card's icon-only X (#snapSearchClear -> clearStoreResults).
-        // Every dialog/action is Esc-cancelable; the search results were the
-        // one left without it. Element-level handler: while the field is
-        // focused it runs before the document-level confirm-Esc (which only
-        // acts on a .ucm-confirm — the two never coexist).
-        else if (e.key === 'Escape') { e.stopPropagation(); clearStoreResults(); }
+    });
+    // round T-fix15: ESC closes the store-results card from ANY focus, like
+    // the other Esc handlers (the T-fix13 version was element-level on the
+    // search field with stopPropagation, so it only fired while the field
+    // was focused). Now a document-level, focus-independent handler that
+    // yields to a topmost surface, using the same layered Esc idiom as the
+    // modals (their document onKey) and the 48k confirm above: if a
+    // .ucm-confirm is open the 48k handler owns this Esc (it calls
+    // stopImmediatePropagation, and this handler is registered AFTER it);
+    // if a .ucm-modal is open the modal's own document handler closes it
+    // first and this guard defers; only when no confirm/modal is up AND
+    // the card is visible does this Esc clear the store results (the same
+    // action as the card's icon X, #snapSearchClear -> clearStoreResults).
+    // A later Esc (after the confirm/modal closed) then closes the card -
+    // layered, exactly like the rest of the app.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (document.querySelector('.ucm-confirm')) return; // the 48k confirm owns this Esc
+        if (document.querySelector('.ucm-modal')) return;  // an open modal owns this Esc
+        if (state.view !== 'snaps') return;                 // views hide-don't-remove; the card is not topmost on another view
+        const card = $('#snapSearchResults');
+        if (card && !card.classList.contains('ucm-hidden')) clearStoreResults();
     });
     $('#snapSearchClear').addEventListener('click', clearStoreResults);
 

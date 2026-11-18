@@ -3437,21 +3437,30 @@ function mockFactoryJs() {
     });
     if (clearBtn.text !== '') console.log('PAGE ERROR: the Store results close button is not icon-only (text ' + JSON.stringify(clearBtn.text) + ', round 47i)');
     if (!/clear/i.test(clearBtn.aria)) console.log('PAGE ERROR: the Store results close button has no aria-label (' + JSON.stringify(clearBtn.aria) + ', round 47i)');
-    // ---- 4a-esc. Round T-fix13: ESC closes the Store results — the same
-    // action as the icon-only X. The search field is focused (we just typed
-    // into it), so Escape reaches the element-level handler ->
-    // clearStoreResults. Every dialog/action is Esc-cancelable; the search
-    // results were the one without it.
-    await page.focus('#snapSearchName');
+// ---- 4a-esc. ESC closes the Store results card - the same action as the
+    // icon-only X, from ANY focus. round T-fix13 made it element-level on
+    // the search field (stopPropagation), so it only fired while the field
+    // was focused (the bug); it is now a document-level, focus-independent
+    // handler (the house idiom: the modals and the 48k confirm are all
+    // document-level). To PROVE the focus-independence the fix is for, BLUR
+    // the field first: focus moves off the search field, so the old
+    // element-level handler could never have fired here - only the new
+    // document-level one can.
+    await page.evaluate(() => { const f = document.querySelector('#snapSearchName'); if (f) f.blur(); });
     await page.keyboard.press('Escape');
     await wait(250);
     const escClosed = await page.evaluate(() => ({
         hidden: !!document.querySelector('#snapSearchResults.ucm-hidden'),
         rows: document.querySelectorAll('#snapSearchBody tr').length,
+        activeNotField: document.activeElement && document.activeElement.id !== 'snapSearchName',
     }));
-    if (!escClosed.hidden) console.log('PAGE ERROR: ESC must close the Store results card (round T-fix13)');
-    if (escClosed.rows !== 0) console.log('PAGE ERROR: ESC must clear the Store results rows (got ' + escClosed.rows + ', round T-fix13)');
+    if (!escClosed.activeNotField) console.log('PAGE ERROR: the ESC-close drive must run with the search field BLURRED (focus-independent, round T-fix15)');
+    if (!escClosed.hidden) console.log('PAGE ERROR: ESC must close the Store results card with the field unfocused (document-level handler, round T-fix15)');
+    if (escClosed.rows !== 0) console.log('PAGE ERROR: ESC must clear the Store results rows (got ' + escClosed.rows + ', round T-fix15)');
     // re-run the search so the install drive below still has the mosquitto row.
+    // Re-focus the field first: the focus-independence proof above already
+    // captured the card-closed-at-blur moment; Enter needs the field focused.
+    await page.focus('#snapSearchName');
     await page.keyboard.press('Enter');
     await wait(700);
     // install mosquitto from its store row -> the card must hide on success
@@ -3527,6 +3536,57 @@ function mockFactoryJs() {
     if (!autoHide.hidden) console.log('PAGE ERROR: the Store results card did not auto-hide after a successful install (round 47i)');
     if (autoHide.rows !== 0) console.log('PAGE ERROR: the Store results card still has rows after the install (' + autoHide.rows + ', round 47i)');
 
+    // ---- 4a-esc-lay. round T-fix15: ESC is LAYERED - a topmost surface
+    // owns the Esc. Open the card, open the htop snap-INFO MODAL over it,
+    // and Esc: the modal closes but the card STAYS (the new handler yields
+    // to the modal, exactly like the 48k confirm owns its own Esc). A
+    // SECOND Esc then closes the card (now topmost).
+    await page.evaluate(() => { document.querySelector('#snapSearchName').value = ''; });
+    await page.type('#snapSearchName', 'mosquitto');
+    await page.keyboard.press('Enter');
+    await wait(700);
+    const layPre = await page.evaluate(() => ({ cardVisible: !document.querySelector('#snapSearchResults').classList.contains('ucm-hidden'), rows: document.querySelectorAll('#snapSearchBody tr').length }));
+    if (!layPre.cardVisible || layPre.rows < 1) console.log('PAGE ERROR: the layered drive could not open the store results card (got ' + JSON.stringify(layPre) + ', round T-fix15)');
+    await page.evaluate(() => {
+        const name = Array.from(document.querySelectorAll('#snapsCards .ucm-snaps-name')).find((n) => n.textContent.trim() === 'htop');
+        if (!name) throw new Error('htop name cell missing');
+        name.click();
+    });
+    await wait(600);
+    const layModal = await page.evaluate(() => !!document.querySelector('.ucm-modal'));
+    if (!layModal) console.log('PAGE ERROR: the htop info modal did not open for the layered drive (round T-fix15)');
+    await page.keyboard.press('Escape'); // must close the MODAL, keep the card
+    await wait(400);
+    const layAfterModal = await page.evaluate(() => ({ modalGone: !document.querySelector('.ucm-modal'), cardStill: !document.querySelector('#snapSearchResults').classList.contains('ucm-hidden'), rows: document.querySelectorAll('#snapSearchBody tr').length }));
+    if (!layAfterModal.modalGone) console.log('PAGE ERROR: the first Esc must close the topmost info modal (round T-fix15)');
+    if (!layAfterModal.cardStill || layAfterModal.rows < 1) console.log('PAGE ERROR: an open modal must OWN the Esc - the store card must STAY (got cardStill ' + layAfterModal.cardStill + ' rows ' + layAfterModal.rows + ', round T-fix15)');
+    await page.keyboard.press('Escape'); // now topmost -> close the card
+    await wait(300);
+    const layAfterCard = await page.evaluate(() => ({ cardGone: !!document.querySelector('#snapSearchResults.ucm-hidden'), rows: document.querySelectorAll('#snapSearchBody tr').length }));
+    if (!layAfterCard.cardGone || layAfterCard.rows !== 0) console.log('PAGE ERROR: the second Esc (modal gone) must close the store card (got ' + JSON.stringify(layAfterCard) + ', round T-fix15)');
+    // ---- 4a-esc-view. round T-fix15: views hide-don't-remove, so the card
+    // element can persist on another view. "Topmost visible surface" means
+    // the snaps view is active - an Esc on another view must NOT close a
+    // card that is not on screen.
+    await page.evaluate(() => { document.querySelector('#snapSearchName').value = ''; });
+    await page.type('#snapSearchName', 'mosquitto');
+    await page.keyboard.press('Enter');
+    await wait(700);
+    await page.click('.ucm-side a[data-view=settings]');
+    await wait(500);
+    const viewPre = await page.evaluate(() => ({ view: document.querySelector('.ucm-side .p-side-navigation__link.is-active').dataset.view, cardVisible: !document.querySelector('#snapSearchResults').classList.contains('ucm-hidden') }));
+    if (viewPre.view !== 'settings') console.log('PAGE ERROR: the view drive must be on the settings view (got ' + viewPre.view + ', round T-fix15)');
+    if (!viewPre.cardVisible) console.log('PAGE ERROR: the store card must persist (hidden, not removed) when leaving the snaps view (round T-fix15)');
+    await page.keyboard.press('Escape');
+    await wait(300);
+    const viewAfter = await page.evaluate(() => ({ cardStill: !document.querySelector('#snapSearchResults').classList.contains('ucm-hidden'), rows: document.querySelectorAll('#snapSearchBody tr').length }));
+    if (!viewAfter.cardStill || viewAfter.rows < 1) console.log('PAGE ERROR: an Esc on another view must NOT close the store card (views hide-don-t-remove, it is not topmost - got ' + JSON.stringify(viewAfter) + ', round T-fix15)');
+    await page.click('.ucm-side a[data-view=snaps]');
+    await wait(500);
+    await page.keyboard.press('Escape'); // back on snaps -> now topmost -> closes
+    await wait(300);
+    const viewReopen = await page.evaluate(() => ({ cardGone: !!document.querySelector('#snapSearchResults.ucm-hidden'), rows: document.querySelectorAll('#snapSearchBody tr').length }));
+    if (!viewReopen.cardGone || viewReopen.rows !== 0) console.log('PAGE ERROR: an Esc back on the snaps view must close the store card (got ' + JSON.stringify(viewReopen) + ', round T-fix15)');
     // ---- 4a-svc. Round 48a: the gear opens the CONFIG popup; snaps without
     // services show the quiet note + info-modal behaviour (Esc, white close);
     // mosquitto's one service is toggled through its guarded directions.
