@@ -6628,6 +6628,34 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
     if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'System power']))
         console.log('PAGE ERROR: the system page must show exactly the 5 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard)');
+    // round T: the refresh card examples are a TABLE now (the old wall of text
+    // is gone): pin the structure + the exact 5 Option/Result rows (each row
+    // verified against snapd ParseSchedule V2, timeutil/schedule.go).
+    const rEx = await page.evaluate(() => {
+        const tb = document.querySelector('#scheduleExamples');
+        if (!tb) return null;
+        return { isTable: !!tb.classList.contains('ucm-sys__schedexamples'), rows: Array.from(tb.querySelectorAll('tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())) };
+    });
+    if (!rEx) console.log('PAGE ERROR: the refresh card must ship the examples table (#scheduleExamples) (round T)');
+    else {
+        if (!rEx.isTable) console.log('PAGE ERROR: the examples table must carry the sizing class (round T)');
+        if (rEx.rows.length !== 5) console.log('PAGE ERROR: the examples table must have 5 rows (got ' + rEx.rows.length + ') (round T)');
+        if (JSON.stringify(rEx.rows[0]) !== JSON.stringify(['02:00-06:00', '(daily window)'])) console.log('PAGE ERROR: examples row 1 (got ' + JSON.stringify(rEx.rows[0]) + ') (round T)');
+        if (JSON.stringify(rEx.rows[1]) !== JSON.stringify(['mon-fri,09:00-17:00', '(weekdays 9-17)'])) console.log('PAGE ERROR: examples row 2 (got ' + JSON.stringify(rEx.rows[1]) + ') (round T)');
+        if (JSON.stringify(rEx.rows[2]) !== JSON.stringify(['sat,10:00~14:00/2', '(Saturdays, spread, split in 2)'])) console.log('PAGE ERROR: examples row 3 (got ' + JSON.stringify(rEx.rows[2]) + ') (round T)');
+        if (JSON.stringify(rEx.rows[3]) !== JSON.stringify(['mon,10:00,,fri,15:00', '(Mondays at 10:00, Fridays at 15:00)'])) console.log('PAGE ERROR: examples row 4 (got ' + JSON.stringify(rEx.rows[3]) + ') (round T)');
+        if (JSON.stringify(rEx.rows[4]) !== JSON.stringify(['fri-mon,06:00', '(wrap-around range, Fri-Mon at 06:00)'])) console.log('PAGE ERROR: examples row 5 (got ' + JSON.stringify(rEx.rows[4]) + ') (round T)');
+    }
+    // the intro line must NOT inline the examples any more (the table owns
+    // them); the generic syntax notes + the default stay as the note line.
+    if (gS.helps[1].indexOf('02:00-06:00') !== -1) console.log('PAGE ERROR: the refresh intro must not inline the examples any more (the table owns them; got ' + JSON.stringify(gS.helps[1]) + ') (round T)');
+    const rNote = await page.evaluate(() => {
+        const n = document.querySelector('#view-system .ucm-sys__schednote');
+        return n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
+    });
+    if (!rNote || !/Separate days with/.test(rNote) || !/24\/7, every 4 hours/.test(rNote))
+        console.log('PAGE ERROR: the schedule notes (separate days / join / default) must stay as the note line (got ' + JSON.stringify(rNote) + ') (round T)');
+
     // round R: the de-worded card help texts (exact, so the old verbose copy
     // can't regress). round T: the Time card adds a 4th help text.
     if (gS.helps && gS.helps.length === 5) {
