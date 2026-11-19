@@ -7508,7 +7508,7 @@ function mockFactoryJs() {
       };
     });
     if (k2.warnHidden !== false) console.log('PAGE ERROR: T-KM4 - a real pick (fr, != current de) must SHOW the restart warning (got hidden=' + k2.warnHidden + ')');
-    if (k2.warnText !== 'Changing the layout restarts the console \u2014 it will reopen automatically.')
+    if (k2.warnText !== 'Changing the layout restarts the console. Characters in your password might change position.')
         console.log('PAGE ERROR: T-KM4 - the warning copy must be exact (got ' + JSON.stringify(k2.warnText) + ')');
     if (!k2.glyph) console.log('PAGE ERROR: T-KM4 - the keyboard restart warning must carry the p-icon--warning glyph (the reset-card box look)');
     if (k2.display !== 'flex') console.log('PAGE ERROR: T-KM4 - the keyboard restart warning must be the flex warning box, not plain muted text (the reset-card look; got display=' + k2.display + ')');
