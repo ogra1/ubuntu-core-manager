@@ -955,6 +955,13 @@ html, body {
    Scoped to .ucm-actions (snaps page) - the interfaces row actions
    (.ucm-ifaces-action) keep their own baseline. */
 .ucm-actions i { vertical-align: calc(.5px + .3465em - .5rem); }
+/* round T (UI): the sidebar Lock button icon sits ~2px ABOVE the text centre.
+   .p-icon--lock is a CUSTOM suru icon (see above), so it has no BUNDLE
+   vertical-align nudge - it baseline-aligns in the 36px button like the suru
+   snap-row icons did before round 44c. Apply the SAME proven centering nudge
+   (the round-44c .ucm-actions rule) to the lock glyph. Scoped to .ucm-lockbtn
+   (only the sidebar lock button uses it). */
+.ucm-lockbtn i { vertical-align: calc(.5px + .3465em - .5rem); }
 .p-icon--power{
     display: inline-block;
     background-repeat: no-repeat;
@@ -1590,6 +1597,7 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-lp__form { border-top: 1px solid #f0f0f0; padding-top: .9rem; display: grid; grid-template-columns: 1fr 1fr; column-gap: 1rem; }
 .ucm-lp__form .p-form__group { margin-bottom: .2rem; }
 .ucm-lp__form .p-form-validation__input { max-width: 100%; margin-bottom: 0; }
+.ucm-lp__form .p-form-validation__message { margin-top: .4rem; } /* round T: the input margin-bottom is zeroed above, so the BUNDLE -0.5rem message margin over-pulls the error text ~8px UP onto the input (measured overlap=8). Give the message a small positive gap instead. */
 .ucm-lp__actions { grid-column: 1 / -1; display: flex; gap: .6rem; }
 .ucm-lp__actions .p-button { margin-bottom: 0; }
 

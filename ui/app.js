@@ -3707,13 +3707,34 @@ function lpStartEdit(e) {
     const n = $('#lpName'); if (n) { n.focus(); n.select && n.select(); }
 }
 function lpCancel() { lpState.editing = null; lpResetForm(); lpSyncFormButtons(null); }
+// round T (UI): removing a local page is destructive, so - like every other
+// removal in the app (snap Remove/Disable, the config trash) - it is
+// CONFIRM-GATED. The trash click opens the house inline .ucm-confirm row
+// (the main-page idiom: question icon + message + Remove? + Cancel); the
+// actual removal only happens on Remove?.
+function lpAskRemove(e) {
+    if (document.querySelector('#lpList .ucm-confirm')) return;
+    const box = el('div', {
+        class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
+    });
+    const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
+    const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: 'Remove page “' + e.name + '”? It disappears from the menu and is no longer embedded.' });
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Remove?' });
+    b.onclick = () => { box.remove(); lpRemove(e); };
+    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancel.onclick = () => box.remove();
+    box.append(icon, msg, b, cancel);
+    const list = $('#lpList');
+    list.append(box);
+    b.focus();
+}
 function lpRemove(e) {
     const pages = (state.localPages || []).slice();
     const i = pages.findIndex((x) => x.id === e.id);
     if (i < 0) return;
     pages.splice(i, 1);
     if (lpState.editing === e.id) lpCancel();
-    const btn = null; // no persistent btn
     core.settings.setLocalPages(pages.map((x) => ({ name: x.name, url: x.url })))
         .then(() => { if (state.view === e.id) switchView('settings'); })
         .catch(toastErr);
@@ -3742,7 +3763,7 @@ function renderLocalPagesCard() {
             class: 'p-button--base p-button ucm-iconbtn p-tooltip--top-right', type: 'button',
             'aria-label': 'Remove ' + e.name, 'data-tooltip': 'Remove', title: 'Remove',
         }, el('i', { class: 'p-icon--delete' }));
-        del.addEventListener('click', () => lpRemove(e));
+        del.addEventListener('click', () => lpAskRemove(e));
         const meta = el('div', { class: 'ucm-lp__meta' }, name, url);
         const acts = el('div', { class: 'ucm-lp__acts' }, edit, del);
         row.append(meta, acts);

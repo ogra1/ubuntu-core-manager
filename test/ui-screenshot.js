@@ -6258,6 +6258,23 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: an empty Local pages list must show the empty state (got ' + JSON.stringify(lp0.emptyText) + ') (round I)');
     if (lp0.sepPresent !== false)
         console.log('PAGE ERROR: with NO local pages the sidebar separator must NOT show (got present=' + lp0.sepPresent + ') (round I)');
+    // round T (UI): the sidebar Lock button icon must be vertically centred on the
+    // button (the custom suru .p-icon--lock has no bundle vertical-align nudge; a
+    // baseline-aligned 16px glyph in the 36px button sits ~2px high). Measured
+    // with the sidebar visible (the settings view is up here).
+    const lockGeo = await page.evaluate(() => {
+        const btn = document.querySelector('#lockBtn');
+        const ic = btn ? btn.querySelector('i') : null;
+        if (!btn || !ic) return null;
+        const b = btn.getBoundingClientRect(), i2 = ic.getBoundingClientRect();
+        return { btnH: b.height, iconH: i2.height, delta: (i2.top + i2.height/2) - (b.top + b.height/2), va: getComputedStyle(ic).verticalAlign };
+    });
+    if (!lockGeo || lockGeo.btnH < 20)
+        console.log('PAGE ERROR: the lock button could not be measured for icon centreing (got ' + JSON.stringify(lockGeo) + ') (round T)');
+    else if (Math.abs(lockGeo.delta) > 1)
+        console.log('PAGE ERROR: the sidebar lock icon is not vertically centred on the button (centre delta ' + lockGeo.delta + 'px; want within 1px) (round T)');
+    else
+        console.log('  lock icon centre delta: ' + lockGeo.delta + 'px (within tolerance)');
     if (lp0.entryCount !== 0)
         console.log('PAGE ERROR: with NO local pages the sidebar must have 0 local entries (got ' + lp0.entryCount + ') (round I)');
 
@@ -6407,8 +6424,26 @@ function mockFactoryJs() {
             nameErr: nameErr,
             mock: window.__mockCore.settings.__localpages(),
             nav: [...document.querySelectorAll('.ucm-lp-entry a')].map((a) => a.textContent.trim()),
+            // round T (UI): overlap measurement - the error message must sit
+            // BELOW the input (the bundle -0.5rem message margin is a
+            // compensation for the input bottom margin; app.css zeroes the LP
+            // input margin, so the message margin-top must be fixed or it
+            // over-pulls ~8px onto the input).
+            geo: (() => {
+              const inp = document.querySelector('#lpUrl');
+              const msg = document.querySelector('#lpUrlGroup .p-form-validation__message');
+              if (!inp || !msg) return null;
+              const a = inp.getBoundingClientRect(), b2 = msg.getBoundingClientRect();
+              return { inputBottom: a.bottom, msgTop: b2.top, overlap: a.bottom - b2.top, msgMarginTop: getComputedStyle(msg).marginTop, inpTop: a.top, msgBot: b2.bottom, grpTop: document.querySelector('#lpUrlGroup').getBoundingClientRect().top, grpBot: document.querySelector('#lpUrlGroup').getBoundingClientRect().bottom };
+            })(),
         };
     });
+    // round T (UI): the LP form error message must sit BELOW the input (no overlap).
+    if (lp5.geo && lp5.geo.overlap > 0)
+        console.log('PAGE ERROR: the LP form error message overlaps the input (got overlap=' + lp5.geo.overlap + 'px; want <= 0) (round T)');
+    if (lp5.geo && lp5.geo.msgMarginTop !== '6.4px')
+        console.log('PAGE ERROR: the LP form message margin-top is not the fixed .4rem (got ' + lp5.geo.msgMarginTop + ') (round T)');
+    console.log('TEMPGEO2', JSON.stringify(lp5.geo));
     if (lp5.urlErr !== true)
         console.log('PAGE ERROR: a non-loopback url must be rejected with an error on the URL field (got ' + lp5.urlErr + ') (round I)');
     if (!/localhost/.test(lp5.urlMsg || ''))
@@ -6436,10 +6471,31 @@ function mockFactoryJs() {
     if (lp6.calls !== 3)
         console.log('PAGE ERROR: an empty-name add must NOT send a setLocalPages call (got ' + lp6.calls + ') (round I)');
 
-    // (remove) remove the second entry -> the list shrinks + the sidebar re-renders.
-    // Click the Grafana row's remove button (2nd row, 2nd button).
+    // (remove) removing a page is now CONFIRM-GATED (round T; the house
+    // .ucm-confirm idiom, like every other removal). Click the trash -> the
+    // confirm row opens and the list is UNCHANGED; click Remove? -> it goes.
     await page.evaluate(() => {
         const b = document.querySelector('#lpList button[aria-label="Remove Grafana"]');
+        if (b) b.click();
+    });
+    await wait(250);
+    const lp7a = await page.evaluate(() => ({
+        confirm: !!document.querySelector('#lpList .ucm-confirm'),
+        confirmMsg: (() => { const m = document.querySelector('#lpList .ucm-confirm .ucm-confirm__msg'); return m ? m.textContent.trim() : null; })(),
+        entries: [...document.querySelectorAll('.ucm-side .ucm-lp-entry a')].map((a) => a.textContent.trim()),
+        mock: window.__mockCore.settings.__localpages(),
+    }));
+    if (lp7a.confirm !== true)
+        console.log('PAGE ERROR: clicking a local-page remove must open the confirm gate (got confirm=' + lp7a.confirm + ') (round T)');
+    if (!/Remove page/.test(lp7a.confirmMsg || '') || !/Grafana/.test(lp7a.confirmMsg || ''))
+        console.log('PAGE ERROR: the remove confirm must name the page (got ' + JSON.stringify(lp7a.confirmMsg) + ') (round T)');
+    if (JSON.stringify(lp7a.entries) !== JSON.stringify(['Home Assistant', 'Grafana']))
+        console.log('PAGE ERROR: before confirming, the page must NOT be removed (got ' + JSON.stringify(lp7a.entries) + ') (round T)');
+    if (lp7a.mock.calls !== 3 || lp7a.mock.value.length !== 2)
+        console.log('PAGE ERROR: before confirming, no remove setLocalPages call may be sent (got ' + JSON.stringify(lp7a.mock) + ') (round T)');
+    await page.screenshot({ path: path.join(SHOTS, '6c-lp-remove-confirm.png') });
+    await page.evaluate(() => {
+        const b = document.querySelector('#lpList .ucm-confirm .p-button--negative');
         if (b) b.click();
     });
     await wait(500);
@@ -6451,22 +6507,30 @@ function mockFactoryJs() {
             entries: entries,
             webviewViews: views,
             sepPresent: !!document.querySelector('.ucm-side .ucm-lp-sepitem'),
+            confirmGone: !document.querySelector('#lpList .ucm-confirm'),
             mock: window.__mockCore.settings.__localpages(),
         };
     });
     if (JSON.stringify(lp7.entries) !== JSON.stringify(['Home Assistant']))
-        console.log('PAGE ERROR: removing the second page must leave exactly "Home Assistant" (got ' + JSON.stringify(lp7.entries) + ') (round I)');
+        console.log('PAGE ERROR: confirming the remove must leave exactly "Home Assistant" (got ' + JSON.stringify(lp7.entries) + ') (round T)');
     if (JSON.stringify(lp7.webviewViews) !== JSON.stringify(['view-lp-0']))
         console.log('PAGE ERROR: removing a page must remove its <webview> view (got ' + JSON.stringify(lp7.webviewViews) + ') (round I)');
     if (lp7.sepPresent !== true)
         console.log('PAGE ERROR: with one page left the separator must still show (got ' + lp7.sepPresent + ') (round I)');
+    if (lp7.confirmGone !== true)
+        console.log('PAGE ERROR: the confirm row must close after the remove (round T)');
     if (lp7.mock.calls !== 4 || lp7.mock.value.length !== 1)
-        console.log('PAGE ERROR: the remove must send the shrunk list (got ' + JSON.stringify(lp7.mock) + ') (round I)');
+        console.log('PAGE ERROR: the confirmed remove must send the shrunk list (got ' + JSON.stringify(lp7.mock) + ') (round T)');
 
-    // (remove all) remove the last entry -> the separator DISAPPEARS (the user's
-    // "only if there are local links added" requirement).
+    // (remove all) confirm-gated again: trash -> Remove? -> the separator
+    // DISAPPEARS (the "only if there are local links added" requirement).
     await page.evaluate(() => {
         const b = document.querySelector('#lpList button[aria-label="Remove Home Assistant"]');
+        if (b) b.click();
+    });
+    await wait(250);
+    await page.evaluate(() => {
+        const b = document.querySelector('#lpList .ucm-confirm .p-button--negative');
         if (b) b.click();
     });
     await wait(500);
