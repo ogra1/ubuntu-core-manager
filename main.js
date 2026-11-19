@@ -3013,7 +3013,17 @@ function initElectron() {
                                     if (s) {
                                         const g = s.closest('.p-form__group');
                                         if (s.options.length > 0 || (g && g.classList.contains('is-error'))) {
-                                            km = { value: s.value, err: g ? g.classList.contains('is-error') : null, overlayEl: !!document.querySelector('#keymapRestart') };
+                                            km = {
+                                                value: s.value,
+                                                err: g ? g.classList.contains('is-error') : null,
+                                                overlayEl: !!document.querySelector('#keymapRestart'),
+                                                // round KM part 2: the TWO-STEP structure — first boot
+                                                // shows step 1 (the keyboard form), hides step 2 (the
+                                                // password form); the password step's note is present.
+                                                step1Hidden: !!(document.querySelector('#setupKeymapForm') && document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden')),
+                                                step2Hidden: !!(document.querySelector('#setupPasswordForm') && document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden')),
+                                                step1Btn: !!document.querySelector('#setupKeymapBtn'),
+                                            };
                                             break;
                                         }
                                     }

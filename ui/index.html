@@ -35,10 +35,14 @@
                 <p style="margin:0; font-size:.8rem; color:rgba(255,255,255,.7);">Initial administrator setup</p>
             </div>
         </div>
-        <form id="setupForm" class="ucm-login__body" novalidate>
+        <!-- round KM part 2: TWO-STEP first boot. Step 1 = the keyboard layout
+             (applied BEFORE the password, so a layout change restarts the
+             console with nothing to lose); step 2 = the password (created
+             once, on the settled layout). The step is a class on #setupView. -->
+        <form id="setupKeymapForm" class="ucm-login__body ucm-setup__step" novalidate>
             <p class="ucm-lockscreen-note">
                 <i class="p-icon--information"></i>
-                Set a local administrator password.
+                Choose the keyboard layout for this console.
             </p>
             <div class="p-form__group" id="setupKeymapGroup">
                 <label class="p-form__label" for="setupKeymap">Keyboard layout</label>
@@ -48,6 +52,13 @@
                 </p>
                 <p class="p-form-validation__message" id="setupKeymapMsg"></p>
             </div>
+            <button class="p-button--brand" type="submit" id="setupKeymapBtn">Continue</button>
+        </form>
+        <form id="setupPasswordForm" class="ucm-login__body ucm-setup__step ucm-hidden" novalidate>
+            <p class="ucm-lockscreen-note">
+                <i class="p-icon--information"></i>
+                Set a local administrator password.
+            </p>
             <div class="p-form__group" id="setupPasswordGroup">
                 <label class="p-form__label" for="setupPassword">Administrator password</label>
                 <input class="p-form-validation__input" type="password" id="setupPassword"

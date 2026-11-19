@@ -150,9 +150,12 @@ const state = {
     snaps: [],
     ifaces: null,
     manualLock: false,
-    // round KM: the first-boot keyboard layout step (see loadSetupKeymap /
-    // doSetupSubmit). keymapLoaded resolves once (true, even on error — the
-    // error path is a SKIP, never a block: the password stays settable).
+    // round KM part 2: the two-STEP first-boot flow. setupStep is 'keymap'
+    // (step 1 — the layout is applied BEFORE the password is typed; a real
+    // change restarts the console) or 'password' (step 2 — created once, on
+    // the settled layout). keymapLoaded resolves once (true, even on error —
+    // the error path is a SKIP, never a block: the password stays settable).
+    setupStep: 'keymap',
     keymapLoaded: false,
     keymapError: false,
     keymapList: [],
@@ -190,12 +193,16 @@ function showGate() {
     $('#loginView').classList.toggle('ucm-hidden', !toLogin && !toSetup);
     $('#appShell').classList.toggle('ucm-hidden', toSetup || toLogin);
     if (toSetup) {
-        // round KM: the keyboard layout is the FIRST setup control (the layout
-        // must be correct before the password is typed); focus it once the
-        // list has loaded, else the password (the list is still loading).
-        const kmSel = $('#setupKeymap');
-        if (state.keymapLoaded && kmSel) kmSel.focus();
-        else $('#setupPassword').focus();
+        // round KM part 2: step 1 = the keyboard picker (focused once the list
+        // is loaded; the password step is not even in the DOM yet), step 2 =
+        // the password. The step the app RE-OPENS into after a layout restart
+        // is step 1 — the layout now reads back as applied, so Continue is a
+        // no-op into step 2.
+        if (state.setupStep === 'password') $('#setupPassword').focus();
+        else {
+            const kmSel = $('#setupKeymap');
+            if (state.keymapLoaded && kmSel) kmSel.focus();
+        }
     }
     if (toLogin) $('#loginPassword').focus();
 }
@@ -260,6 +267,7 @@ function exitApp() {
     setFieldState('setupKeymapGroup', '');
     const kmOv = $('#keymapRestart');
     if (kmOv) kmOv.classList.add('ucm-hidden');
+    updateSetupStep('keymap'); // a wipe/lock re-enters first boot at step 1
     setFieldState('setupPasswordGroup', '');
     setFieldState('setupConfirmGroup', '');
     setFieldState('loginPasswordGroup', '');
@@ -346,18 +354,27 @@ async function doCreatePassword() {
     }
 }
 
-/* round KM: the first-boot KEYBOARD LAYOUT (the ubuntu-frame external
+/* round KM part 2: the two-STEP first-boot flow (the ubuntu-frame external
    config). The layout must be in place BEFORE the administrator password is
    typed — the password is stored verbatim from the keys pressed, and a
    layout change after typing would make the stored characters not match the
-   keyboard. So the setup screen applies the layout FIRST: a change restarts
-   the console (the full-screen #keymapRestart overlay owns the screen — it is
-   non-interactive; on the real device the app dies with the session and
-   reopens, re-reading the now-applied value on boot). A pick that needs no
-   write (the current layout, or English (US) on a fresh device that ships
-   none) is a no-op: no overlay, no restart, straight to the password. */
+   keyboard. So step 1 is the layout (its own button: a real change restarts
+   the console via the non-interactive #keymapRestart overlay; on the real
+   device the app dies with the session and reopens — at step 1 again, now
+   reading the settled layout, where Continue is a no-op into step 2). A pick
+   that needs no write (the applied layout, or English (US) on a fresh device
+   that ships none) advances straight to step 2: no overlay, no restart.
+   Step 2 is the password — created ONCE, never restarted into. */
 function keymapNoOp(id, cur) {
     return id === cur || (cur === null && id === 'us');
+}
+function updateSetupStep(step) {
+    state.setupStep = step;
+    const km = $('#setupKeymapForm');
+    const pw = $('#setupPasswordForm');
+    if (km) km.classList.toggle('ucm-hidden', step !== 'keymap');
+    if (pw) pw.classList.toggle('ucm-hidden', step !== 'password');
+    showGate(); // refocus per step (picker vs password)
 }
 function toggleKeymapHelp() {
     const sel = $('#setupKeymap');
@@ -381,7 +398,7 @@ async function loadSetupKeymap() {
         sel.value = def;
         state.keymapLoaded = true;
         toggleKeymapHelp();
-        showGate(); // re-focus now that the picker holds the first control
+        updateSetupStep('keymap'); // step 1, refocused now that the picker is live
     } catch (e) {
         // The frame read failed (frame down / socket gone) — SKIP the layout
         // step, never block the password (the layout stays changeable later
@@ -389,48 +406,56 @@ async function loadSetupKeymap() {
         state.keymapLoaded = true;
         state.keymapError = true;
         setFieldState('setupKeymapGroup', 'error', e.message);
+        updateSetupStep('keymap');
     }
 }
-async function doKeymapApply() {
-    const sel = $('#setupKeymap');
-    const id = sel ? sel.value : '';
-    const help = $('#setupKeymapHelp');
-    if (help) help.classList.add('ucm-hidden'); // the overlay carries the warning
-    setFieldState('setupKeymapGroup', '');
-    try {
-        const r = await core.keymaps.apply(id);
-        if (r && r.id) {
-            // A real write: the frame (and the console with it) restarts. The
-            // overlay is NON-interactive on purpose — nothing to do but wait;
-            // the app reopens into setup with the layout settled. The password
-            // is deliberately NOT created on this pass — a fresh re-opened
-            // setup screen is what the user continues on.
-            const ov = $('#keymapRestart');
-            if (ov) ov.classList.remove('ucm-hidden');
-        } else {
-            // No-op (already applied, or English (US) on a fresh device): the
-            // layout is in place, so the SAME submit proceeds to the password
-            // step (the keyboard and password share one form + one button).
-            doCreatePassword();
-        }
-    } catch (e) {
-        setFieldState('setupKeymapGroup', 'error', e.message);
-        toggleKeymapHelp();
-    }
-}
-/* The setup form's submit runs the KEYBOARD step first (it is the only step
-   that can restart the console), then the password step. On a device where
-   the pick was a real change the overlay is up and this returns — the app
-   reopens and the user continues at the password. */
-function doSetupSubmit() {
+/* Step 1's Continue. A no-op pick (the applied layout, or US on a fresh
+   device) needs no write: straight to step 2. A real change applies the
+   layout — the frame (and the console with it) restarts; the overlay is
+   NON-interactive on purpose, and the app reopens at step 1 with the layout
+   settled, where the SAME Continue is a no-op into step 2. A rejected apply
+   (e.g. the frame's hook does not know the id) stays on step 1 with an
+   inline error. The password step is only ever reached with the layout in
+   place — no password typed in the wrong layout, ever. */
+async function doSetupKeymapSubmit() {
     const ov = $('#keymapRestart');
     if (ov && !ov.classList.contains('ucm-hidden')) return; // the restart owns the screen
     if (!state.keymapLoaded) {
         toast('caution', 'Keyboard layout', 'Loading the layouts — one moment.');
         return;
     }
-    if (state.keymapError) return doCreatePassword(); // step skipped (read failed)
-    doKeymapApply();
+    if (state.keymapError) { updateSetupStep('password'); return; } // step skipped (read failed)
+    const sel = $('#setupKeymap');
+    const id = sel ? sel.value : '';
+    const btn = $('#setupKeymapBtn');
+    const help = $('#setupKeymapHelp');
+    setFieldState('setupKeymapGroup', '');
+    if (keymapNoOp(id, state.keymapCurrent)) { updateSetupStep('password'); return; }
+    if (help) help.classList.add('ucm-hidden'); // the overlay carries the warning
+    if (btn) {
+        btn.classList.add('is-disabled', 'is-processing');
+        btn.insertAdjacentHTML('beforeend', ' <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>');
+    }
+    try {
+        const r = await core.keymaps.apply(id);
+        if (r && r.id) {
+            // A real write: the console is restarting. The overlay stays up;
+            // on the real device the app dies with the session and reopens
+            // (a fresh boot re-enters step 1 at the settled layout).
+            if (ov) ov.classList.remove('ucm-hidden');
+        } else {
+            updateSetupStep('password');
+        }
+    } catch (e) {
+        setFieldState('setupKeymapGroup', 'error', e.message);
+        toggleKeymapHelp();
+    } finally {
+        if (btn) {
+            btn.classList.remove('is-disabled', 'is-processing');
+            const sp = btn.querySelector('.p-icon--spinner');
+            if (sp) sp.remove();
+        }
+    }
 }
 
 async function doLogin(password) {
@@ -4278,18 +4303,23 @@ function wire() {
         }
     });
     // local gate: first boot + login + lock
-    // round KM: the first-boot keyboard step (the layout is applied BEFORE
-    // the password is typed; a real change restarts the console via the
-    // #keymapRestart overlay). The picker's change shows/hides the inline
-    // restart warning (a no-op pick — the current layout, or US on a fresh
-    // device — never warns).
+    // round KM part 2: the two-STEP first-boot flow. Step 1 = the keyboard
+    // layout (its own form + button; a real change restarts the console via
+    // the #keymapRestart overlay, a no-op advances to step 2). Step 2 = the
+    // password, created once on the settled layout. The picker's change
+    // shows/hides the inline restart warning (a no-op pick — the current
+    // layout, or US on a fresh device — never warns).
     const kmSel = $('#setupKeymap');
     if (kmSel) kmSel.addEventListener('change', () => {
         if (!state.keymapError) toggleKeymapHelp();
     });
-    $('#setupForm').addEventListener('submit', (e) => {
+    $('#setupKeymapForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        doSetupSubmit();
+        doSetupKeymapSubmit();
+    });
+    $('#setupPasswordForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        doCreatePassword();
     });
     $('#loginForm').addEventListener('submit', (e) => {
         e.preventDefault();

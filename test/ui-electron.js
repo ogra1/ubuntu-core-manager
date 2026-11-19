@@ -138,6 +138,12 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     // fresh device) resolves to {} through real main + real stub.
     ok('first boot: the keymaps apply channel round-trips the no-op ({} — no write)',
         p.km && p.km.applyNoop === '{}', JSON.stringify(p.km && p.km.applyNoop));
+    // round KM part 2: the two-STEP structure — first boot lands on step 1
+    // (the keyboard form + its Continue button), with the password step
+    // (step 2) present in the DOM but hidden.
+    ok('first boot: the two-step layout is up (step 1 shown, step 2 hidden, step-1 button present)',
+        p.km && p.km.step1Hidden === false && p.km.step2Hidden === true && p.km.step1Btn === true,
+        JSON.stringify(p.km));
 
     // ---- round I: the <webview> E2E (real sandbox/webviewTag). The probe
     // created a local password, seeded a GOOD (served) + a DEAD (unreachable)
