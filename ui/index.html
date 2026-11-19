@@ -626,12 +626,13 @@
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Keyboard layout</p></div>
                         <div class="ucm-sys__body">
                             <p class="ucm-lp__help">
-                                Change the keyboard layout for this console (post-setup).
+                                Change the keyboard layout for this console.
                             </p>
                             <div class="ucm-sys__row ucm-sys__formrow">
                                 <label class="p-form__label" for="keymapSelect">Keyboard layout</label>
                                 <select class="ucm-sys__zone" id="keymapSelect"></select>
-                                <p class="p-form-help-text ucm-hidden" id="keymapWarn">
+                                <p class="ucm-reset__warn ucm-hidden" id="keymapWarn">
+                                    <i class="p-icon--warning"></i>
                                     Changing the layout restarts the console &#8212; it will reopen automatically.
                                 </p>
                                 <p class="p-form-validation__message" id="keymapMsg"></p>

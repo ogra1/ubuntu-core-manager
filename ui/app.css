@@ -1639,7 +1639,7 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    track) — a 497-zone list needs the room. The NTP-gate note sits to the
    right of the current-time value (small, muted, mono). */
 .ucm-sys__zone { grid-column: 2; width: 100%; margin-bottom: 0; }
-.ucm-sys__formrow #keymapWarn { grid-column: 2; margin: 0; font-size: .8rem; color: #8a5a00; }
+.ucm-sys__formrow #keymapWarn { grid-column: 1 / -1; margin: .6rem 0 0; } /* round T-KM4 polish: the warn now SHARED the .ucm-reset__warn box (Settings password-reset look, both themes); this only places it full-width under the row + tightens the box margin */
 /* the PERMANENT topbar clock (round T; the toggle removed in T-fix8):
    between the page title and the session chip. A middot hairline (::before)
    separates it from the title so it reads as chrome, not a title

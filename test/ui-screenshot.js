@@ -6547,7 +6547,7 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round T / T-fix11)');
         if (gS.helps[4] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
             console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[4]) + ') (round R)');
-        if (gS.helps[3].indexOf('Change the keyboard layout for this console') !== 0)
+        if (gS.helps[3] !== 'Change the keyboard layout for this console.')
             console.log('PAGE ERROR: the Keyboard card help must read the round T-KM4 subtitle (got ' + JSON.stringify(gS.helps[3]) + ') (round T-KM4)');
     } else {
         console.log('PAGE ERROR: the system page must show 5 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds Time; round T-KM4 adds Keyboard)');
@@ -7485,13 +7485,23 @@ function mockFactoryJs() {
     //      overlay (the app reopens; the mock settles it). Do NOT await.
     await page.select('#keymapSelect', 'fr');
     await wait(250);
-    const k2 = await page.evaluate(() => ({
-      warnHidden: document.querySelector('#keymapWarn').classList.contains('ucm-hidden'),
-      warnText: document.querySelector('#keymapWarn').textContent.trim(),
-    }));
+    const k2 = await page.evaluate(() => {
+      const w = document.querySelector('#keymapWarn');
+      const cs = getComputedStyle(w);
+      return {
+        warnHidden: w.classList.contains('ucm-hidden'),
+        warnText: w.textContent.trim(),
+        glyph: !!w.querySelector('.p-icon--warning'),
+        display: cs.display,
+        bg: cs.backgroundColor,
+      };
+    });
     if (k2.warnHidden !== false) console.log('PAGE ERROR: T-KM4 - a real pick (fr, != current de) must SHOW the restart warning (got hidden=' + k2.warnHidden + ')');
     if (k2.warnText !== 'Changing the layout restarts the console \u2014 it will reopen automatically.')
         console.log('PAGE ERROR: T-KM4 - the warning copy must be exact (got ' + JSON.stringify(k2.warnText) + ')');
+    if (!k2.glyph) console.log('PAGE ERROR: T-KM4 - the keyboard restart warning must carry the p-icon--warning glyph (the reset-card box look)');
+    if (k2.display !== 'flex') console.log('PAGE ERROR: T-KM4 - the keyboard restart warning must be the flex warning box, not plain muted text (the reset-card look; got display=' + k2.display + ')');
+    if ((k2.bg || '') === 'rgba(0, 0, 0, 0)') console.log('PAGE ERROR: T-KM4 - the keyboard restart warning must have the amber caution background, not be invisible plain text (the reset-card look; got bg=' + k2.bg + ')');
     await page.screenshot({ path: path.join(SHOTS, 'sys-k2-keyboard-warn.png') });
     // (k2b) the busy state while the change is in flight: the mock applies
     //      synchronously, so __kmsetbusy(true) holds the change open and the
