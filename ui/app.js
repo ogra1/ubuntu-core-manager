@@ -3425,6 +3425,18 @@ async function doResetPassword() {
     const btn = $('#resetBtn');
     btn.classList.add('is-disabled');
     try {
+        // BUGFIX (reset lockout): a System-page keymap change restarts the
+        // console and the app RE-OPENS AUTHENTICATED - enterApp runs, NOT
+        // loadSetupKeymap, so the in-memory "asked once" flag was never read
+        // and sits at its fresh default (false) even though the persisted
+        // keymap.conf is true. The reset wipe must therefore RE-READ the
+        // persisted flag before applyAuthPayload -> exitApp decides the setup
+        // step, or the device re-enters at STEP 1 (the keymap) with an empty
+        // picker -> the "Loading the layouts" toast lockout. The flag read is
+        // open pre-gate (safe here). A lock never goes stale (the flag was
+        // read at boot), so only the reset (wipe) path re-reads it.
+        try { state.keymapFlag = await core.keymaps.flag(); }
+        catch (e) { /* the in-memory value stands (the reset continues) */ }
         const p = await core.auth.reset(cur);
         applyAuthPayload(p); // wipes the session -> gate falls back to #setupView
         // Drop the view hash: the console re-enters on the DASHBOARD after a

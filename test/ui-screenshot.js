@@ -2432,6 +2432,14 @@ function mockFactoryJs() {
     await wait(400);
     await page.screenshot({ path: path.join(SHOTS, '5-settings-reset-wrong.png') });
 
+    // BUGFIX regression (reset lockout): model the STALE in-memory flag the way
+    // it goes stale on the real device - a System-page keymap change restarts
+    // the console and the app re-opens AUTHENTICATED (enterApp, NOT
+    // loadSetupKeymap), so state.keymapFlag was never read and is at its fresh
+    // default false even though the PERSISTED flag (the mock __kmFlag) is true.
+    // The reset below must RE-READ the persisted flag and land on STEP 2 (the
+    // password) - NOT re-enter the empty keymap step. `state` is a global lexical.
+    await page.evaluate(() => { state.keymapFlag = false; }); // model the stale console restart
     // correct password (match) -> credential wiped -> first-boot setup again
     await page.click('#resetCurrent', { clickCount: 3 });
     await page.click('#resetConfirm', { clickCount: 3 });
@@ -2465,11 +2473,14 @@ function mockFactoryJs() {
         step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
         flag: window.__mockCore.keymaps.__km().flag,
         applied: window.__mockCore.keymaps.__km().applied,
+        memFlag: state.keymapFlag,
     }));
     if (kmReset0.flag !== true) console.log('PAGE ERROR: round KM — a reset must NOT clear the asked-once flag (got ' + kmReset0.flag + ')');
     if (kmReset0.applied !== 'de') console.log('PAGE ERROR: round KM — a reset must keep the frame layout (de) (got ' + kmReset0.applied + ')');
     if (kmReset0.step1Hidden !== true || kmReset0.step2Hidden !== false)
         console.log('PAGE ERROR: round KM — after a reset (flag set) the flow must re-enter at STEP 2 (the password), not re-ask for the layout (got ' + JSON.stringify(kmReset0) + ')');
+    if (kmReset0.memFlag !== true)
+        console.log('PAGE ERROR: T-KM4-BUGFIX - a reset after a console restart must RE-READ the persisted flag into memory (in-memory still stale ' + kmReset0.memFlag + ')');
     // recreate the password so the remaining steps have a console (step 2 is
     // already up — no keyboard step to pass).
     await page.click('#setupPassword', { clickCount: 3 });
