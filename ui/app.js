@@ -4449,6 +4449,21 @@ function wire() {
             confirm.remove();
         }
     });
+    // round T: ESC dismisses the Local-pages form error. A rejected add/edit
+    // (bad url / name) otherwise lingers until a view switch or a valid
+    // re-submit; ESC clears it now. The house pattern (round-39 snaps-search
+    // / round-60 netcard): document-level, scoped to the settings view, and it
+    // YIELDS to any open .ucm-confirm / .ucm-modal (registered after the 48k
+    // confirm handler, so a confirm closes on its own Esc first). A dismiss
+    // clears the is-error state + message but KEEPS the typed values (a
+    // dismiss is not a reset - the user keeps their draft).
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || state.view !== 'settings') return;
+        if (document.querySelector('.ucm-confirm') || document.querySelector('.ucm-modal')) return;
+        const ng = $('#lpNameGroup'), ug = $('#lpUrlGroup');
+        if (ng && ng.classList.contains('is-error')) setFieldState('lpNameGroup', '');
+        if (ug && ug.classList.contains('is-error')) setFieldState('lpUrlGroup', '');
+    });
     // local gate: first boot + login + lock
     // round KM part 2: the two-STEP first-boot flow. Step 1 = the keyboard
     // layout (its own form + button; a real change restarts the console via

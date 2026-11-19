@@ -6454,6 +6454,23 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: a rejected add must NOT send a setLocalPages call (got ' + lp5.mock.calls + ') (round I)');
     if (JSON.stringify(lp5.nav) !== JSON.stringify(['Home Assistant', 'Grafana']))
         console.log('PAGE ERROR: a rejected add must not change the sidebar (got ' + JSON.stringify(lp5.nav) + ') (round I)');
+    // (esc) round T: ESC dismisses the LP form error (keeps the typed values -
+    // a dismiss is not a reset). The bad url from lp5 is still showing its
+    // error; press Escape and it must clear, but the draft stays.
+    await page.keyboard.press('Escape');
+    await wait(150);
+    const lpEsc = await page.evaluate(() => ({
+        urlErr: document.querySelector('#lpUrlGroup').classList.contains('is-error'),
+        urlMsg: (document.querySelector('#lpUrlGroup .p-form-validation__message') || {}).textContent || '',
+        nameVal: document.querySelector('#lpName').value,
+        urlVal: document.querySelector('#lpUrl').value,
+    }));
+    if (lpEsc.urlErr !== false)
+        console.log('PAGE ERROR: an ESC must dismiss the LP form error (url group still is-error; got ' + lpEsc.urlErr + ') (round T)');
+    if (lpEsc.urlMsg !== '')
+        console.log('PAGE ERROR: an ESC must clear the LP form error message (got ' + JSON.stringify(lpEsc.urlMsg) + ') (round T)');
+    if (lpEsc.urlVal !== 'http://10.0.0.5:8080' || lpEsc.nameVal !== 'Bad')
+        console.log('PAGE ERROR: an ESC dismiss must KEEP the typed values (a dismiss is not a reset; got ' + JSON.stringify({ n: lpEsc.nameVal, u: lpEsc.urlVal }) + ') (round T)');
 
     // (reject 2) an empty name is rejected by the renderer.
     await page.click('#lpName', { clickCount: 3 });
