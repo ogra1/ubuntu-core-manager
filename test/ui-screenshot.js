@@ -107,6 +107,11 @@ const COMPONENTS = {
 
 // Per-snap configuration documents (snapd /v2/snaps/{name}/conf).
 const SNAP_CONF = {
+    // round T-KM4: the frame carries an applied layout (de) so the System
+    // page Keyboard card has a real current to show (the mock apply path
+    // settles it the same way; this seed makes the card-load proof
+    // deterministic without re-running first-boot in the mock).
+    'ubuntu-frame': { config: 'keymap=de' },
     // mosquitto (round 48b/48f): NESTED document — the LIVE shape snapd returns
     // (it stores config as nested JSON, NOT a flat dotted map). One top-level
     // key with a nested subtree (daemon.preseed), scalars, a boolean, and a
@@ -251,6 +256,7 @@ function mockFactoryJs() {
             { id: 'at', label: 'German (Austria)' },
         ];
         let __keymap = null; // the frame's applied layout (null = fresh device)
+        let __keymapCurReads = 0; // round T-KM4: the card-load proof (a 2nd read after the setup load)
         let __keymapCalls = 0;
         let __keymapPuts = 0;
         const __keymapPutLog = [];
@@ -259,6 +265,7 @@ function mockFactoryJs() {
         // PASSWORD never clears it (the frame keeps its layout, so the user
         // is not asked again).
         let __kmFlag = false;
+        let __kmBusy = false; // round T-KM4: hold apply open for the busy-state read
         // round T-fix19: the DASHBOARD seed changes carry FULL detail
         // (tasks + per-task log + progress + ready-time) so both the
         // list (changes()) and the detail (change(id) -> the change-
@@ -401,7 +408,7 @@ function mockFactoryJs() {
             // the fresh-device US default is the load-bearing case.
             keymaps: {
                 async list() { return KEYMAPS.slice(); },
-                async current() { return __keymap; },
+                async current() { __keymapCurReads += 1; return __keymap; },
                 // round KM part 3: the "asked once" flag (main.js read/write
                 // of keymap.conf in the state dir). The read is open (the setup
                 // screen runs it pre-gate); setFlag is the same first-boot
@@ -413,6 +420,7 @@ function mockFactoryJs() {
                     __keymapCalls += 1;
                     if (!KEYMAPS.some((x) => x.id === id)) throw new Error('unknown keymap: ' + JSON.stringify(id));
                     if (id === __keymap) return {};
+                    if (__kmBusy) { await new Promise((r) => setTimeout(r, 400)); } // round T-KM4: hold the change open (the busy-state read lands inside)
                     if (__keymap === null && id === 'us') return {}; // fresh device behaves US
                     __keymap = id;
                     __keymapPuts += 1;
@@ -426,7 +434,18 @@ function mockFactoryJs() {
                     }, 200);
                     return { id: idc, change: idc };
                 },
-                __km: () => ({ applied: __keymap, calls: __keymapCalls, puts: __keymapPuts, putLog: __keymapPutLog.slice(), flag: __kmFlag }),
+                __km: () => ({ applied: __keymap, calls: __keymapCalls, puts: __keymapPuts, putLog: __keymapPutLog.slice(), flag: __kmFlag, curReads: __keymapCurReads }),
+                // round T-KM4: hold the mock apply open (the busy-state read
+                // needs a real window; the mock apply is otherwise sync).
+                __kmsetbusy: (v) => { __kmBusy = !!v; },
+                // round T-KM4: restore the mock frame to a given applied layout
+                // + reset the put counters (5s-k ends pristine; a reset KEEPS
+                // the flag, like a real frame restart keeps the applied layout).
+                __kmresetto: (id) => {
+                    __keymap = id; __keymapPuts = 0; __keymapPutLog.length = 0;
+                    if (__store['ubuntu-frame']) { if (id === null) delete __store['ubuntu-frame'].config; else __store['ubuntu-frame'].config = 'keymap=' + id; }
+                    return __keymap;
+                },
                 // harness escape: a TRULY FRESH device (no applied layout, the
                 // "asked once" flag clear), then re-run the APP's real boot
                 // path (loadSetupKeymap) so the screen lands on step 1.
@@ -6515,21 +6534,23 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the fixed nav order is wrong / System is not directly below Settings (got ' + JSON.stringify(gS.navLinks) + ') (round L)');
     if (gS.navLinks.indexOf('system') !== 5)
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
-    if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'System power']))
-        console.log('PAGE ERROR: the system page must show exactly the 4 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time between refresh and power)');
+    if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'System power']))
+        console.log('PAGE ERROR: the system page must show exactly the 5 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard)');
     // round R: the de-worded card help texts (exact, so the old verbose copy
     // can't regress). round T: the Time card adds a 4th help text.
-    if (gS.helps && gS.helps.length === 4) {
+    if (gS.helps && gS.helps.length === 5) {
         if (gS.helps[0] !== 'The latest entries are shown; filter by unit or text and raise the minimum priority.')
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
         if (gS.helps[1].indexOf('When snapd may automatically refresh snaps.') !== 0 || /install/.test(gS.helps[1]))
             console.log('PAGE ERROR: the refresh card help must say "automatically refresh" (not install) (got ' + JSON.stringify(gS.helps[1]) + ') (round R)');
         if (gS.helps[2] !== 'Set the time manually (if time sync is off on the Network page) and pick the device\'s time zone')
             console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round T / T-fix11)');
-        if (gS.helps[3] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
-            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[3]) + ') (round R)');
+        if (gS.helps[4] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
+            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[4]) + ') (round R)');
+        if (gS.helps[3].indexOf('Change the keyboard layout for this console') !== 0)
+            console.log('PAGE ERROR: the Keyboard card help must read the round T-KM4 subtitle (got ' + JSON.stringify(gS.helps[3]) + ') (round T-KM4)');
     } else {
-        console.log('PAGE ERROR: the system page must show 4 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds the Time card)');
+        console.log('PAGE ERROR: the system page must show 5 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds Time; round T-KM4 adds Keyboard)');
     }
     // round S+3: the refresh card rows must be ordered  Pause-toggle < separator <
     // Refresh-now  (the user asked to SWAP the toggle above the button and add a
@@ -7397,6 +7418,172 @@ function mockFactoryJs() {
       window.__mockCore.machine.__setzone('Etc/UTC');
     });
     await wait(300);
+
+    // ---- 5s-k: round T-KM4 - the KEYBOARD layout card (post-setup) ----
+    // Runs on the system view in the authenticated LIGHT state, between the
+    // Time card (5s-t) and the power section (5s-p) - matching the card's
+    // DOM position. Reuses the mock keymaps ns: __km().applied is the live
+    // frame value (seeded de). The km/**kmfresh**/__kmreopen escapes are the
+    // FIRST-BOOT ones (__kmreopen is reused for the re-open below). The card
+    // is the 5th System card, fed by the real list, and a real change shows
+    // the TOP-LEVEL #keymapRestart overlay (the app would reopen; the mock
+    // just settles it).
+    // self-contained baseline: establish the frame at de with a CLEAN put
+    // counter (the 1c first-boot flow already applied de, so reset the
+    // counter - 5s-k must not depend on 1c leftover state).
+    await page.evaluate(() => { window.__mockCore.keymaps.__kmresetto('de'); });
+    const kBeforeReads = (await page.evaluate(() => window.__mockCore.keymaps.__km().curReads));
+    // re-enter the system view so the card loads fresh (proves loadSystem
+    // populates the picker; the read here is the card's, not the setup one).
+    await page.click('.ucm-side a[data-view="dashboard"]');
+    await wait(150);
+    await page.click('.ucm-side a[data-view="system"]');
+    await wait(300);
+    const k0 = await page.evaluate(() => {
+      const cards = Array.from(document.querySelectorAll('#view-system .p-card .p-heading--5')).map((h) => h.textContent.trim());
+      const sel = document.querySelector('#keymapSelect');
+      const btn = document.querySelector('#keymapApplyBtn');
+      const warn = document.querySelector('#keymapWarn');
+      return {
+        cards,
+        opts: sel ? sel.options.length : null,
+        value: sel ? sel.value : null,
+        btnPresent: !!btn,
+        btnDisabled: btn ? btn.disabled : null,
+        warnHidden: warn ? warn.classList.contains('ucm-hidden') : null,
+        mock: window.__mockCore.keymaps.__km(),
+      };
+    });
+    if (JSON.stringify(k0.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'System power']))
+        console.log('PAGE ERROR: T-KM4 - the System card ORDER must be journal, refresh, Time, Keyboard, power (got ' + JSON.stringify(k0.cards) + ')');
+    if (k0.opts !== 5) console.log('PAGE ERROR: T-KM4 - the picker must be fed with the mock list (5 entries; got ' + k0.opts + ')');
+    if (k0.value !== 'de') console.log('PAGE ERROR: T-KM4 - the picker must default to the applied layout (de; got ' + k0.value + ')');
+    if (!k0.btnPresent || k0.btnDisabled !== false) console.log('PAGE ERROR: T-KM4 - the Apply button must be present + enabled once the picker settles (got ' + JSON.stringify(k0) + ')');
+    if (k0.warnHidden !== true) console.log('PAGE ERROR: T-KM4 - the restart warning must be HIDDEN when the pick equals the current layout (no-op; got hidden=' + k0.warnHidden + ')');
+    if (k0.mock.applied !== 'de') console.log('PAGE ERROR: T-KM4 - the mock frame must hold de as the applied layout (got ' + k0.mock.applied + ')');
+    if (k0.mock.curReads <= kBeforeReads) console.log('PAGE ERROR: T-KM4 - entering the System view must READ the applied layout via the card (loadSystemKeymap; reads before ' + kBeforeReads + ' after ' + k0.mock.curReads + ')');
+    await page.screenshot({ path: path.join(SHOTS, 'sys-k0-keyboard-card.png') });
+    // (k1) the NO-OP pick: the current layout (de) - the warning stays hidden
+    //      (a no-op pick should not warn) and Apply must NOT write (no overlay,
+    //      no conf change, just a confirmation toast).
+    await page.click('#keymapApplyBtn');
+    await wait(400);
+    const k1r = await page.evaluate(() => ({
+      puts: window.__mockCore.keymaps.__km().puts,
+      overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
+      applied: window.__mockCore.keymaps.__km().applied,
+      busy: document.querySelector('#keymapApplyBtn').classList.contains('is-processing'),
+      toasts: Array.from(document.querySelectorAll('.ucm-toasts .p-notification .p-notification__title')).map((t) => t.textContent),
+    }));
+    if (k1r.puts !== 0) console.log('PAGE ERROR: T-KM4 - a no-op Apply must NOT write to the frame (got puts=' + k1r.puts + ')');
+    if (k1r.overlayHidden !== true) console.log('PAGE ERROR: T-KM4 - a no-op Apply must NOT show the restart overlay (got hidden=' + k1r.overlayHidden + ')');
+    if (k1r.applied !== 'de') console.log('PAGE ERROR: T-KM4 - a no-op Apply must leave the applied layout unchanged (got ' + k1r.applied + ')');
+    if (k1r.busy !== false) console.log('PAGE ERROR: T-KM4 - the Apply button must not be stuck busy after a no-op (is-processing still set)');
+    if (k1r.toasts.indexOf('Keyboard layout') === -1) console.log('PAGE ERROR: T-KM4 - a no-op Apply must toast the confirmation (got ' + JSON.stringify(k1r.toasts) + ')');
+    // (k2) the REAL-CHANGE pick: French - the warning must SHOW, Apply must
+    //      write the conf ONCE (fr) + show the TOP-LEVEL #keymapRestart
+    //      overlay (the app reopens; the mock settles it). Do NOT await.
+    await page.select('#keymapSelect', 'fr');
+    await wait(250);
+    const k2 = await page.evaluate(() => ({
+      warnHidden: document.querySelector('#keymapWarn').classList.contains('ucm-hidden'),
+      warnText: document.querySelector('#keymapWarn').textContent.trim(),
+    }));
+    if (k2.warnHidden !== false) console.log('PAGE ERROR: T-KM4 - a real pick (fr, != current de) must SHOW the restart warning (got hidden=' + k2.warnHidden + ')');
+    if (k2.warnText !== 'Changing the layout restarts the console \u2014 it will reopen automatically.')
+        console.log('PAGE ERROR: T-KM4 - the warning copy must be exact (got ' + JSON.stringify(k2.warnText) + ')');
+    await page.screenshot({ path: path.join(SHOTS, 'sys-k2-keyboard-warn.png') });
+    // (k2b) the busy state while the change is in flight: the mock applies
+    //      synchronously, so __kmsetbusy(true) holds the change open and the
+    //      read lands inside the real busy window (same idiom as the install
+    //      /remove busy reads).
+    await page.evaluate(() => { window.__mockCore.keymaps.__kmsetbusy(true); });
+    await page.click('#keymapApplyBtn');
+    await wait(60);
+    const k2busy = await page.evaluate(() => {
+      const b = document.querySelector('#keymapApplyBtn');
+      const sp = b.querySelector('.p-icon--spinner');
+      const cs = sp ? getComputedStyle(sp) : null;
+      return {
+        processing: b.classList.contains('is-processing'),
+        spin: !!sp,
+        animName: cs ? cs.animationName : null,
+        spinImg: cs ? cs.backgroundImage : null,
+        h: +b.getBoundingClientRect().height.toFixed(1),
+      };
+    });
+    await page.evaluate(() => { window.__mockCore.keymaps.__kmsetbusy(false); });
+    if (!k2busy.processing) console.log('PAGE ERROR: T-KM4 - the busy Apply button must carry is-processing while the restart is in flight (got ' + JSON.stringify(k2busy) + ')');
+    if (!k2busy.spin) console.log('PAGE ERROR: T-KM4 - the busy Apply button must append a .p-icon--spinner (got ' + JSON.stringify(k2busy) + ')');
+    if (k2busy.animName !== 'spin') console.log('PAGE ERROR: T-KM4 - the busy spinner must run the bundle spin animation (got ' + JSON.stringify(k2busy.animName) + ')');
+    if ((k2busy.spinImg || '').indexOf('data:image/svg+xml') === -1) console.log('PAGE ERROR: T-KM4 - the busy spinner must carry the SVG glyph (background ' + JSON.stringify(k2busy.spinImg) + ')');
+    if (!(k2busy.h >= 30 && k2busy.h <= 44)) console.log('PAGE ERROR: T-KM4 - the busy Apply button must stay one line (height ' + k2busy.h + 'px; the spinner would wrap)');
+    await page.screenshot({ path: path.join(SHOTS, 'sys-k2b-keyboard-busy.png') });
+    await wait(450); // release + finally restore + the mock settles (200ms)
+    const k2r = await page.evaluate(() => ({
+      overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
+      overlayTitle: document.querySelector('#keymapRestart .p-heading--5') ? document.querySelector('#keymapRestart .p-heading--5').textContent.trim() : null,
+      puts: window.__mockCore.keymaps.__km().puts,
+      putLog: window.__mockCore.keymaps.__km().putLog,
+      applied: window.__mockCore.keymaps.__km().applied,
+      btnBusy: document.querySelector('#keymapApplyBtn').classList.contains('is-processing'),
+      spinnerGone: !document.querySelector('#keymapApplyBtn .p-icon--spinner'),
+    }));
+    if (k2r.overlayHidden !== false) console.log('PAGE ERROR: T-KM4 - a real Apply must show the (top-level) #keymapRestart overlay (got hidden=' + k2r.overlayHidden + ')');
+    if (k2r.overlayTitle !== 'Applying keyboard layout\u2026') console.log('PAGE ERROR: T-KM4 - the overlay title copy (got ' + JSON.stringify(k2r.overlayTitle) + ')');
+    if (k2r.puts !== 1) console.log('PAGE ERROR: T-KM4 - a real Apply must write the frame conf EXACTLY once (got puts=' + k2r.puts + ')');
+    if (k2r.putLog.indexOf('fr') === -1) console.log('PAGE ERROR: T-KM4 - the Apply must have written fr (got ' + JSON.stringify(k2r.putLog) + ')');
+    if (k2r.btnBusy !== false || k2r.spinnerGone !== true) console.log('PAGE ERROR: T-KM4 - the Apply button must restore (busy cleared, spinner removed) after the change (got ' + JSON.stringify({ busy: k2r.btnBusy, spinnerGone: k2r.spinnerGone }) + ')');
+    await page.screenshot({ path: path.join(SHOTS, 'sys-k3-keyboard-restart.png') });
+    await wait(300);
+    // (k3) the reopen: __kmreopen runs the app's REAL loadSetupKeymap (the
+    //      first-boot path; it clears the overlay + re-reads the applied
+    //      layout) - on the real device this IS the app re-opening. We then
+    //      re-run the card loader so the card shows the NEW applied layout
+    //      (fr) - the post-setup re-entry.
+    await page.evaluate(async () => { await window.__mockCore.keymaps.__kmreopen(); });
+    await page.evaluate(async () => { if (typeof loadSystem === 'function') await loadSystem(); });
+    await wait(150);
+    const k3 = await page.evaluate(() => ({
+      applied: window.__mockCore.keymaps.__km().applied,
+      value: document.querySelector('#keymapSelect').value,
+      warnHidden: document.querySelector('#keymapWarn').classList.contains('ucm-hidden'),
+      overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
+    }));
+    if (k3.applied !== 'fr') console.log('PAGE ERROR: T-KM4 - the mock frame must settle on fr (got ' + k3.applied + ')');
+    if (k3.value !== 'fr') console.log('PAGE ERROR: T-KM4 - the card must repopulate with the NEW applied layout fr (got ' + k3.value + ')');
+    if (k3.warnHidden !== true) console.log('PAGE ERROR: T-KM4 - after the change the pick==current (fr) so the warning must be HIDDEN (got hidden=' + k3.warnHidden + ')');
+    if (k3.overlayHidden !== true) console.log('PAGE ERROR: T-KM4 - the reopen must clear the overlay (got hidden=' + k3.overlayHidden + ')');
+    await page.screenshot({ path: path.join(SHOTS, 'sys-k4-keyboard-settled.png') });
+    // (k4) a REJECTED id (unknown to the frame hook) is refused by the bridge
+    //      (the frame-hook contract) - the picker only offers known ids, so
+    //      drive the rejection via the bridge directly and confirm it throws.
+    const k5 = await page.evaluate(async () => {
+      try {
+        await (window.__mockCore || window.ucmCore).keymaps.apply('zz-unknown');
+        return { threw: false };
+      } catch (e) {
+        return { threw: true, msg: e.message };
+      }
+    });
+    if (k5.threw !== true || !/unknown keymap/.test(k5.msg || ''))
+        console.log('PAGE ERROR: T-KM4 - an unknown id must be REJECTED by the bridge (the frame-hook contract; got ' + JSON.stringify(k5) + ')');
+    // PRISTINE: restore the mock frame to de (the seed) + the picker, so the
+    // 5s-p power section and the run end see the seed state.
+    await page.evaluate(() => { window.__mockCore.keymaps.__kmresetto('de'); });
+    await page.evaluate(async () => { if (typeof loadSystem === 'function') await loadSystem(); });
+    await wait(150);
+    const kP = await page.evaluate(() => ({
+      applied: window.__mockCore.keymaps.__km().applied,
+      value: document.querySelector('#keymapSelect').value,
+      puts: window.__mockCore.keymaps.__km().puts,
+      warnHidden: document.querySelector('#keymapWarn').classList.contains('ucm-hidden'),
+    }));
+    if (kP.applied !== 'de' || kP.value !== 'de' || kP.puts !== 0)
+        console.log('PAGE ERROR: T-KM4 - the 5s-k section must end PRISTINE (frame de, picker de, puts reset; got ' + JSON.stringify(kP) + ')');
+    if (kP.warnHidden !== true) console.log('PAGE ERROR: T-KM4 - pristine: the pick==current (de) so the warning must be HIDDEN (got ' + kP.warnHidden + ')');
+    await page.screenshot({ path: path.join(SHOTS, 'sys-k5-keyboard-pristine.png') });
+
     // ---- 5s-p: power (confirm + immediate + scheduled + cancel) ----
     await page.click('#rebootNowBtn');
     await new Promise((r) => setTimeout(r, 250));

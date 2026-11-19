@@ -163,6 +163,7 @@ const state = {
     keymapLoaded: false,
     keymapError: false,
     keymapList: [],
+    // round T-KM4: the System-page Keyboard card (the post-setup picker).
     keymapCurrent: null,
     sessionTick: null,
     dashPoll: null,
@@ -3862,6 +3863,11 @@ async function loadSystem() {
         }
         if (zoneBtn) zoneBtn.disabled = !zoneSel || !zoneSel.value;
     }
+    // round T-KM4: the KEYBOARD card (post-setup layout change). One read
+    // (list + current) populates the picker + the default (the applied
+    // layout, or English (US) on a fresh device). The "asked once" flag is
+    // NOT consulted - this is the post-setup path, open to any layout.
+    await loadSystemKeymap();
 }
 
 async function doSetTime() {
@@ -3896,6 +3902,81 @@ async function doSetZone() {
             if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') {
                 toast('negative', 'Time zone not applied', 'The previous time zone is still in effect.');
             }
+        }
+    }
+}
+
+/* round T-KM4: the System-page KEYBOARD card (the post-setup layout change).
+   Reuses the first-boot IPC + the top-level #keymapRestart overlay. NOT
+   gated by the "asked once" flag (that gates first-boot only). A real change
+   returns {id} and shows the overlay (the app reopens; do NOT await settle);
+   a no-op (the applied layout, or US on a fresh device) returns {} and just
+   toasts. A rejected id (unknown to the frame hook) surfaces inline. */
+function toggleKeymapCardWarn() {
+    const sel = $('#keymapSelect'); const warn = $('#keymapWarn');
+    if (!sel || !warn) return;
+    warn.classList.toggle('ucm-hidden', keymapNoOp(sel.value, state.keymapCurrent));
+}
+
+async function loadSystemKeymap() {
+    const sel = $('#keymapSelect'); const btn = $('#keymapApplyBtn');
+    const msg = $('#keymapMsg');
+    if (!sel) return;
+    if (btn) btn.disabled = true;
+    sel.innerHTML = '';
+    try {
+        const [list, cur] = await Promise.all([core.keymaps.list(), core.keymaps.current()]);
+        const entries = Array.isArray(list) ? list : [];
+        state.keymapList = entries;
+        state.keymapCurrent = cur || null;
+        for (const e of entries) sel.appendChild(new Option(e.label, e.id));
+        // Show the applied layout; a fresh device (null) defaults to English
+        // (US) - the same fresh-device behavior as the first-boot picker.
+        let def = (state.keymapCurrent && entries.some((x) => x.id === state.keymapCurrent)) ? state.keymapCurrent : 'us';
+        if (!entries.some((x) => x.id === def)) def = entries[0] ? entries[0].id : '';
+        sel.value = def;
+        sel.disabled = entries.length === 0;
+        if (btn) btn.disabled = !sel.value;
+        toggleKeymapCardWarn();
+    } catch (e) {
+        sysSetFieldErr(sel, msg, e.message);
+        if (btn) btn.disabled = true;
+    }
+}
+
+async function doApplySystemKeymap() {
+    const sel = $('#keymapSelect'); const btn = $('#keymapApplyBtn'); const msg = $('#keymapMsg');
+    const ov = $('#keymapRestart');
+    if (!sel || !sel.value) return;
+    if (ov && !ov.classList.contains('ucm-hidden')) return; // the restart owns the screen
+    const id = sel.value;
+    if (btn) {
+        btn.classList.add('is-disabled', 'is-processing');
+        btn.insertAdjacentHTML('beforeend', ' <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>');
+    }
+    try {
+        const r = await core.keymaps.apply(id);
+        if (r && r.id) {
+            // A real write: the console is restarting. The overlay stays up;
+            // on the real device the app dies with the session and reopens
+            // (the card repopulates with the settled layout). Do NOT await
+            // the change settling.
+            if (ov) ov.classList.remove('ucm-hidden');
+        } else {
+            // No-op pick (the applied layout, or US on a fresh device): no
+            // write, no restart - confirm it is already in place.
+            toast('positive', 'Keyboard layout', 'The layout is already in place.');
+        }
+        sysSetFieldErr(null, msg, '');
+        toggleKeymapCardWarn();
+    } catch (e) {
+        // A rejected id (the frame hook does not know it) - surface inline.
+        sysSetFieldErr(sel, msg, e.message);
+    } finally {
+        if (btn) {
+            btn.classList.remove('is-disabled', 'is-processing');
+            const sp = btn.querySelector('.p-icon--spinner');
+            if (sp) sp.remove();
         }
     }
 }
@@ -4461,6 +4542,11 @@ function wire() {
     if (schedBtn) schedBtn.addEventListener('click', () => schedulePower());
     const cancelBtn = $('#scheduledCancelBtn');
     if (cancelBtn) cancelBtn.addEventListener('click', () => cancelScheduled());
+    // round T-KM4: the System-page KEYBOARD card (post-setup layout change).
+    const kmBtn = $('#keymapApplyBtn');
+    if (kmBtn) kmBtn.addEventListener('click', () => doApplySystemKeymap());
+    const kmSelC = $('#keymapSelect');
+    if (kmSelC) kmSelC.addEventListener('change', () => toggleKeymapCardWarn()); // round T-KM4: a pick that != the current layout must show the restart warning (a no-op never warns)
 }
 
 /* -------------------------------- boot ----------------------------------- */

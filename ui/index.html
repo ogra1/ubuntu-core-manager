@@ -617,6 +617,30 @@
                             </div>
                         </div>
                     </div>
+                    <!-- round T-KM4: the KEYBOARD layout card (post-setup
+                         layout change). Reuses the first-boot IPC + the
+                         top-level #keymapRestart overlay; NOT gated by the
+                         "asked once" flag (that gates first-boot only). Sits
+                         between the Time card and the power card. -->
+                    <div class="p-card ucm-sys">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Keyboard layout</p></div>
+                        <div class="ucm-sys__body">
+                            <p class="ucm-lp__help">
+                                Change the keyboard layout for this console (post-setup).
+                            </p>
+                            <div class="ucm-sys__row ucm-sys__formrow">
+                                <label class="p-form__label" for="keymapSelect">Keyboard layout</label>
+                                <select class="ucm-sys__zone" id="keymapSelect"></select>
+                                <p class="p-form-help-text ucm-hidden" id="keymapWarn">
+                                    Changing the layout restarts the console &#8212; it will reopen automatically.
+                                </p>
+                                <p class="p-form-validation__message" id="keymapMsg"></p>
+                            </div>
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="keymapApplyBtn" disabled>Apply keyboard layout</button>
+                            </div>
+                        </div>
+                    </div>
                     <div class="p-card ucm-sys">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">System power</p></div>
                         <div class="ucm-sys__body">

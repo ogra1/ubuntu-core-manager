@@ -3171,6 +3171,13 @@ function initElectron() {
                                     await wait(1500);
                                     sy.viewActive = !document.querySelector('#view-system').classList.contains('ucm-hidden');
                                     sy.cards = Array.from(document.querySelectorAll('#view-system .p-card .p-heading--5')).map((h) => h.textContent.trim());
+                                    // round T-KM4: the KEYBOARD card (the 5th System card, between Time and
+                                    // System power) - READ-ONLY: report the picker (fed by the real 98-entry
+                                    // list) + the Apply button (enabled once the picker settles). The probe
+                                    // never calls keymaps.apply (that would restart the frame).
+                                    const ksel = document.querySelector('#keymapSelect');
+                                    const kbtn = document.querySelector('#keymapApplyBtn');
+                                    sy.kmCard = ksel ? { present: true, opts: ksel.options.length, value: ksel.value, btnPresent: !!kbtn, btnDisabled: kbtn ? kbtn.disabled : null } : { present: false };
                                     // round T: the REAL time READ (timedate1
                                     // Properties.Get — granted by the EXISTING
                                     // timeserver-control plug; READ-ONLY, the
