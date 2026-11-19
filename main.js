@@ -913,6 +913,30 @@ async function applyKeymap(id) {
     if (cur === null && id === 'us') return {};
     return setSnapConfig('ubuntu-frame', { config: 'keymap=' + id });
 }
+/** Round KM part 3: the "asked once" flag. The first-boot keyboard step is
+ * a one-time thing: once the user has gotten through it (a no-op pick — US
+ * on a fresh device — OR a real layout apply), the flag is persisted so that
+ * EVERY LATER first-boot entry (the re-open after the layout restart, a
+ * power loss before the password was set, or a password reset) skips
+ * straight to the password step. The layout is still changeable later via
+ * the System page (part 4 of this round-line). It lives in the same state
+ * dir as admin.cred (writable, survives restarts; a reset of the PASSWORD
+ * never touches it — the frame keeps its applied layout, so the user must
+ * not be asked again). A failure to write the flag is non-fatal: worst case
+ * the user is asked one more time (the step is safe to repeat).
+ */
+function kmFlagPath() {
+    return path.join(stateDir(), 'keymap.conf');
+}
+function readKmFlag() {
+    try { return fs.readFileSync(kmFlagPath(), 'utf8').trim() === 'true'; }
+    catch { return false; }
+}
+function writeKmFlag(v) {
+    try { fs.writeFileSync(kmFlagPath(), v ? 'true' : 'false', { mode: 0o600 }); }
+    catch (e) { console.error('writeKmFlag: ' + String((e && e.message) || e)); }
+    return v;
+}
 
 /** Read the active netplan document as a parsed JS object.
  * snapd's conf GET with ?keys=X returns { "X": <value> } — unwrap it. */
@@ -2726,6 +2750,7 @@ const api = {
     getSnapConfig, getNetplan, listInterfaces, confInferType,
     // Round KM: the keyboard layout (ubuntu-frame)
     listKeymaps, readKeymap, applyKeymap, keymapsPath, __setKeymapsFile: (p) => { process.env.UCM_KEYMAPS = p; KEYMAPS_CACHE = null; },
+    readKmFlag, writeKmFlag, kmFlagPath,
     timesyncStatus, timesyncSetEnabled, timesyncSetServer,
     // round T: the System-page Time card (set-time + timezone + topbar clock)
     listTimezones, timezoneValid, timeNowUsec, timeNowZone, timeNtpEnabled,
@@ -3036,11 +3061,17 @@ function initElectron() {
                                 let applyNoop = null;
                                 try { applyNoop = JSON.stringify(await window.ucmCore.keymaps.apply('us')); }
                                 catch (e) { applyNoop = 'ERR:' + e.message; }
+                                // round KM part 3: the REAL preload flag
+                                // channel — a fresh state dir starts false
+                                // (the keyboard step is still owed).
+                                let flagVal = null;
+                                try { flagVal = await window.ucmCore.keymaps.flag(); }
+                                catch (e) { flagVal = 'ERR:' + e.message; }
                                 return {
                                     bridge: typeof window.ucmCore,
                                     boot: !!(document.querySelector('#setupView') || document.querySelector('#loginView')),
                                     dark: document.documentElement.classList.contains('is-dark'),
-                                    km: Object.assign({ applyNoop: applyNoop }, km || {}),
+                                    km: Object.assign({ applyNoop: applyNoop, flag: flagVal }, km || {}),
                                 };
                             })()`,
                             false); // round T-fix13: dark = the real app booted dark (the shipped default, no pref)
@@ -3263,6 +3294,15 @@ function initElectron() {
         if (!session.localInitialized && !session.localAuthenticated) return applyKeymap(id);
         requireAuth();
         return applyKeymap(id);
+    }));
+    // The "asked once" flag (part 3): the read is open (the setup screen
+    // runs it at first boot, pre-gate); the write carries the SAME first-
+    // boot door as the apply (it is set as the layout step completes).
+    ipcMain.handle('keymaps:flag', guard(() => readKmFlag()));
+    ipcMain.handle('keymaps:set-flag', guard(() => {
+        if (!session.localInitialized && !session.localAuthenticated) return writeKmFlag(true);
+        requireAuth();
+        return writeKmFlag(true);
     }));
 
     // timesync / NTP (timeserver-control interface; reads are open, writes

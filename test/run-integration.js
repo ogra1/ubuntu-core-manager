@@ -774,6 +774,56 @@ function ok(name, cond, extra = '') {
                 } else {
                     ok('keymaps:apply handler registered (round KM)', false);
                 }
+                // round KM part 3: the "asked once" flag (keymap.conf in the
+                // state dir). The READ is open (the setup screen runs it
+                // pre-gate); the WRITE carries the SAME first-boot door as
+                // the apply (open when no local password exists, else
+                // requireAuth). The block is SELF-CONTAINED — it sets each
+                // state explicitly (the prior apply-gate block left the
+                // session in the first-boot door state).
+                if (handlers['keymaps:flag']) {
+                    const rF0 = await new Promise((res) => handlers['keymaps:flag'](null).then(res));
+                    ok('keymaps:flag read is open (no gate) and starts false (fresh state dir)',
+                        rF0.ok === true && rF0.result === false, JSON.stringify(rF0));
+                    // locked-out console: initialized (a password exists) but
+                    // not authenticated -> the door is closed, requireAuth.
+                    await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
+                    await new Promise((res) => handlers['auth:logout'](null).then(res));
+                    const rF1 = await new Promise((res) => handlers['keymaps:set-flag'](null).then(res));
+                    ok('keymaps:set-flag is refused for a locked-out console (initialized, not authenticated — the door is closed)',
+                        rF1.ok === false && /authentication required/.test(rF1.error), JSON.stringify(rF1));
+                    const rF2 = await new Promise((res) => handlers['keymaps:flag'](null).then(res));
+                    ok('a refused set-flag does not flip the flag',
+                        rF2.ok === true && rF2.result === false, JSON.stringify(rF2));
+                    // a password reset returns the device to FIRST BOOT (no
+                    // local password) — the door is OPEN again: the setup
+                    // screen must be able to set the flag while creating the
+                    // password (the layout step precedes the password).
+                    await new Promise((res) => handlers['auth:login'](null, 'testpass-123').then(res));
+                    const rF3 = await new Promise((res) => handlers['auth:reset'](null, 'testpass-123').then(res));
+                    ok('auth:reset restores first boot (the door re-opens)',
+                        rF3.ok === true && rF3.result.initialized === false, JSON.stringify(rF3));
+                    const rF4 = await new Promise((res) => handlers['keymaps:set-flag'](null).then(res));
+                    ok('keymaps:set-flag is allowed at FIRST BOOT (the door — the layout step precedes the password)',
+                        rF4.ok === true && rF4.result === true, JSON.stringify(rF4));
+                    const rF5 = await new Promise((res) => handlers['keymaps:flag'](null).then(res));
+                    ok('the flag is persisted (the read reflects the first-boot write)',
+                        rF5.ok === true && rF5.result === true, JSON.stringify(rF5));
+                    // and a password reset NEVER clears the flag (keymap.conf
+                    // is not admin.cred — a reset must not un-ask the
+                    // layout): create the credential, reset it again, the
+                    // flag stays.
+                    await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
+                    const rF6 = await new Promise((res) => handlers['auth:reset'](null, 'testpass-123').then(res));
+                    ok('a second reset (the user-visible one) wipes the password and the flag SURVIVES it',
+                        rF6.ok === true && rF6.result.initialized === false && mw.readKmFlag() === true, JSON.stringify(rF6));
+                    // restore a logged-in console for the downstream [11]/
+                    // [11.5] sections (they log out in too, but the door
+                    // state here must be first-boot, not a stale session).
+                    await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
+                } else {
+                    ok('keymaps:flag handler registered (round KM part 3)', false);
+                }
             delete global.UCM_FAKE_ELECTRON;
         } finally {
             delete global.UCM_FAKE_ELECTRON;

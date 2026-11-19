@@ -175,6 +175,8 @@ const api = Object.freeze({
         list: invoke('keymaps:list'),          // => [{id, label}] (bundled, xkb-data 2.46)
         current: invoke('keymaps:current'),    // => id|null (null = fresh Core, none set)
         apply: invoke('keymaps:apply'),        // (id) => {change}|{} (async conf PUT; {} = already applied)
+        flag: invoke('keymaps:flag'),          // => boolean (the "asked once" flag; part 3)
+        setFlag: invoke('keymaps:set-flag'),   // () => true (persisted; set when the layout step completes)
     }),
 
     // ---- machine operations (round L: the System page) -------------------

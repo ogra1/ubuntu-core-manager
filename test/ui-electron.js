@@ -144,6 +144,10 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('first boot: the two-step layout is up (step 1 shown, step 2 hidden, step-1 button present)',
         p.km && p.km.step1Hidden === false && p.km.step2Hidden === true && p.km.step1Btn === true,
         JSON.stringify(p.km));
+    // round KM part 3: the "asked once" flag is false on a fresh device
+    // (the keyboard step is still owed — the real preload channel reads it).
+    ok('first boot: the asked-once flag is false (fresh state dir)',
+        p.km && p.km.flag === false, JSON.stringify(p.km && p.km.flag));
 
     // ---- round I: the <webview> E2E (real sandbox/webviewTag). The probe
     // created a local password, seeded a GOOD (served) + a DEAD (unreachable)

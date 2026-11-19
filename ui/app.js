@@ -156,6 +156,10 @@ const state = {
     // the settled layout). keymapLoaded resolves once (true, even on error —
     // the error path is a SKIP, never a block: the password stays settable).
     setupStep: 'keymap',
+    // round KM part 3: the "asked once" flag (main.js keymap.conf). True
+    // once the user has gotten through the keyboard step; every later
+    // first-boot entry then skips it (boot reads it; the layout step sets it).
+    keymapFlag: false,
     keymapLoaded: false,
     keymapError: false,
     keymapList: [],
@@ -267,7 +271,10 @@ function exitApp() {
     setFieldState('setupKeymapGroup', '');
     const kmOv = $('#keymapRestart');
     if (kmOv) kmOv.classList.add('ucm-hidden');
-    updateSetupStep('keymap'); // a wipe/lock re-enters first boot at step 1
+    // round KM part 3: a wipe/lock re-enters first boot — at step 1 when the
+    // layout step was never done on this device, straight to step 2 when the
+    // "asked once" flag is set (the layout is applied; do not ask again).
+    updateSetupStep(state.keymapFlag ? 'password' : 'keymap');
     setFieldState('setupPasswordGroup', '');
     setFieldState('setupConfirmGroup', '');
     setFieldState('loginPasswordGroup', '');
@@ -386,7 +393,17 @@ async function loadSetupKeymap() {
     const sel = $('#setupKeymap');
     if (!sel) { state.keymapLoaded = true; return; }
     try {
-        const [list, cur] = await Promise.all([core.keymaps.list(), core.keymaps.current()]);
+        // round KM part 3: the flag is read WITH the list. If it is set the
+        // user already chose a layout on this device — skip the keyboard
+        // step entirely and go straight to the password (the layout is still
+        // changeable later via the System page).
+        const [list, cur, flag] = await Promise.all([core.keymaps.list(), core.keymaps.current(), core.keymaps.flag()]);
+        state.keymapFlag = !!flag;
+        if (state.keymapFlag) {
+            state.keymapLoaded = true;
+            updateSetupStep('password'); // the layout step is done on this device
+            return;
+        }
         state.keymapList = Array.isArray(list) ? list : [];
         state.keymapCurrent = cur || null;
         sel.innerHTML = '';
@@ -430,7 +447,15 @@ async function doSetupKeymapSubmit() {
     const btn = $('#setupKeymapBtn');
     const help = $('#setupKeymapHelp');
     setFieldState('setupKeymapGroup', '');
-    if (keymapNoOp(id, state.keymapCurrent)) { updateSetupStep('password'); return; }
+    if (keymapNoOp(id, state.keymapCurrent)) {
+        // round KM part 3: the layout is in place (nothing to apply) — mark
+        // the step done so no later first-boot entry asks again, then on to
+        // the password.
+        try { await core.keymaps.setFlag(); } catch { /* non-fatal: asked again */ }
+        state.keymapFlag = true;
+        updateSetupStep('password');
+        return;
+    }
     if (help) help.classList.add('ucm-hidden'); // the overlay carries the warning
     if (btn) {
         btn.classList.add('is-disabled', 'is-processing');
@@ -440,10 +465,18 @@ async function doSetupKeymapSubmit() {
         const r = await core.keymaps.apply(id);
         if (r && r.id) {
             // A real write: the console is restarting. The overlay stays up;
-            // on the real device the app dies with the session and reopens
-            // (a fresh boot re-enters step 1 at the settled layout).
+            // on the real device the app dies with the session and reopens.
+            // round KM part 3: the flag is set NOW (before the restart) —
+            // the re-opened boot reads it and goes straight to the password,
+            // so the user is not asked for the layout a second time. If the
+            // write never lands (a lost race with the restart), the worst
+            // case is one more question, not a locked-out layout.
+            try { await core.keymaps.setFlag(); } catch { /* non-fatal: asked again */ }
+            state.keymapFlag = true;
             if (ov) ov.classList.remove('ucm-hidden');
         } else {
+            try { await core.keymaps.setFlag(); } catch { /* non-fatal: asked again */ }
+            state.keymapFlag = true;
             updateSetupStep('password');
         }
     } catch (e) {

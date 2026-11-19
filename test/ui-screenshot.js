@@ -254,6 +254,11 @@ function mockFactoryJs() {
         let __keymapCalls = 0;
         let __keymapPuts = 0;
         const __keymapPutLog = [];
+        // round KM part 3: the "asked once" flag (main.js keymap.conf). True
+        // once the user has gotten through the keyboard step; a reset of the
+        // PASSWORD never clears it (the frame keeps its layout, so the user
+        // is not asked again).
+        let __kmFlag = false;
         // round T-fix19: the DASHBOARD seed changes carry FULL detail
         // (tasks + per-task log + progress + ready-time) so both the
         // list (changes()) and the detail (change(id) -> the change-
@@ -397,6 +402,13 @@ function mockFactoryJs() {
             keymaps: {
                 async list() { return KEYMAPS.slice(); },
                 async current() { return __keymap; },
+                // round KM part 3: the "asked once" flag (main.js read/write
+                // of keymap.conf in the state dir). The read is open (the setup
+                // screen runs it pre-gate); setFlag is the same first-boot
+                // door as apply (the mock has no gate, so it just persists).
+                async flag() { return __kmFlag; },
+                async setFlag() { __kmFlag = true; return true; },
+                __kmsetflag: (v) => { __kmFlag = !!v; },
                 async apply(id) {
                     __keymapCalls += 1;
                     if (!KEYMAPS.some((x) => x.id === id)) throw new Error('unknown keymap: ' + JSON.stringify(id));
@@ -414,47 +426,35 @@ function mockFactoryJs() {
                     }, 200);
                     return { id: idc, change: idc };
                 },
-                __km: () => ({ applied: __keymap, calls: __keymapCalls, puts: __keymapPuts, putLog: __keymapPutLog.slice() }),
+                __km: () => ({ applied: __keymap, calls: __keymapCalls, puts: __keymapPuts, putLog: __keymapPutLog.slice(), flag: __kmFlag }),
+                // harness escape: a TRULY FRESH device (no applied layout, the
+                // "asked once" flag clear), then re-run the APP's real boot
+                // path (loadSetupKeymap) so the screen lands on step 1.
+                __kmfresh: () => {
+                    __keymap = null; __kmFlag = false;
+                    __keymapCalls = 0; __keymapPuts = 0; __keymapPutLog.length = 0;
+                    if (__store['ubuntu-frame']) delete __store['ubuntu-frame'].config;
+                    return (typeof loadSetupKeymap === 'function') ? loadSetupKeymap() : Promise.resolve();
+                },
                 // harness escape: model the app RE-OPENING after the frame
                 // restart — the boot path re-reads the applied layout and the
                 // setup screen is fresh (the overlay cleared, the picker
                 // defaulted to the now-applied value). The mock's __keymap
                 // stays (the frame kept the layout across the restart).
+                // round KM part 3: model the app RE-OPENING after the frame
+                // restart by running the APP's real boot path (loadSetupKeymap
+                // is a page global). It re-reads the flag + the applied layout
+                // and lands on the correct step — step 2 when the flag is set
+                // (the user is NOT asked again), step 1 otherwise. This
+                // exercises the real flag-skip, not a DOM fake.
                 __kmreopen: () => {
                     const ov = document.querySelector('#keymapRestart');
-                    if (ov) ov.classList.add('ucm-hidden');
-                    const s = document.querySelector('#setupKeymap');
-                    if (s) s.value = __keymap || 'us';
-                    // the re-opened boot read: the picker defaults to the
-                    // applied layout; the warning is a no-op (hidden) when the
-                    // pick matches the applied value (or US on a fresh device)
-                    // — exactly main.js keymapNoOp.
-                    const v = s ? s.value : 'us';
-                    const noop = (v === __keymap) || (__keymap === null && v === 'us');
-                    const h = document.querySelector('#setupKeymapHelp');
-                    if (h) h.classList.toggle('ucm-hidden', noop);
-                    // round KM part 2: a re-open lands at STEP 1 (the layout is
-                    // settled; the password step is only re-shown after a no-op
-                    // Continue). Mirror the app's two-step forms.
-                    const kf = document.querySelector('#setupKeymapForm');
-                    const pf = document.querySelector('#setupPasswordForm');
-                    if (kf) kf.classList.remove('ucm-hidden');
-                    if (pf) pf.classList.add('ucm-hidden');
-                    return v;
+                    if (ov) ov.classList.add('ucm-hidden'); // the restart is over
+                    return (typeof loadSetupKeymap === 'function') ? loadSetupKeymap() : Promise.resolve();
                 },
                 // harness escape: back to the FRESH-device state (the
                 // auth-reset section re-enters first boot).
-                // harness escape: the auth-reset section re-enters first boot.
-                // A REAL reset never touches the frame's applied layout — the
-                // device KEEPS it (the mock's __keymap stays; the picker still
-                // shows the applied value = a no-op pick). Only the run
-                // bookkeeping resets (a fresh first-boot pass writes nothing
-                // on a no-op). The STEP re-entry (step 1 shown) is the APP's
-                // job (exitApp -> updateSetupStep) — this escape must not do
-                // it, or it would mask a broken re-entry.
-                __kmreset: () => {
-                    __keymapCalls = 0; __keymapPuts = 0; __keymapPutLog.length = 0;
-                },
+
             },
             // round A: the appearance (light/dark). Mock of main.js
             // setAppearance + pushAuthStatus. Pushing a fresh status payload
@@ -1442,11 +1442,14 @@ function mockFactoryJs() {
     if (setupLight.noteColor !== 'rgb(68, 68, 68)')
         console.log('PAGE ERROR: the light setup note must be the light-theme grey #444 (got ' + setupLight.noteColor + ') (round E)');
 
-    // ---- 1c. round KM part 2: the TWO-STEP first boot. Step 1 = the
-    //      keyboard layout (applied BEFORE the password is typed — the layout
-    //      must be correct for the keys the user presses; a real change
-    //      restarts the console HERE, not mid-password). Step 2 = the
-    //      password, created once on the settled layout.
+    // ---- 1c. round KM part 2+3: the TWO-STEP first boot, gated by the
+    //      "asked once" flag. Step 1 = the keyboard layout (applied BEFORE the
+    //      password is typed); step 2 = the password, created once on the
+    //      settled layout. The flag is set the moment the layout is in place
+    //      (a no-op pick OR a real apply), so a re-open / a later first-boot
+    //      entry (power loss, a reset) skips straight to the password — the
+    //      user is asked for the layout exactly once.
+    // (a) the fresh device starts at step 1 (layout owed, flag clear).
     const km0 = await page.evaluate(() => ({
         sel: document.querySelector('#setupKeymap'),
         step1Hidden: document.querySelector('#setupKeymapForm') ? document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden') : null,
@@ -1459,33 +1462,50 @@ function mockFactoryJs() {
     }));
     if (!km0.sel) console.log('PAGE ERROR: round KM — the setup keyboard picker is missing');
     if (km0.step1Hidden !== false || km0.step2Hidden !== true)
-        console.log('PAGE ERROR: round KM — first boot must start at STEP 1 (keyboard shown, password hidden) (got ' + JSON.stringify({ s1: km0.step1Hidden, s2: km0.step2Hidden }) + ')');
+        console.log('PAGE ERROR: round KM — a fresh device must start at STEP 1 (keyboard shown, password hidden) (got ' + JSON.stringify({ s1: km0.step1Hidden, s2: km0.step2Hidden }) + ')');
     if (km0.step1Note !== 'Choose the keyboard layout for this console.')
         console.log('PAGE ERROR: round KM — step-1 note copy (got ' + JSON.stringify(km0.step1Note) + ')');
     if (km0.value !== 'us') console.log('PAGE ERROR: round KM — a fresh device must default the picker to English (US) (got ' + km0.value + ')');
     if (km0.helpHidden !== true) console.log('PAGE ERROR: round KM — the restart warning must be HIDDEN for a no-op pick (US on a fresh device) (got ' + km0.helpHidden + ')');
     if (km0.overlayHidden !== true) console.log('PAGE ERROR: round KM — the restart overlay must start hidden');
     if (km0.mock.applied !== null) console.log('PAGE ERROR: round KM — the mock frame must start with NO keymap applied');
+    if (km0.mock.flag !== false) console.log('PAGE ERROR: round KM — a fresh device must start with the asked-once flag CLEAR (got ' + km0.mock.flag + ')');
     await page.screenshot({ path: path.join(SHOTS, '1c-setup-step1-keymap.png') });
-    // no-op path: Continue with the US default (a fresh device) must advance
-    // straight to step 2 — no write, no overlay — then go BACK to step 1 for
-    // the real-change path (the harness models a re-open; the app itself
-    // enters at step 1 on a fresh boot).
+    // (b) the NO-OP path (this fresh device): Continue with the US default is
+    //      a no-op (no write, no overlay) that STILL sets the flag and
+    //      advances to step 2 — a US kiosk is asked exactly once too.
     await page.click('#setupKeymapBtn');
     await wait(300);
     const kmNoop = await page.evaluate(() => ({
         step1Hidden: document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden'),
         step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
         puts: window.__mockCore.keymaps.__km().puts,
+        flag: window.__mockCore.keymaps.__km().flag,
         overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
     }));
     if (kmNoop.step1Hidden !== true || kmNoop.step2Hidden !== false)
         console.log('PAGE ERROR: round KM — a no-op Continue must advance straight to step 2 (password) (got ' + JSON.stringify(kmNoop) + ')');
     if (kmNoop.puts !== 0) console.log('PAGE ERROR: round KM — the US no-op must NOT write (got puts=' + kmNoop.puts + ')');
+    if (kmNoop.flag !== true) console.log('PAGE ERROR: round KM — the US no-op must STILL set the asked-once flag (got ' + kmNoop.flag + ')');
     if (kmNoop.overlayHidden !== true) console.log('PAGE ERROR: round KM — the US no-op must NOT show the restart overlay');
-    // the REAL-CHANGE path (back at step 1, picker reset to the fresh default):
-    const kmBack = await page.evaluate(() => { window.__mockCore.keymaps.__kmreopen(); return document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden'); });
-    if (kmBack !== false) console.log('PAGE ERROR: round KM — the re-open must land at step 1 (keyboard shown)');
+    // (c) back to a FRESH device for the REAL-CHANGE path (the flag is clear
+    //      again; the picker defaults to US).
+    await page.evaluate(async () => { await window.__mockCore.keymaps.__kmfresh(); });
+    await wait(150);
+    const kmFresh = await page.evaluate(() => ({
+        step1Hidden: document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden'),
+        step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
+        value: document.querySelector('#setupKeymap').value,
+        mock: window.__mockCore.keymaps.__km(),
+    }));
+    if (kmFresh.step1Hidden !== false || kmFresh.step2Hidden !== true)
+        console.log('PAGE ERROR: round KM — a fresh device must be at step 1 (got ' + JSON.stringify(kmFresh) + ')');
+    if (kmFresh.value !== 'us' || kmFresh.mock.flag !== false || kmFresh.mock.applied !== null)
+        console.log('PAGE ERROR: round KM — the fresh device must read US / flag clear / no layout (got ' + JSON.stringify(kmFresh) + ')');
+    // (d) the REAL-CHANGE path: pick German (a real write). Continue applies
+    //      it, sets the flag (before the restart), shows the overlay; the
+    //      mock frame settles on de; the app RE-OPENS — and because the flag
+    //      is now set it lands on STEP 2 (the password), NOT re-asked.
     await page.select('#setupKeymap', 'de');
     await wait(250);
     const km1 = await page.evaluate(() => ({
@@ -1515,40 +1535,29 @@ function mockFactoryJs() {
     if (km2.ovZ !== '100') console.log('PAGE ERROR: round KM — the restart overlay must sit above everything (z-index 100; toast 80 / modal 60) (got ' + km2.ovZ + ')');
     if (km2.step2Hidden !== true) console.log('PAGE ERROR: round KM — the password step must stay HIDDEN while the layout restart is in flight');
     if (km2.mock.puts !== 1 || km2.mock.putLog[0] !== 'de') console.log('PAGE ERROR: round KM — the apply must hit the frame conf ONCE with de (got ' + JSON.stringify(km2.mock) + ')');
+    if (km2.mock.flag !== true) console.log('PAGE ERROR: round KM — a real apply must set the asked-once flag (before the restart) (got ' + km2.mock.flag + ')');
     await page.screenshot({ path: path.join(SHOTS, '1e-setup-keymap-restart.png') });
     await wait(500); // the mock change settles at 200ms
+    // the re-open: the APP's real boot path (loadSetupKeymap) re-reads the
+    // flag (true) + the applied layout (de) and must skip straight to STEP 2 —
+    // the user is NOT asked for the layout a second time.
+    await page.evaluate(async () => { await window.__mockCore.keymaps.__kmreopen(); });
+    await wait(150);
     const km3 = await page.evaluate(() => ({
         applied: window.__mockCore.keymaps.__km().applied,
-        reopen: window.__mockCore.keymaps.__kmreopen(),
+        flag: window.__mockCore.keymaps.__km().flag,
         step1Hidden: document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden'),
         step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
+        overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
     }));
     if (km3.applied !== 'de') console.log('PAGE ERROR: round KM — the mock frame must settle on de (got ' + km3.applied + ')');
-    if (km3.reopen !== 'de') console.log('PAGE ERROR: round KM — the re-opened picker must default to the applied de (got ' + km3.reopen + ')');
-    if (km3.step1Hidden !== false || km3.step2Hidden !== true)
-        console.log('PAGE ERROR: round KM — the re-open must land at step 1 with the layout settled (got ' + JSON.stringify(km3) + ')');
-    const km3b = await page.evaluate(() => ({
-        helpHidden: document.querySelector('#setupKeymapHelp').classList.contains('ucm-hidden'),
-        overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
-    }));
-    if (km3b.helpHidden !== true) console.log('PAGE ERROR: round KM — the re-opened picker must hide the warning (a no-op pick)');
-    if (km3b.overlayHidden !== true) console.log('PAGE ERROR: round KM — the re-opened run must clear the overlay (the layout is applied)');
-    await page.screenshot({ path: path.join(SHOTS, '1f-setup-step1-settled.png') });
-    // the re-opened Continue is a no-op (de is applied): it advances to step 2
-    // WITHOUT writing again — the password is now typed exactly once, on the
-    // settled layout.
-    await page.click('#setupKeymapBtn');
-    await wait(300);
-    const km4 = await page.evaluate(() => ({
-        step1Hidden: document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden'),
-        step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
-        puts: window.__mockCore.keymaps.__km().puts,
-        overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
-    }));
-    if (km4.step1Hidden !== true || km4.step2Hidden !== false)
-        console.log('PAGE ERROR: round KM — the re-opened no-op Continue must advance to step 2 (got ' + JSON.stringify(km4) + ')');
-    if (km4.puts !== 1) console.log('PAGE ERROR: round KM — the re-opened (no-op) submit must NOT write again (got puts=' + km4.puts + ')');
-    if (km4.overlayHidden !== true) console.log('PAGE ERROR: round KM — the no-op submit must not show the overlay');
+    if (km3.flag !== true) console.log('PAGE ERROR: round KM — the flag must still be set after the restart (got ' + km3.flag + ')');
+    if (km3.step1Hidden !== true || km3.step2Hidden !== false)
+        console.log('PAGE ERROR: round KM — the re-open with the flag set must land on STEP 2 (the password), not re-ask for the layout (got ' + JSON.stringify(km3) + ')');
+    if (km3.overlayHidden !== true) console.log('PAGE ERROR: round KM — the re-opened run must clear the overlay (the layout is applied)');
+    await page.screenshot({ path: path.join(SHOTS, '1f-setup-step2-after-restart.png') });
+    // (we are now on step 2 with the device at de/flag-set; the password
+    // mismatch validation below continues)
 
     // mismatch validation (step 2 — the password; one entry, one create)
     await page.type('#setupPassword', 'correct-horse');
@@ -2426,39 +2435,24 @@ function mockFactoryJs() {
     if (resetClean.hash !== '')
         console.log('PAGE ERROR: view hash not cleared after reset (hash=' + resetClean.hash + ')');
     await page.screenshot({ path: path.join(SHOTS, '6-reset-to-setup.png') });
-    // round KM part 2: the reset returns the device to FIRST BOOT. The frame
-    // KEEPS its applied layout (a reset never touches it — the picker still
-    // shows de, a no-op pick); the APP must re-enter the two-step flow at
-    // STEP 1 (a stale step 2 would let the password be created without the
-    // layout step being offered).
-    await page.evaluate(() => { window.__mockCore.keymaps.__kmreset(); });
-    await wait(250);
+    // round KM part 3: the reset returns the device to FIRST BOOT. A reset
+    // never touches the frame's applied layout NOR the "asked once" flag — so
+    // the app must re-enter at STEP 2 (the password) directly, skipping the
+    // layout step entirely (the user already chose it; the layout is still
+    // changeable later via the System page).
+    await wait(250); // let the reset's status push settle
     const kmReset0 = await page.evaluate(() => ({
         step1Hidden: document.querySelector('#setupKeymapForm').classList.contains('ucm-hidden'),
         step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
-        value: document.querySelector('#setupKeymap').value,
-        helpHidden: document.querySelector('#setupKeymapHelp').classList.contains('ucm-hidden'),
+        flag: window.__mockCore.keymaps.__km().flag,
         applied: window.__mockCore.keymaps.__km().applied,
     }));
-    if (kmReset0.step1Hidden !== false || kmReset0.step2Hidden !== true)
-        console.log('PAGE ERROR: round KM — after a reset the two-step flow must re-enter at STEP 1 (keyboard shown, password hidden) (got ' + JSON.stringify(kmReset0) + ')');
-    if (kmReset0.applied !== 'de' || kmReset0.value !== 'de')
-        console.log('PAGE ERROR: round KM — a reset must keep the frame layout (de) and the picker must still show it (got ' + JSON.stringify(kmReset0) + ')');
-    if (kmReset0.helpHidden !== true)
-        console.log('PAGE ERROR: round KM — the re-entered step 1 must hide the warning (the applied de is a no-op pick) (got ' + kmReset0.helpHidden + ')');
-    // recreate the password so the remaining steps have a console: step 1
-    // (de applied = a no-op Continue: no write, no overlay), THEN step 2
-    // (the password, created once).
-    await page.click('#setupKeymapBtn');
-    await wait(300);
-    const kmReset = await page.evaluate(() => ({
-        step2Hidden: document.querySelector('#setupPasswordForm').classList.contains('ucm-hidden'),
-        puts: window.__mockCore.keymaps.__km().puts,
-        overlayHidden: document.querySelector('#keymapRestart').classList.contains('ucm-hidden'),
-    }));
-    if (kmReset.step2Hidden !== false) console.log('PAGE ERROR: round KM — the reset re-setup no-op Continue must advance to step 2 (got ' + JSON.stringify(kmReset) + ')');
-    if (kmReset.puts !== 0) console.log('PAGE ERROR: round KM — the reset re-setup must be a no-op (the layout is already applied; got puts=' + kmReset.puts + ')');
-    if (kmReset.overlayHidden !== true) console.log('PAGE ERROR: round KM — the no-op Continue must not show the restart overlay');
+    if (kmReset0.flag !== true) console.log('PAGE ERROR: round KM — a reset must NOT clear the asked-once flag (got ' + kmReset0.flag + ')');
+    if (kmReset0.applied !== 'de') console.log('PAGE ERROR: round KM — a reset must keep the frame layout (de) (got ' + kmReset0.applied + ')');
+    if (kmReset0.step1Hidden !== true || kmReset0.step2Hidden !== false)
+        console.log('PAGE ERROR: round KM — after a reset (flag set) the flow must re-enter at STEP 2 (the password), not re-ask for the layout (got ' + JSON.stringify(kmReset0) + ')');
+    // recreate the password so the remaining steps have a console (step 2 is
+    // already up — no keyboard step to pass).
     await page.click('#setupPassword', { clickCount: 3 });
     await page.click('#setupConfirm', { clickCount: 3 });
     await page.type('#setupPassword', 'correct-horse');
