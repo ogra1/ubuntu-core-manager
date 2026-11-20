@@ -1897,6 +1897,68 @@ function mockFactoryJs() {
         await page.evaluate(() => { window.__mockCore.machine.__setprocs([]); });
     }
 
+    // ---- round M: the Model assertion modal (the REST equivalent of
+    // `snap known model`), from the info icon on the dashboard Model card.
+    // MODELS the assertion the same way the mock models everything: core.
+    // system.model() (already a canned full assertion with a snaps: list). The
+    // modal is read-only (headers as a KV list + the snaps: table).
+    const mInfo = await page.evaluate(() => {
+        const btn = document.querySelector('#modelInfoBtn');
+        const card = document.querySelector('#modelStat');
+        if (!btn) return { present: false };
+        return { present: true, inModelCard: card ? card.contains(btn) : null, hasIcon: !!btn.querySelector('.p-icon--information'), visible: btn.getBoundingClientRect().width > 0 };
+    });
+    if (!mInfo.present) console.log('PAGE ERROR: the Model card must carry the model-assertion info icon button (#modelInfoBtn) (round M)');
+    else {
+        if (mInfo.inModelCard !== true) console.log('PAGE ERROR: the model info icon must sit INSIDE the Model card (round M)');
+        if (mInfo.hasIcon !== true) console.log('PAGE ERROR: the model info button must carry the house .p-icon--information glyph (round M)');
+        if (mInfo.visible !== true) console.log('PAGE ERROR: the model info button must be visible (round M)');
+    }
+    if (mInfo.present) await page.click('#modelInfoBtn');
+    await wait(400); // the assertion read resolves
+    const modelModal = await page.evaluate(() => {
+        const m = document.querySelector('.ucm-modal');
+        if (!m || !m.querySelector('.ucm-model__kv')) return { open: false };
+        const head = (m.querySelector('.ucm-modal__head .p-heading--5') || {}).textContent || null;
+        const kv = m.querySelector('.ucm-model__kv');
+        const kvPairs = Array.from(kv.querySelectorAll(':scope > div')).map((d) => [d.querySelector('dt').textContent.trim(), d.querySelector('dd').textContent.trim()]);
+        const ths = Array.from(m.querySelectorAll('.ucm-model__snaps thead th')).map((th) => th.textContent.trim());
+        const rows = Array.from(m.querySelectorAll('.ucm-model__snaps tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim()));
+        const summary = (m.querySelector('.ucm-model__summary') || {}).textContent || null;
+        return { open: true, head, kvPairs, ths, rows, summary };
+    });
+    if (!modelModal.open) console.log('PAGE ERROR: clicking the Model info icon must open the model-assertion modal (round M)');
+    else {
+        if (modelModal.head !== 'Model') console.log('PAGE ERROR: the model modal head must read "Model" (got ' + JSON.stringify(modelModal.head) + ') (round M)');
+        // every top-level header (except the snaps: list) is a KV row - the raw
+        // assertion field names, faithful to `snap known model`.
+        const kvMap = Object.fromEntries(modelModal.kvPairs.map(([k, v]) => [k, v]));
+        const want = { model: 'core-24-kvm', base: 'core24', grade: 'signed', 'brand-id': 'canonical', 'authority-id': 'canonical', architecture: 'amd64', series: '16', 'sign-key-sha3-384': 'stub-key-id' };
+        for (const [k, v] of Object.entries(want)) {
+            if (kvMap[k] !== v) console.log('PAGE ERROR: the model modal KV is missing/wrong ' + k + ' (got ' + JSON.stringify(kvMap[k]) + ', want ' + v + ') (round M)');
+        }
+        if ('snaps' in kvMap) console.log('PAGE ERROR: the snaps: list must NOT be a KV row (it is a table) (round M)');
+        // the snaps: table: headers + one row per declared snap (5 in the mock).
+        if (JSON.stringify(modelModal.ths) !== JSON.stringify(['Name', 'Type', 'Presence', 'Default channel']))
+            console.log('PAGE ERROR: the model snaps table headers are wrong (got ' + JSON.stringify(modelModal.ths) + ') (round M)');
+        if (modelModal.rows.length !== 5) console.log('PAGE ERROR: the model snaps table must list the 5 declared snaps (got ' + modelModal.rows.length + ') (round M)');
+        const r0 = modelModal.rows[0] || [];
+        if (r0[0] !== 'snapd' || r0[1] !== 'snapd' || r0[2] !== '\u2014' || r0[3] !== 'latest/stable')
+            console.log('PAGE ERROR: the first snaps row (snapd) is wrong - an absent presence must read an em-dash (got ' + JSON.stringify(r0) + ') (round M)');
+        const r4 = modelModal.rows[4] || [];
+        if (r4[0] !== 'snap-store' || r4[1] !== 'app' || r4[2] !== 'required' || r4[3] !== 'latest/stable')
+            console.log('PAGE ERROR: the required app row (snap-store) is wrong - presence "required" must show (got ' + JSON.stringify(r4) + ') (round M)');
+        if (!modelModal.summary || modelModal.summary.indexOf('Model core-24-kvm') === -1 || modelModal.summary.indexOf('base core24') === -1)
+            console.log('PAGE ERROR: the model summary line must name the model + base (got ' + JSON.stringify(modelModal.summary) + ') (round M)');
+        await page.screenshot({ path: path.join(SHOTS, '3e-model-modal.png'), fullPage: true });
+        // close it
+        await page.evaluate(() => { const m = document.querySelector('.ucm-modal'); const b = m && m.querySelector('.ucm-modal__head button[aria-label="Close"]'); if (b) b.click(); });
+        await wait(150);
+        const mClosed = await page.evaluate(() => ({ gone: !document.querySelector('.ucm-model__kv') }));
+        if (mClosed.gone !== true) console.log('PAGE ERROR: the close button must close the model modal (round M)');
+    }
+
+
 
     // Recent changes guard (round 27): all four columns populated from the
     // LIVE snapd field names, rows sorted newest-first (mock is fed in a

@@ -1726,6 +1726,17 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-stat__info .p-icon--information { width: 1rem; height: 1rem; opacity: .5; }
 .ucm-stat__info:hover .p-icon--information { opacity: 1; }
 .ucm-stat__info:focus-visible { outline: .125rem solid var(--vf-color-focus); outline-offset: .125rem; }
+/* the Model card hosts the SAME info icon as the System load card - it needs
+   position:relative to anchor the absolutely-positioned .ucm-stat__info (round P
+   gave it to .ucm-stat--cpu; the round M model card needs it too). */
+.ucm-stat--model { position: relative; }
+/* round M: the Model assertion modal - a short identity summary line above the
+   header KV + a faint uppercase caption above the snaps table (the house table
+   idiom already styles the table itself). */
+.ucm-model__summary { margin: 0 0 .4rem; font-size: .95rem; }
+.ucm-model__snaps-cap { margin: 1rem 0 .3rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #757575; }
+.is-dark .ucm-model__snaps-cap { color: #a8a8a8; }
+.ucm-model__kv { margin-bottom: .5rem; }
 
 /* the modal: a bit wider than the default (a 6-column table), the toolbar
    (count + cadence) sits above a SCROLLABLE table with a sticky header so the

@@ -4268,6 +4268,94 @@ async function doRefreshNow() {
 // sort persists, and the running poll is the ONLY thing that re-fills the
 // rows). Sorting is a pure client-side comparator on the cached row set
 // (name asc, CPU desc, RSS desc) - the house top/htop ordering.
+// ---- round M: the Model assertion modal (the REST equivalent of `snap known
+// model`) - opened from the little info icon on the dashboard "Model" card.
+// Read-only: it re-reads the FULL model assertion through core.system.model()
+// (main.js getModelAssertion -> GET /v2/assertions/model, parsed by
+// parseModelAssertion) and lays out every top-level header as a house .ucm-kv
+// row + the snaps: list as a house table. The Model card itself only surfaces a
+// few fields (model/base/grade); the modal is the whole assertion (minus the
+// opaque signature block, which snap known shows but is not useful in a UI).
+function openModelModal() {
+    if (document.querySelector('.ucm-modal')) return; // one modal at a time
+    const box = el('div', { class: 'ucm-modal' });
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    const closeModal = () => { document.removeEventListener('keydown', onKey); box.remove(); };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    document.addEventListener('keydown', onKey);
+
+    const inner = el('div', { class: 'ucm-modal__card' });
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
+        el('i', { class: 'p-icon--close ucm-info__close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'Model', style: 'margin:0;' }),
+        close));
+    const bodyBox = el('div', { class: 'ucm-modal__body ucm-info' });
+    bodyBox.append(el('p', { class: 'ucm-muted', style: 'padding:1rem 0;', text: 'Loading model assertion\u2026' }));
+    inner.append(bodyBox);
+    box.append(backdrop, inner);
+    document.body.append(box);
+    close.focus();
+
+    // The model's snaps: list -> a house table (Name / Type / Presence / Default
+    // channel). mono on the identifier-like cells, a muted dash for an absent
+    // field (presence is optional; type/channel are present on every entry).
+    const snapsTable = (snaps) => {
+        const table = el('table', { class: 'p-table ucm-ifaces-table ucm-model__snaps' });
+        const theadRow = el('tr', {},
+            el('th', { text: 'Name' }), el('th', { text: 'Type' }),
+            el('th', { text: 'Presence' }), el('th', { text: 'Default channel' }));
+        table.append(el('thead', {}, theadRow));
+        const tbody = el('tbody');
+        (snaps || []).forEach((e) => {
+            tbody.append(el('tr', {},
+                el('td', { class: 'ucm-mono', text: e.name || '\u2014' }),
+                el('td', { class: 'ucm-mono', text: e.type || '\u2014' }),
+                el('td', { text: e.presence || '\u2014' }),
+                el('td', { class: 'ucm-mono', text: e['default-channel'] || '\u2014' })));
+        });
+        table.append(tbody);
+        return table;
+    };
+
+    (async () => {
+        let mod;
+        try {
+            mod = await core.system.model();
+        } catch (e) {
+            bodyBox.innerHTML = '';
+            bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not read the model assertion: ' + e.message }));
+            return;
+        }
+        bodyBox.innerHTML = '';
+        if (!mod || typeof mod !== 'object' || Object.keys(mod).length === 0) {
+            bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'No model assertion returned by snapd.' }));
+            return;
+        }
+        // Every top-level header EXCEPT the snaps: list -> a .ucm-kv row, in
+        // assertion order (the raw field names, faithful to `snap known model`).
+        const kv = el('dl', { class: 'ucm-kv ucm-model__kv' });
+        Object.keys(mod).forEach((k) => {
+            if (k === 'snaps') return;
+            const v = mod[k];
+            if (v == null || v === '') return;
+            kv.append(el('div', {},
+                el('dt', { text: k }),
+                el('dd', { class: 'ucm-mono', text: String(v) })));
+        });
+        if (kv.children.length) bodyBox.append(kv);
+        // The snaps: list (the model's declared snaps).
+        if (Array.isArray(mod.snaps) && mod.snaps.length) {
+            bodyBox.append(el('p', { class: 'ucm-model__snaps-cap', text: 'Snaps (' + mod.snaps.length + ')' }));
+            bodyBox.append(snapsTable(mod.snaps));
+        }
+        // the model identity, for context at the top of the modal
+        if (mod.model) {
+            bodyBox.prepend(el('p', { class: 'ucm-model__summary', text: 'Model ' + mod.model + (mod.base ? ' \u00b7 base ' + mod.base : '') + (mod.grade ? ' \u00b7 ' + mod.grade : '') }));
+        }
+    })();
+}
+
 function openProcessModal() {
     if (document.querySelector('.ucm-modal')) return; // one modal at a time
     let rows = [];
@@ -4786,6 +4874,10 @@ function wire() {
     // System load card) ------------
     const procInfo = $('#procInfoBtn');
     if (procInfo) procInfo.addEventListener('click', () => openProcessModal());
+    // ---- round M: the dashboard Model assertion modal (the info icon on the
+    // Model card) ------------
+    const modelInfo = $('#modelInfoBtn');
+    if (modelInfo) modelInfo.addEventListener('click', () => openModelModal());
     const jOpen = $('#journalOpenBtn');
     if (jOpen) jOpen.addEventListener('click', () => openJournalModal());
     const rApply = $('#refreshApplyBtn');

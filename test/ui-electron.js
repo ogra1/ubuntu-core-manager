@@ -197,6 +197,12 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('the REAL process list (readProcs over /proc via the bridge) is non-empty + well-formed',
         sy.ok === true && sy.sy && sy.sy.procs && sy.sy.procs.ok === true && sy.sy.procs.n > 0,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.procs) : sy.error));
+    // round M: the REAL model-assertion READ (core.system.model -> GET
+    // /v2/assertions/model) returns an object through the bridge, never an
+    // error. Shape, not content (this env may carry no model -> {}).
+    ok('the REAL model assertion (GET /v2/assertions/model via the bridge) resolves without error',
+        sy.ok === true && sy.sy && sy.sy.model && sy.sy.model.ok === true && sy.sy.model.keys >= 0,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.model) : sy.error));
     ok('the REAL login1 ScheduledShutdown read works (D-Bus; nothing scheduled here)',
         sy.ok === true && sy.sy && sy.sy.scheduled && !sy.sy.scheduled.error && sy.sy.scheduled.active === false,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.scheduled) : sy.error));

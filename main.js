@@ -3291,6 +3291,18 @@ function initElectron() {
                                             && Number.isInteger(r.rss) && r.rss >= 0 && (r.cpu == null || (typeof r.cpu === 'number' && r.cpu >= 0 && r.cpu <= 100)));
                                         sy.procs = { ok: shape, n: Array.isArray(pr) ? pr.length : 0 };
                                     } catch (e) { sy.procs = { ok: false, error: String((e && e.message) || e) }; }
+                                    // round M: the REAL model-assertion READ (core.system.model ->
+                                    // main.js getModelAssertion -> GET /v2/assertions/model, the REST
+                                    // equivalent of 'snap known model') through the SAME preload bridge
+                                    // the app consumes. READ-ONLY. Shape, not content: this env may or
+                                    // may not carry a model (a stub socket / device without one resolves
+                                    // to {}), so we prove the PATH returns an object (never an error) and,
+                                    // when a model IS present, that it has the identity field.
+                                    try {
+                                        const mm = await core.system.model();
+                                        const isObj = mm && typeof mm === 'object' && !Array.isArray(mm);
+                                        sy.model = { ok: !!isObj, keys: isObj ? Object.keys(mm).length : 0, hasModel: !!(isObj && mm.model) };
+                                    } catch (e) { sy.model = { ok: false, error: String((e && e.message) || e) }; }
                                     // round T: the REAL time READ (timedate1
                                     // Properties.Get — granted by the EXISTING
                                     // timeserver-control plug; READ-ONLY, the
