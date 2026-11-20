@@ -415,7 +415,11 @@ html, body {
    body text and every element that inherits it (shell, view, toasts, the
    stat/cpu/netgraph "now" values, chip values). It is used ONLY as a text
    color (never a bg/border), so flipping it has no surface side-effects. */
-.is-dark { --ucm-grey-dark: #f2f2f2; color-scheme: dark; } /* round T-fix12: dark native popups */
+.is-dark { --ucm-grey-dark: #f2f2f2; color-scheme: dark; background-color: #202020; } /* round T-fix12: dark native popups. round T-fix20: background-color = the DOCUMENT canvas (html) paints dark on the FIRST web-contents frame. The html,body base is var(--ucm-grey-50) (#f7f7f7, light) and no dark rule covered it, so between the dark Electron window bg (main.js backgroundColor, T-fix12) and the first dark view the compositor presented that LIGHT canvas: the reported white startup flash. #202020 = the round-E page dark (the .is-dark .ucm-view/.ucm-main rule above), so canvas -> view is invisible. body gets the same via the rule below. */
+/* round T-fix20: body is NOT matched by the .is-dark selector (the class sits on
+   <html>); without this the body box (html,body { height: 100% }) would still paint
+   its #f7f7f7 base over the dark canvas and the flash would remain. */
+.is-dark body { background-color: #202020; }
 /* round T-fix14 (busy-button spinner) + T-fix18 (narrowed to colored
    buttons): the Install / Remove / channel-Switch busy spinners must
    spin in WHITE on the COLORED buttons (orange .p-button--brand / red

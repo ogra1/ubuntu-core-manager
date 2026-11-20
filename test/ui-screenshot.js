@@ -2390,6 +2390,7 @@ function mockFactoryJs() {
             alignDelta: (() => { const l = document.querySelector('#themeLabel'); if (!l) return null; return +(l.getBoundingClientRect().top + l.getBoundingClientRect().height / 2 - (slider.getBoundingClientRect().top + slider.getBoundingClientRect().height / 2)).toFixed(2); })(),
             sliderBg: getComputedStyle(slider).backgroundColor,
             cardBg: getComputedStyle(card).backgroundColor,
+            canvasBg: getComputedStyle(document.body).backgroundColor,
             isDark: document.documentElement.classList.contains('is-dark'),
             colorScheme: getComputedStyle(document.documentElement).colorScheme,
           };
@@ -2414,6 +2415,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the OFF theme slider is not the 48a grey (got ' + aCard.sliderBg + ', want #e0e0e0) (round C)');
         if (aCard.isDark !== false || aCard.cardBg !== 'rgb(255, 255, 255)')
             console.log('PAGE ERROR: in the default light appearance a .p-card must be white and <html> must not be .is-dark (got ' + JSON.stringify([aCard.cardBg, aCard.isDark]) + ') (round C)');
+        if (aCard.canvasBg !== 'rgb(247, 247, 247)')
+            console.log("PAGE ERROR: in the default LIGHT appearance the document canvas (html/body) must stay #f7f7f7 - got " + aCard.canvasBg + " (round T-fix20: the .is-dark canvas flip must be scoped to the dark theme, not leak into light)");
 
         // TOGGLE the theme to dark (a real click on the switch input): it must
         // apply LIVE — the mock pref, the <html> class, the SWITCH, the slider
@@ -2439,6 +2442,7 @@ function mockFactoryJs() {
             cardBg: getComputedStyle(card).backgroundColor,
             topbarBg: getComputedStyle(document.querySelector('.ucm-topbar')).backgroundColor,
             mainBg: getComputedStyle(document.querySelector('.ucm-main')).backgroundColor,
+            canvasBg: getComputedStyle(document.body).backgroundColor,
             mainColor: getComputedStyle(document.querySelector('.ucm-main')).color,
             statBg: getComputedStyle(document.querySelector('.ucm-stat')).backgroundColor,
             statLabel: getComputedStyle(document.querySelector('.ucm-stat__label')).color,
@@ -2462,6 +2466,8 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the dark top bar must be dark (#1a1a1a) — got ' + aDarkUi.topbarBg + ' (round C)');
         if (aDarkUi.mainBg !== 'rgb(32, 32, 32)')
             console.log('PAGE ERROR: the dark page background must be the theme dark grey #202020 (round E; was #111) — got ' + aDarkUi.mainBg + ' (round C)');
+        if (aDarkUi.canvasBg !== 'rgb(32, 32, 32)')
+            console.log("PAGE ERROR: the DARK document canvas (html/body) must be the round-E dark grey #202020 - got " + aDarkUi.canvasBg + " (round T-fix20: a light canvas flashes white on the first web-contents frame, between the dark Electron window bg and the first dark view)");
         if (aDarkUi.statBg !== 'rgb(38, 38, 38)')
             console.log('PAGE ERROR: the dark stat cards must be #262626 — got ' + aDarkUi.statBg + ' (round C)');
         if (aDarkUi.statLabel !== 'rgb(168, 168, 168)')
