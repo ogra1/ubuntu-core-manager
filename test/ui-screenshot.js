@@ -6443,7 +6443,6 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the LP form error message overlaps the input (got overlap=' + lp5.geo.overlap + 'px; want <= 0) (round T)');
     if (lp5.geo && lp5.geo.msgMarginTop !== '6.4px')
         console.log('PAGE ERROR: the LP form message margin-top is not the fixed .4rem (got ' + lp5.geo.msgMarginTop + ') (round T)');
-    console.log('TEMPGEO2', JSON.stringify(lp5.geo));
     if (lp5.urlErr !== true)
         console.log('PAGE ERROR: a non-loopback url must be rejected with an error on the URL field (got ' + lp5.urlErr + ') (round I)');
     if (!/localhost/.test(lp5.urlMsg || ''))
@@ -6634,11 +6633,12 @@ function mockFactoryJs() {
     const rEx = await page.evaluate(() => {
         const tb = document.querySelector('#scheduleExamples');
         if (!tb) return null;
-        return { isTable: !!tb.classList.contains('ucm-sys__schedexamples'), rows: Array.from(tb.querySelectorAll('tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())) };
+        return { isTable: !!tb.classList.contains('ucm-ifaces-table'), optMono: !!tb.querySelector('tbody tr td').classList.contains('ucm-mono'), rows: Array.from(tb.querySelectorAll('tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())) };
     });
     if (!rEx) console.log('PAGE ERROR: the refresh card must ship the examples table (#scheduleExamples) (round T)');
     else {
-        if (!rEx.isTable) console.log('PAGE ERROR: the examples table must carry the sizing class (round T)');
+        if (!rEx.isTable) console.log('PAGE ERROR: the examples table must reuse the house table idiom (ucm-ifaces-table) so it blends with the other tables (round T)');
+        if (!rEx.optMono) console.log('PAGE ERROR: the Option (value) cells must use the house mono font (ucm-mono, like the plugs/slots + channel/version cells) (round T)');
         if (rEx.rows.length !== 5) console.log('PAGE ERROR: the examples table must have 5 rows (got ' + rEx.rows.length + ') (round T)');
         if (JSON.stringify(rEx.rows[0]) !== JSON.stringify(['02:00-06:00', '(daily window)'])) console.log('PAGE ERROR: examples row 1 (got ' + JSON.stringify(rEx.rows[0]) + ') (round T)');
         if (JSON.stringify(rEx.rows[1]) !== JSON.stringify(['mon-fri,09:00-17:00', '(weekdays 9-17)'])) console.log('PAGE ERROR: examples row 2 (got ' + JSON.stringify(rEx.rows[1]) + ') (round T)');
@@ -6646,23 +6646,15 @@ function mockFactoryJs() {
         if (JSON.stringify(rEx.rows[3]) !== JSON.stringify(['mon,10:00,,fri,15:00', '(Mondays at 10:00, Fridays at 15:00)'])) console.log('PAGE ERROR: examples row 4 (got ' + JSON.stringify(rEx.rows[3]) + ') (round T)');
         if (JSON.stringify(rEx.rows[4]) !== JSON.stringify(['fri-mon,06:00', '(wrap-around range, Fri-Mon at 06:00)'])) console.log('PAGE ERROR: examples row 5 (got ' + JSON.stringify(rEx.rows[4]) + ') (round T)');
     }
-    // the intro line must NOT inline the examples any more (the table owns
-    // them); the generic syntax notes + the default stay as the note line.
     if (gS.helps[1].indexOf('02:00-06:00') !== -1) console.log('PAGE ERROR: the refresh intro must not inline the examples any more (the table owns them; got ' + JSON.stringify(gS.helps[1]) + ') (round T)');
-    const rNote = await page.evaluate(() => {
-        const n = document.querySelector('#view-system .ucm-sys__schednote');
-        return n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
-    });
-    if (!rNote || !/Separate days with/.test(rNote) || !/24\/7, every 4 hours/.test(rNote))
-        console.log('PAGE ERROR: the schedule notes (separate days / join / default) must stay as the note line (got ' + JSON.stringify(rNote) + ') (round T)');
 
     // round R: the de-worded card help texts (exact, so the old verbose copy
     // can't regress). round T: the Time card adds a 4th help text.
     if (gS.helps && gS.helps.length === 5) {
         if (gS.helps[0] !== 'The latest entries are shown; filter by unit or text and raise the minimum priority.')
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
-        if (gS.helps[1].indexOf('When snapd may automatically refresh snaps.') !== 0 || /install/.test(gS.helps[1]))
-            console.log('PAGE ERROR: the refresh card help must say "automatically refresh" (not install) (got ' + JSON.stringify(gS.helps[1]) + ') (round R)');
+        if (gS.helps[1] !== 'Schedule examples:')
+            console.log('PAGE ERROR: the refresh card help must be exactly "Schedule examples:" (the wall of text is gone; the table owns the examples) (got ' + JSON.stringify(gS.helps[1]) + ') (round T)');
         if (gS.helps[2] !== 'Set the time manually (if time sync is off on the Network page) and pick the device\'s time zone')
             console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round T / T-fix11)');
         if (gS.helps[4] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')

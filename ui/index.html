@@ -518,24 +518,18 @@
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Snap refresh schedule</p></div>
                         <div class="ucm-sys__body">
                             <p class="ucm-lp__help">
-                                When snapd may automatically refresh snaps. The schedule is the
-                                snapd refresh timer: pick the days and a time window.
+                                Schedule examples:
                             </p>
-                            <table class="p-table ucm-sys__schedexamples" id="scheduleExamples">
+                            <table class="p-table ucm-ifaces-table" id="scheduleExamples">
                                 <thead><tr><th>Option</th><th>Result</th></tr></thead>
                                 <tbody>
-                                    <tr><td class="mono">02:00-06:00</td><td>(daily window)</td></tr>
-                                    <tr><td class="mono">mon-fri,09:00-17:00</td><td>(weekdays 9-17)</td></tr>
-                                    <tr><td class="mono">sat,10:00~14:00/2</td><td>(Saturdays, spread, split in 2)</td></tr>
-                                    <tr><td class="mono">mon,10:00,,fri,15:00</td><td>(Mondays at 10:00, Fridays at 15:00)</td></tr>
-                                    <tr><td class="mono">fri-mon,06:00</td><td>(wrap-around range, Fri-Mon at 06:00)</td></tr>
+                                    <tr><td class="ucm-mono">02:00-06:00</td><td>(daily window)</td></tr>
+                                    <tr><td class="ucm-mono">mon-fri,09:00-17:00</td><td>(weekdays 9-17)</td></tr>
+                                    <tr><td class="ucm-mono">sat,10:00~14:00/2</td><td>(Saturdays, spread, split in 2)</td></tr>
+                                    <tr><td class="ucm-mono">mon,10:00,,fri,15:00</td><td>(Mondays at 10:00, Fridays at 15:00)</td></tr>
+                                    <tr><td class="ucm-mono">fri-mon,06:00</td><td>(wrap-around range, Fri-Mon at 06:00)</td></tr>
                                 </tbody>
                             </table>
-                            <p class="ucm-sys__schednote">
-                                Separate days with <span class="mono">,</span>; a distinct schedule joins
-                                with <span class="mono">,,</span>. Leave empty to use the snapd default
-                                (24/7, every 4 hours).
-                            </p>
                             <div class="ucm-sys__kvrow">
                                 <dt>Schedule</dt>
                                 <dd>
