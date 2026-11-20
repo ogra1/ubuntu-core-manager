@@ -1512,6 +1512,10 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     background: #f4f4f4; border: 1px solid #e0e0e0;
     font-family: "Ubuntu Mono variable", monospace; font-size: .8rem;
 }
+/* round T: the chip TEXT inherits --vf-color-text-default (white under .is-dark),
+   so only the hardcoded light background needs darkening - the same #2a2a2a/
+   #3a3a3a surface the session chip uses in dark (light mode untouched). */
+.is-dark .ucm-netcard__dnschip { background: #2a2a2a; border-color: #3a3a3a; }
 .ucm-netcard__dnschip .p-chip__dismiss {
     margin: 0 0 0 .15rem; padding: 0 .2rem;
     background-size: .65rem;

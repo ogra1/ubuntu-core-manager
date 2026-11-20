@@ -4085,7 +4085,7 @@ function openJournalModal() {
     const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
         el('i', { class: 'p-icon--close ucm-info__close' }));
     inner.append(el('div', { class: 'ucm-modal__head' },
-        el('p', { class: 'p-heading--5', text: 'System journal', style: 'margin:0;' }),
+        el('p', { class: 'p-heading--5', text: 'Journal', style: 'margin:0;' }),
         close));
 
     // --- the filter row (unit + match + priority + LINES + follow + refresh) --

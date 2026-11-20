@@ -2197,6 +2197,29 @@ function mockFactoryJs() {
         if (aDarkUi.colorScheme !== 'dark')
             console.log('PAGE ERROR: the DARK theme must set color-scheme: dark (native popups dark, not white) — got ' + JSON.stringify(aDarkUi.colorScheme) + ' (round T-fix12)');
         await page.screenshot({ path: path.join(SHOTS, '4c-settings-theme-dark.png'), fullPage: true });
+        // round T: the DNS chip (the pill shown while ADDING a DNS server) must
+        // stay READABLE in dark mode - it was white text on a hardcoded light
+        // background (#f4f4f4). The chip text inherits --vf-color-text-default
+        // (white) from the .p-card, so the fix darkens the chip surface only.
+        // Measure the EXACT real chip markup (span.ucm-netcard__dnschip) placed
+        // under a .p-card in the current dark context, then remove it.
+        const aDnsDark = await page.evaluate(() => {
+          const wrap = document.createElement('div');
+          wrap.className = 'p-card';
+          const chip = document.createElement('span');
+          chip.className = 'p-chip ucm-netcard__dnschip ucm-mono';
+          chip.innerHTML = '<span>x</span><button class="p-chip__dismiss" type="button"></button>';
+          wrap.appendChild(chip);
+          document.body.appendChild(wrap);
+          const cs = getComputedStyle(chip);
+          const out = { bg: cs.backgroundColor, text: getComputedStyle(chip.querySelector('span')).color };
+          wrap.remove();
+          return out;
+        });
+        if (aDnsDark.bg !== 'rgb(42, 42, 42)')
+            console.log('PAGE ERROR: the DNS chip must darken its surface in dark mode (it was white text on the hardcoded #f4f4f4 bg) - got ' + aDnsDark.bg + ' (round T)');
+        if (aDnsDark.text !== 'rgb(255, 255, 255)')
+            console.log('PAGE ERROR: the DNS chip text must be light in dark mode to stay readable on the dark chip - got ' + aDnsDark.text + ' (round T)');
 
         // Leaving and re-entering the settings view: the persisted "dark" must
         // still be applied, and loadSettings must CORRECT the switch if it is
@@ -6595,10 +6618,15 @@ function mockFactoryJs() {
         const journalBtn = (document.querySelector('#journalOpenBtn') || {}).textContent || null;
         const refreshNow = (document.querySelector('#refreshNow') || {}).textContent || null;
         const refreshVal = (document.querySelector('#refreshInput') || {}).value;
+        const refreshPh = (document.querySelector('#refreshInput') || {}).placeholder;
         const rebootBtn = (document.querySelector('#rebootNowBtn') || {}).textContent || null;
         const shutdownBtn = (document.querySelector('#shutdownNowBtn') || {}).textContent || null;
         const schedRowHidden = (document.querySelector('#scheduledRow') || {}).classList ? document.querySelector('#scheduledRow').classList.contains('ucm-hidden') : null;
         const schedWhen = (document.querySelector('#schedWhen') || {}).value || null;
+        // round T: the refresh card labels the IN-USE schedule (the dt)
+        // 'Active schedule' (it was 'Schedule'; 'System' was dropped from the
+        // card captions too - the page header already says we are in System).
+        const schedDt = (() => { const dd = document.querySelector('#refreshNow'); if (!dd) return null; const row = dd.closest('.ucm-sys__kvrow'); const dt = row ? row.querySelector('dt') : null; return dt ? dt.textContent.trim() : null; })();
         // round R: the 3 card help texts (de-worded; the round-L versions named
         // journalctl / log-observe / install / systemd-logind - implementation
         // detail the user doesn't need). whitespace-normalized (the HTML wraps).
@@ -6613,7 +6641,7 @@ function mockFactoryJs() {
             if (c.querySelector && c.querySelector('#refreshNowBtn')) return 'refreshnow';
             return 'other';
         }) : null;
-        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen, helps, rowSeq };
+        return { hidden, navLinks, activeView: active.view || null, cards, journalBtn, refreshNow, refreshVal, rebootBtn, shutdownBtn, schedRowHidden, schedWhen, schedDt, refreshPh, helps, rowSeq };
     });
     if (gS.hidden) console.log('PAGE ERROR: the system view must be visible after switching to it (round L)');
     if (gS.activeView !== 'system') console.log('PAGE ERROR: the System nav link must be is-active on the system page (got ' + JSON.stringify(gS.activeView) + ') (round L)');
@@ -6625,7 +6653,7 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the fixed nav order is wrong / System is not directly below Settings (got ' + JSON.stringify(gS.navLinks) + ') (round L)');
     if (gS.navLinks.indexOf('system') !== 5)
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
-    if (JSON.stringify(gS.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'System power']))
+    if (JSON.stringify(gS.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'Power']))
         console.log('PAGE ERROR: the system page must show exactly the 5 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard)');
     // round T: the refresh card examples are a TABLE now (the old wall of text
     // is gone): pin the structure + the exact 5 Option/Result rows (each row
@@ -6633,12 +6661,13 @@ function mockFactoryJs() {
     const rEx = await page.evaluate(() => {
         const tb = document.querySelector('#scheduleExamples');
         if (!tb) return null;
-        return { isTable: !!tb.classList.contains('ucm-ifaces-table'), optMono: !!tb.querySelector('tbody tr td').classList.contains('ucm-mono'), rows: Array.from(tb.querySelectorAll('tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())) };
+        const tds = Array.from(tb.querySelectorAll('tbody tr td'));
+        return { isTable: !!tb.classList.contains('ucm-ifaces-table'), allMono: tds.length > 0 && tds.every((td) => td.classList.contains('ucm-mono')), rows: Array.from(tb.querySelectorAll('tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())) };
     });
     if (!rEx) console.log('PAGE ERROR: the refresh card must ship the examples table (#scheduleExamples) (round T)');
     else {
         if (!rEx.isTable) console.log('PAGE ERROR: the examples table must reuse the house table idiom (ucm-ifaces-table) so it blends with the other tables (round T)');
-        if (!rEx.optMono) console.log('PAGE ERROR: the Option (value) cells must use the house mono font (ucm-mono, like the plugs/slots + channel/version cells) (round T)');
+        if (!rEx.allMono) console.log('PAGE ERROR: every cell (the Option values AND the Result descriptions) must use the house mono font (ucm-mono, like the plugs/slots + channel/version cells) (round T)');
         if (rEx.rows.length !== 5) console.log('PAGE ERROR: the examples table must have 5 rows (got ' + rEx.rows.length + ') (round T)');
         if (JSON.stringify(rEx.rows[0]) !== JSON.stringify(['02:00-06:00', '(daily window)'])) console.log('PAGE ERROR: examples row 1 (got ' + JSON.stringify(rEx.rows[0]) + ') (round T)');
         if (JSON.stringify(rEx.rows[1]) !== JSON.stringify(['mon-fri,09:00-17:00', '(weekdays 9-17)'])) console.log('PAGE ERROR: examples row 2 (got ' + JSON.stringify(rEx.rows[1]) + ') (round T)');
@@ -6646,6 +6675,9 @@ function mockFactoryJs() {
         if (JSON.stringify(rEx.rows[3]) !== JSON.stringify(['mon,10:00,,fri,15:00', '(Mondays at 10:00, Fridays at 15:00)'])) console.log('PAGE ERROR: examples row 4 (got ' + JSON.stringify(rEx.rows[3]) + ') (round T)');
         if (JSON.stringify(rEx.rows[4]) !== JSON.stringify(['fri-mon,06:00', '(wrap-around range, Fri-Mon at 06:00)'])) console.log('PAGE ERROR: examples row 5 (got ' + JSON.stringify(rEx.rows[4]) + ') (round T)');
     }
+    if (gS.refreshPh !== 'e.g. 02:00-06:00 (empty = default)')
+        console.log('PAGE ERROR: the refresh placeholder must keep a SINGLE example (the 2nd example was dropped for crowding) + the empty hint (got ' + JSON.stringify(gS.refreshPh) + ') (round T)');
+    if (gS.schedDt !== 'Active schedule') console.log('PAGE ERROR: the refresh card must label the in-use schedule "Active schedule" (it was "Schedule") (got ' + JSON.stringify(gS.schedDt) + ') (round T)');
     if (gS.helps[1].indexOf('02:00-06:00') !== -1) console.log('PAGE ERROR: the refresh intro must not inline the examples any more (the table owns them; got ' + JSON.stringify(gS.helps[1]) + ') (round T)');
 
     // round R: the de-worded card help texts (exact, so the old verbose copy
@@ -6721,7 +6753,7 @@ function mockFactoryJs() {
         };
     });
     if (!j1.present) console.log('PAGE ERROR: the journal modal must open (round L)');
-    if (j1.head !== 'System journal') console.log('PAGE ERROR: the journal modal head is wrong (got ' + JSON.stringify(j1.head) + ') (round L)');
+    if (j1.head !== 'Journal') console.log('PAGE ERROR: the journal modal head is wrong (got ' + JSON.stringify(j1.head) + ') (round L)');
     // round O: the default view is a bounded TAIL - the 200 newest of the 207-line
     // canned pool (the 7 newest are the last 7 of the tail; the 7 oldest are cut).
     if (j1.lineCount !== 200) console.log('PAGE ERROR: the journal default view must be the 200-line tail (got ' + j1.lineCount + ' lines) (round O)');
@@ -7566,7 +7598,7 @@ function mockFactoryJs() {
         mock: window.__mockCore.keymaps.__km(),
       };
     });
-    if (JSON.stringify(k0.cards) !== JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'System power']))
+    if (JSON.stringify(k0.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'Power']))
         console.log('PAGE ERROR: T-KM4 - the System card ORDER must be journal, refresh, Time, Keyboard, power (got ' + JSON.stringify(k0.cards) + ')');
     if (k0.opts !== 5) console.log('PAGE ERROR: T-KM4 - the picker must be fed with the mock list (5 entries; got ' + k0.opts + ')');
     if (k0.value !== 'de') console.log('PAGE ERROR: T-KM4 - the picker must default to the applied layout (de; got ' + k0.value + ')');

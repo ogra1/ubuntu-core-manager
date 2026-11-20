@@ -172,7 +172,7 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     const sy = p.sys || {};
     ok('the system page shows its 5 cards in the real app (nav + loaders wired)',
         sy.ok === true && sy.sy && sy.sy.viewActive === true
-        && JSON.stringify(sy.sy.cards) === JSON.stringify(['System journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'System power']),
+        && JSON.stringify(sy.sy.cards) === JSON.stringify(['Journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'Power']),
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.error));
     // round T-KM4: the Keyboard card is present, fed by the real 98-entry list,
     // and the Apply button ships (enabled once the picker settles).
