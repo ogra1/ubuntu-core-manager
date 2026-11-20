@@ -1077,6 +1077,8 @@ function mockFactoryJs() {
                 const __m = {
                     journalCalls: 0, followCalls: 0, stopCalls: 0, holdCalls: 0, refreshNowCalls: 0,
                     powerCalls: [], scheduled: { active: false, action: null, usec: null },
+                    // round P: the process modal (the process-control plug)
+                    procs: [], killCalls: [], procsCalls: 0,
                 };
                 // round T: the TIME card state (closure object — see the
                 // comment on the methods below: the caller invokes them as
@@ -1287,6 +1289,13 @@ function mockFactoryJs() {
                         return { cancelled: had };
                     },
                     async powerScheduled() { return JSON.parse(JSON.stringify(__m.scheduled)); },
+                    // round P: procs returns the LIVE canned list (a deep copy -
+                    // the real main reads /proc fresh every poll); kill records
+                    // the call AND removes the pid (so the next re-poll no longer
+                    // lists it - the SIGKILL took the process away). cpu may be
+                    // null (first sample / no delta) exactly as main reports it.
+                    async procs() { __m.procsCalls += 1; return JSON.parse(JSON.stringify(__m.procs)); },
+                    async kill(pid, sig) { __m.killCalls.push({ pid: pid, sig: sig }); __m.procs = __m.procs.filter((p) => p.pid !== pid); return { pid: pid, sig: sig }; },
                     // round T: the TIME card. The read models the LIVE
                     // system (timedate1 wall clock + timezone + NTP) plus the
                     // bundled zone list. ntp is SHARED with the timesync
@@ -1349,6 +1358,9 @@ function mockFactoryJs() {
                     },
                     // round S+2: expose the refresh-now LIVE call count for the harness.
                     __refreshNow: () => __m.refreshNowCalls,
+                    // round P: set the canned process list + read the recorded kills.
+                    __setprocs: (rows) => { __m.procs = (rows || []).map((p) => Object.assign({}, p)); return __m; },
+                    __killCalls: () => __m.killCalls,
                     __t: () => __t,
                     __machine: () => __m,
                 };
@@ -1682,6 +1694,143 @@ function mockFactoryJs() {
         if (cpu.lineStroke !== 'rgb(233, 84, 32)') console.log('PAGE ERROR: cpu line not orange (' + cpu.lineStroke + ')');
     }
     await page.screenshot({ path: path.join(SHOTS, '3b-cpu-graph.png') });
+
+    // ---- round P: the process control modal (top/htop-style, from the
+    // System load card's info icon). MODELS the process-control plug: procs
+    // returns a canned live list, kill records the call + removes the pid.
+    // Seeds 3 distinct rows so the 3 sorts (name/CPU/RAM) are distinguishable.
+    const PROC_SEED = [
+        { pid: 200, name: 'zz-app',  state: 'R', ppid: 1,   rss: 1000,     cpu: 42.5 },
+        { pid: 100, name: 'aa-core', state: 'S', ppid: 1,   rss: 50000000, cpu: 7.0 },
+        { pid: 300, name: 'mm-mid',  state: 'S', ppid: 100, rss: 2048,     cpu: null },
+    ];
+    await page.evaluate((seed) => { window.__mockCore.machine.__setprocs(seed); }, PROC_SEED);
+    const pInfo = await page.evaluate(() => {
+        const btn = document.querySelector('#procInfoBtn');
+        const card = document.querySelector('.ucm-stat--cpu');
+        if (!btn) return { present: false };
+        const ic = btn.querySelector('.p-icon--information');
+        return { present: true, inCpuCard: card ? card.contains(btn) : null, hasIcon: !!ic, visible: btn.getBoundingClientRect().width > 0 };
+    });
+    if (!pInfo.present) console.log('PAGE ERROR: the System load card must carry the process info icon button (#procInfoBtn) (round P)');
+    else {
+        if (pInfo.inCpuCard !== true) console.log('PAGE ERROR: the info icon must sit INSIDE the System load (cpu) card (round P)');
+        if (pInfo.hasIcon !== true) console.log('PAGE ERROR: the info button must carry the house .p-icon--information glyph (round P)');
+        if (pInfo.visible !== true) console.log('PAGE ERROR: the info button must be visible (round P)');
+    }
+    // Guard the click: if the button is missing (the PE above fired), skip the
+    // whole modal flow cleanly instead of FATALing the run on a missing selector
+    // (the house "missing card -> clean PAGE ERROR, not FATAL" idiom).
+    if (pInfo.present) await page.click('#procInfoBtn');
+    await wait(400); // first poll fills the rows
+    const procModal = () => page.evaluate(() => {
+        const m = document.querySelector('.ucm-modal--procs');
+        if (!m) return { open: false };
+        const ths = Array.from(m.querySelectorAll('thead th')).map((th) => th.textContent.trim());
+        const rows = Array.from(m.querySelectorAll('tbody tr'));
+        const nameCol = rows.map((tr) => tr.children[1].textContent.trim());
+        const cpuCol = rows.map((tr) => tr.children[3].textContent.trim());
+        const status = (m.querySelector('.ucm-procs__status') || {}).textContent || null;
+        const nameCellsMono = rows.every((tr) => tr.children[1].classList.contains('ucm-mono'));
+        const stopBtns = m.querySelectorAll('.ucm-procs__stop');
+        const csCpuTd = rows.length ? getComputedStyle(rows[0].children[3]).textAlign : null;
+        const csTh = m.querySelector('thead th') ? { tt: getComputedStyle(m.querySelector('thead th')).textTransform, bg: getComputedStyle(m.querySelector('thead th')).backgroundColor } : null;
+
+        const sortedTh = Array.from(m.querySelectorAll('thead th')).findIndex((th) => th.classList.contains('is-sorted'));
+        const sortedDesc = Array.from(m.querySelectorAll('thead th')).some((th) => th.classList.contains('is-sorted-desc'));
+        return { open: true, ths, rowCount: rows.length, nameCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csTh };
+    });
+    let pm = await procModal();
+    if (!pm.open) console.log('PAGE ERROR: clicking the info icon must open the process modal (round P)');
+    else {
+        if (JSON.stringify(pm.ths) !== JSON.stringify(['PID', 'Name', 'State', 'CPU %', 'RAM', 'Stop']))
+            console.log('PAGE ERROR: the process table headers are wrong (got ' + JSON.stringify(pm.ths) + ') (round P)');
+        if (pm.rowCount !== 3) console.log('PAGE ERROR: the process table must list the 3 seeded processes (got ' + pm.rowCount + ') (round P)');
+        if (pm.status !== '3 processes') console.log('PAGE ERROR: the process status line must read the count (got ' + JSON.stringify(pm.status) + ') (round P)');
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'mm-mid', 'zz-app']))
+            console.log('PAGE ERROR: default sort must be NAME ascending (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        if (JSON.stringify(pm.cpuCol) !== JSON.stringify(['7', '\u2014', '42.5']))
+            console.log('PAGE ERROR: the CPU column must render 7 / (null=em-dash) / 42.5 in name order (got ' + JSON.stringify(pm.cpuCol) + ') (round P)');
+        if (pm.nameCellsMono !== true) console.log('PAGE ERROR: the Name (value) cells must be house-mono (ucm-mono) (round P)');
+        if (pm.stopCount !== 3) console.log('PAGE ERROR: every row needs a Stop control (got ' + pm.stopCount + ') (round P)');
+        // CSS-integrity guard (the house idiom: pin the computed styles that a
+        // clobbered app.css rule would silently lose): the numeric columns
+        // right-align, the header is the faint uppercase house table idiom, and
+        // the header row carries a background (the sticky-header surface).
+        if (pm.csCpuTd !== 'right')
+            console.log('PAGE ERROR: the CPU (numeric) column must right-align (got ' + JSON.stringify(pm.csCpuTd) + ') (round P)');
+        if (!pm.csTh || pm.csTh.tt !== 'uppercase')
+            console.log('PAGE ERROR: the process header must be the house faint-UPPERCASE table idiom (got ' + JSON.stringify(pm.csTh) + ') (round P)');
+        if (!pm.csTh || !pm.csTh.bg || pm.csTh.bg === 'rgba(0, 0, 0, 0)')
+            console.log('PAGE ERROR: the sticky process header row must carry a background (got ' + JSON.stringify(pm.csTh) + ') (round P)');
+        // SORT by CPU % (th index 3) -> first click = DESC (the top/htop default)
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
+        await wait(150);
+        pm = await procModal();
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['zz-app', 'aa-core', 'mm-mid']))
+            console.log('PAGE ERROR: sorting by CPU desc must order 42.5, 7.0, null (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        if (pm.sortedTh !== 3 || pm.sortedDesc !== true)
+            console.log('PAGE ERROR: the CPU header must show the active DESC sort marker (th=' + pm.sortedTh + ' desc=' + pm.sortedDesc + ') (round P)');
+        // SORT by CPU again -> ASC (nulls first)
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
+        await wait(150);
+        pm = await procModal();
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['mm-mid', 'aa-core', 'zz-app']))
+            console.log('PAGE ERROR: sorting by CPU asc must order null, 7.0, 42.5 (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        // SORT by RAM (th index 4) -> DESC
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[4].click(); });
+        await wait(150);
+        pm = await procModal();
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'mm-mid', 'zz-app']))
+            console.log('PAGE ERROR: sorting by RAM desc must order 50MB, 2KB, 1KB (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        // back to NAME asc (th index 1) so the Stop row below is deterministic
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[1].click(); });
+        await wait(150);
+        pm = await procModal();
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'mm-mid', 'zz-app']))
+            console.log('PAGE ERROR: re-sorting by NAME asc must restore aa-core, mm-mid, zz-app (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        // STOP the first row (aa-core, pid 100) - CONFIRM-GATED, then confirm
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs tbody tr .ucm-procs__stop').click(); });
+        await wait(150);
+        const confirm = await page.evaluate(() => {
+            const c = document.querySelector('.ucm-modal--procs .ucm-confirm');
+            if (!c) return { present: false };
+            return { present: true, msg: (c.querySelector('.ucm-confirm__msg') || {}).textContent || null, btn: !!c.querySelector('button.p-button--negative') };
+        });
+        if (!confirm.present) console.log('PAGE ERROR: Stop must be confirm-gated (an in-modal .ucm-confirm) (round P)');
+        else {
+            if (!confirm.msg || confirm.msg.indexOf('aa-core (pid 100)') === -1 || confirm.msg.indexOf('SIGKILL') === -1)
+                console.log('PAGE ERROR: the Stop confirm must name the process + SIGKILL (got ' + JSON.stringify(confirm.msg) + ') (round P)');
+            if (!confirm.btn) console.log('PAGE ERROR: the Stop confirm must carry a negative (Stop?) button (round P)');
+        }
+        await page.evaluate(() => { const c = document.querySelector('.ucm-modal--procs .ucm-confirm'); const b = c && c.querySelector('button.p-button--negative'); if (b) b.click(); });
+        await wait(300); // the kill resolves + refresh re-polls (mock removed pid 100)
+        const afterKill = await page.evaluate(() => {
+            const m = document.querySelector('.ucm-modal--procs');
+            const rows = Array.from(m ? m.querySelectorAll('tbody tr') : []);
+            const names = rows.map((tr) => tr.children[1].textContent.trim());
+            const toast = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).find((x) => ((x.querySelector('.p-notification__title') || {}).textContent || '') === 'Process stopped');
+            return {
+                open: !!m, rowCount: rows.length, names,
+                killed: !names.includes('aa-core'),
+                toast: !!toast,
+                killCalls: window.__mockCore.machine.__killCalls(),
+            };
+        });
+        if (JSON.stringify(afterKill.killCalls) !== JSON.stringify([{ pid: 100, sig: 9 }]))
+            console.log('PAGE ERROR: confirming Stop must send SIGKILL (sig 9) to pid 100 (got ' + JSON.stringify(afterKill.killCalls) + ') (round P)');
+        if (afterKill.rowCount !== 2 || !afterKill.killed)
+            console.log('PAGE ERROR: the stopped process must disappear on re-poll (got ' + JSON.stringify(afterKill.names) + ') (round P)');
+        if (!afterKill.toast) console.log('PAGE ERROR: a successful Stop must toast "Process stopped" (round P)');
+        await page.screenshot({ path: path.join(SHOTS, '3c-procs-modal.png'), fullPage: true });
+        // CLOSE the modal (the close button) and confirm the poll stopped
+        await page.evaluate(() => { const m = document.querySelector('.ucm-modal--procs'); const b = m && m.querySelector('.ucm-modal__head button[aria-label="Close"]'); if (b) b.click(); });
+        await wait(150);
+        const closed = await page.evaluate(() => ({ gone: !document.querySelector('.ucm-modal--procs') }));
+        if (closed.gone !== true) console.log('PAGE ERROR: the close button must close the process modal (round P)');
+        await page.evaluate(() => { window.__mockCore.machine.__setprocs([]); });
+    }
+
 
     // Recent changes guard (round 27): all four columns populated from the
     // LIVE snapd field names, rows sorted newest-first (mock is fed in a

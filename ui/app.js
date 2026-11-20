@@ -4253,6 +4253,198 @@ async function doRefreshNow() {
 // value is a held-until timestamp (a bare --hold arrives as a distant
 // ~100-year time, e.g. a date in 2319) - so the state line is just Held/Not
 // held; the held-until DATE is intentionally NOT shown (round S+2).
+// ---- round P: the process control modal (top/htop-style) ---------------
+// Opened from the little info icon in the DASHBOARD "System load" card
+// (the user's ask: a top/htop-like process list, sortable by name / RAM /
+// CPU, with the ability to stop a process). The data comes from
+// core.machine.procs() (main.js reads /proc once per poll and returns an
+// INSTANTANEOUS per-process CPU% by deltaing the aggregate jiffies between
+// polls); stopping sends a signal through core.machine.kill (the
+// process-control plug grants signal(send)+kill) and is CONFIRM-GATED,
+// exactly like the power actions (destructive).
+//
+// The modal is a live VIEW: it auto-refreshes every 2 s while open
+// (re-rendering in place: the table keeps its scroll position, the active
+// sort persists, and the running poll is the ONLY thing that re-fills the
+// rows). Sorting is a pure client-side comparator on the cached row set
+// (name asc, CPU desc, RSS desc) - the house top/htop ordering.
+function openProcessModal() {
+    if (document.querySelector('.ucm-modal')) return; // one modal at a time
+    let rows = [];
+    let sortKey = 'name';
+    let sortDir = 1;   // 1 asc, -1 desc
+    let poll = null;
+    let busy = false;
+    let closing = false;
+
+    const box = el('div', { class: 'ucm-modal ucm-modal--procs' });
+    const onKey = (e) => { if (e.key !== 'Escape') return; if (bodyBox.querySelector('.ucm-confirm')) return; closeModal(); };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    const inner = el('div', { class: 'ucm-modal__card' });
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
+        el('i', { class: 'p-icon--close ucm-info__close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'Processes', style: 'margin:0;' }),
+        close));
+
+    // The toolbar: a short status line + the refresh cadence note. (No filter
+    // field: a full /proc list is small on a Core box and the 3 sorts cover the
+    // ask.)
+    const status = el('span', { class: 'ucm-procs__status ucm-muted', text: 'Loading\u2026' });
+    const toolbar = el('div', { class: 'ucm-procs__toolbar' },
+        status,
+        el('span', { class: 'ucm-procs__cadence ucm-muted', text: 'auto-refresh 2 s' }));
+
+    const table = el('table', { class: 'p-table ucm-ifaces-table ucm-procs__table' });
+    const thead = el('thead');
+    const headCols = [
+        ['pid', 'PID', false],
+        ['name', 'Name', true],
+        ['state', 'State', false],
+        ['cpu', 'CPU %', true],
+        ['rss', 'RAM', true],
+    ];
+    const headRow = el('tr');
+    for (const [key, label, sortable] of headCols) {
+        const th = el('th', sortable ? {} : { class: 'ucm-procs__th--nosort' });
+        if (sortable) {
+            th.classList.add('ucm-procs__th');
+            th.tabIndex = '0';
+            th.setAttribute('role', 'button');
+            th.title = 'Sort by ' + label;
+            th.addEventListener('click', () => toggleSort(key));
+            th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(key); } });
+        }
+        th.append(el('span', { class: 'ucm-procs__thlabel', text: label }));
+        headRow.append(th);
+    }
+    // the Stop column header (right-aligned, not sortable)
+    headRow.append(el('th', { class: 'ucm-procs__th--stop', text: 'Stop' }));
+    thead.replaceChildren(headRow);
+
+    const tbody = el('tbody');
+    table.append(thead, tbody);
+    const tableWrap = el('div', { class: 'ucm-procs__scroll' }, table);
+
+    const bodyBox = el('div', { class: 'ucm-modal__body ucm-modal__body--proc' });
+    bodyBox.append(toolbar, tableWrap);
+    inner.append(bodyBox);
+    box.append(backdrop, inner);
+
+    const fmtCpu = (v) => (v == null ? '\u2014' : (Number.isInteger(v) ? String(v) : v.toFixed(1)));
+    const stateChar = (st) => st || '?';
+
+    const sortedRows = () => {
+        const copy = rows.slice();
+        copy.sort((a, b) => {
+            let r = 0;
+            if (sortKey === 'name') r = a.name.localeCompare(b.name);
+            else if (sortKey === 'cpu') r = (a.cpu == null ? -1 : a.cpu) - (b.cpu == null ? -1 : b.cpu);
+            else if (sortKey === 'rss') r = a.rss - b.rss;
+            return r * sortDir || a.pid - b.pid; // stable: pid as the final tiebreak
+        });
+        return copy;
+    };
+
+    function paintSort() {
+        const theadRow = table.querySelector('thead tr');
+        if (!theadRow) return;
+        theadRow.querySelectorAll('th').forEach((th) => th.classList.remove('is-sorted', 'is-sorted-desc'));
+        const idx = headCols.findIndex((c) => c[0] === sortKey);
+        if (idx >= 0) {
+            const th = theadRow.children[idx];
+            th.classList.add('is-sorted');
+            if (sortDir < 0) th.classList.add('is-sorted-desc');
+        }
+    }
+
+    function renderRows() {
+        tbody.replaceChildren(...sortedRows().map((p) => {
+            const row = el('tr', { dataset: { pid: String(p.pid) } });
+            row.append(
+                el('td', { class: 'ucm-mono', text: String(p.pid) }),
+                el('td', { class: 'ucm-mono ucm-procs__name', text: p.name }),
+                el('td', { class: 'ucm-mono', text: stateChar(p.state) }),
+                el('td', { class: 'ucm-mono ucm-procs__cpu', text: fmtCpu(p.cpu) }),
+                el('td', { class: 'ucm-mono', text: fmtBytes(p.rss) }),
+            );
+            const stopBtn = el('button', {
+                class: 'p-button--base p-button ucm-procs__stop', type: 'button',
+                'aria-label': 'Stop ' + p.name + ' (' + p.pid + ')', text: 'Stop',
+            });
+            stopBtn.addEventListener('click', () => stopProcess(p.pid, p.name));
+            row.append(el('td', { class: 'ucm-procs__act' }, stopBtn));
+            return row;
+        }));
+    }
+
+    async function refresh() {
+        if (closing) return;
+        try {
+            const data = await core.machine.procs();
+            if (closing) return;
+            rows = Array.isArray(data) ? data : [];
+            status.textContent = rows.length + ' processes';
+            renderRows();
+        } catch (e) {
+            if (closing) return;
+            status.textContent = 'Cannot read processes: ' + ((e && e.message) || String(e));
+        }
+    }
+
+    function toggleSort(key) {
+        if (sortKey === key) sortDir *= -1;
+        else { sortKey = key; sortDir = (key === 'name') ? 1 : -1; }
+        paintSort();
+        renderRows();
+    }
+
+    // In-modal confirm (the house idiom, round 48h): two-row layout appended to
+    // this modal's own bodyBox - the .ucm-modal .ucm-confirm CSS owns it, so it
+    // renders identically to the snap-info / config in-modal confirms. (There is
+    // no global askConfirm; openConfigModal keeps a local one, so this is a
+    // self-contained copy bound to THIS box.)
+    function stopProcess(pid, name) {
+        if (busy) return;
+        if (bodyBox.querySelector('.ucm-confirm')) return;
+        const cbox = el('div', { class: 'ucm-confirm ucm-confirm--negative' });
+        const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Stop?' });
+        const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+        b.onclick = async () => {
+            b.classList.add('is-disabled');
+            busy = true;
+            try {
+                await core.machine.kill(pid, 9);
+                toast('positive', 'Process stopped', name + ' (pid ' + pid + ') sent SIGKILL');
+                refresh();
+            } catch (e) { toastErr(e); }
+            finally { busy = false; cbox.remove(); }
+        };
+        cancel.onclick = () => cbox.remove();
+        cbox.append(
+            el('div', { class: 'ucm-confirm__row' },
+                el('i', { class: 'p-icon--question ucm-confirm__ic' }),
+                el('p', { class: 'p-notification__message ucm-confirm__msg', text: 'Stop ' + name + ' (pid ' + pid + ')? Sending SIGKILL terminates it immediately without cleanup.' })),
+            el('div', { class: 'ucm-confirm__actions' }, b, cancel));
+        bodyBox.append(cbox);
+        b.focus();
+    }
+
+    function closeModal() {
+        closing = true;
+        if (poll) { clearInterval(poll); poll = null; }
+        document.removeEventListener('keydown', onKey);
+        box.remove();
+    }
+
+    document.body.append(box);
+    document.addEventListener('keydown', onKey);
+    close.focus();
+    paintSort();
+    refresh();
+    poll = setInterval(refresh, 2000);
+}
+
 function syncRefreshHold(active, hold) {
     const sw = $('#refreshHoldSwitch'); const st = $('#refreshHoldState');
     if (sw) sw.checked = !!active;
@@ -4563,6 +4755,10 @@ function wire() {
     // reloads on entry, like the dashboard cards reload on their 20 s poll.
 
     // ---- round L: the System page (journal / refresh / power) ------------
+    // ---- round P: the dashboard process modal (the info icon on the
+    // System load card) ------------
+    const procInfo = $('#procInfoBtn');
+    if (procInfo) procInfo.addEventListener('click', () => openProcessModal());
     const jOpen = $('#journalOpenBtn');
     if (jOpen) jOpen.addEventListener('click', () => openJournalModal());
     const rApply = $('#refreshApplyBtn');

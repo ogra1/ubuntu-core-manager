@@ -219,6 +219,13 @@ const api = Object.freeze({
         powerSchedule: invoke('system:power-schedule'),  // (action, whenMs) — ScheduleShutdown (CLOCK_REALTIME usec)
         powerCancelScheduled: invoke('system:power-cancel-scheduled'), // -> { cancelled:boolean }
         powerScheduled: invoke('system:power-scheduled'), // -> { active, action, usec } ("" + max = none)
+        // round P: the process modal (the `process-control` plug). procs is an
+        // OPEN read (the table; one poll = one INSTANTANEOUS sample, cpu may be
+        // null on the first sample); kill is console-privileged (the renderer
+        // confirm-gates it) and takes (pid, sig) with sig a positive signal
+        // number (9 = SIGKILL, 15 = SIGTERM, 18 = SIGCONT).
+        procs: invoke('system:procs'),                 // -> [ { pid, name, state, ppid, rss, cpu } ]
+        kill: invoke('system:proc-kill'),              // (pid, sig) -> { pid, sig }
     }),
 
     // ---- misc ------------------------------------------------------------

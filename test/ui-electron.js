@@ -191,6 +191,12 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('the REAL journal (journalctl via log-observe) returns real lines',
         sy.ok === true && sy.sy && sy.sy.journal && sy.sy.journal.ok === true && sy.sy.journal.n > 0,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.journal) : sy.error));
+    // round P: the REAL process read (readProcs over /proc via the preload
+    // bridge) returns a non-empty, well-formed table. READ-ONLY - the Stop
+    // path (SIGKILL) is exercised in the integration suite, never here.
+    ok('the REAL process list (readProcs over /proc via the bridge) is non-empty + well-formed',
+        sy.ok === true && sy.sy && sy.sy.procs && sy.sy.procs.ok === true && sy.sy.procs.n > 0,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.procs) : sy.error));
     ok('the REAL login1 ScheduledShutdown read works (D-Bus; nothing scheduled here)',
         sy.ok === true && sy.sy && sy.sy.scheduled && !sy.sy.scheduled.error && sy.sy.scheduled.active === false,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.scheduled) : sy.error));

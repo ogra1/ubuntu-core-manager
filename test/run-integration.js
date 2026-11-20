@@ -475,6 +475,60 @@ function ok(name, cond, extra = '') {
     const c3 = m.readCpuUtilization();
     ok('cpu series grows per call', c3.length === 3, String(c3.length));
 
+
+    // round P: process control (the process-control plug). readProcs reads
+    // /proc per poll (cpu is INSTANTANEOUS - null on the very first sample,
+    // a 0..100 number once the aggregate has a delta); sendProcSignal delivers
+    // a signal (the snap grants signal(send)+capability kill). The REAL signal
+    // test spawns a child and SIGKILLs it through sendProcSignal (no plug is
+    // needed in this dev container - the snap's process-control plug is what
+    // grants it on a real device; the capability check is the guard's job).
+    m.__resetProcState();
+    const pr1 = m.readProcs();
+    ok('readProcs: returns an array of well-formed rows',
+        Array.isArray(pr1) && pr1.length > 0 && pr1.every((r) =>
+            Number.isInteger(r.pid) && r.pid > 0 && typeof r.name === 'string' && r.name.length > 0
+            && typeof r.state === 'string' && Number.isInteger(r.ppid) && r.ppid >= 0
+            && Number.isInteger(r.rss) && r.rss >= 0 && (r.cpu == null || (typeof r.cpu === 'number' && r.cpu >= 0 && r.cpu <= 100))),
+        JSON.stringify(pr1 && pr1[0]));
+    ok('readProcs: lists the current process (own pid present)',
+        pr1.some((r) => r.pid === process.pid),
+        'pid ' + process.pid + ' of ' + pr1.length + ' rows');
+    const sleep = require('child_process').spawn('/bin/sleep', ['30']);
+    await new Promise((r) => setTimeout(r, 80));
+    const pr2 = m.readProcs();
+    ok('readProcs: a freshly spawned child appears (name=comm "sleep")',
+        pr2.some((r) => r.pid === sleep.pid && r.name === 'sleep'),
+        'pid ' + sleep.pid);
+    // the second sample has an aggregate delta -> the current pid's cpu is a number
+    ok('readProcs: 2nd sample reports a numeric cpu for a live pid (0..100)',
+        pr2.every((r) => r.cpu == null || (typeof r.cpu === 'number' && r.cpu >= 0 && r.cpu <= 100)),
+        JSON.stringify(pr2.find((r) => r.pid === process.pid)));
+    // invalid pids/signals are rejected BEFORE any signal is sent
+    let badPid = null, badSig = null;
+    try { m.sendProcSignal(0, 9); } catch (e) { badPid = e; }
+    try { m.sendProcSignal(process.pid, 0); } catch (e) { badSig = e; }
+    ok('sendProcSignal: pid 0 (the process group) is rejected', badPid && /invalid pid/.test(badPid.message), badPid && badPid.message);
+    ok('sendProcSignal: signal 0 is rejected', badSig && /invalid signal/.test(badSig.message), badSig && badSig.message);
+    // the spy: a recorded call, no real signal
+    m.__setProcKill((pid, sig) => { global.__spied = { pid, sig }; return true; });
+    let spyErr = null; const spyRet = m.sendProcSignal(process.pid, 15);
+    ok('sendProcSignal: routes through the (injectable) kill and returns {pid,sig}',
+        global.__spied && global.__spied.pid === process.pid && global.__spied.sig === 15
+        && spyRet && spyRet.pid === process.pid && spyRet.sig === 15,
+        JSON.stringify({ spied: global.__spied, spyRet }));
+    m.__setProcKill(null); // restore the real process.kill
+    // the REAL signal: SIGKILL the spawned child and confirm it is gone
+    m.sendProcSignal(sleep.pid, 9);
+    let exitCode = null, signalCode = null;
+    await new Promise((r) => { sleep.on('exit', (c, sig) => { exitCode = c; signalCode = sig; r(); }); });
+    // a signal death: exitCode is null and signalCode is SIGKILL (NOT exitCode=9 -
+    // that only happens for a numeric exit()). sendProcSignal sent SIGKILL (9).
+    ok('sendProcSignal (REAL): SIGKILL took the spawned child down (signal death)',
+        signalCode === 'SIGKILL' && exitCode === null,
+        'exitCode=' + exitCode + ' signalCode=' + signalCode);
+    ok('readProcs: the killed pid is no longer listed', !m.readProcs().some((r) => r.pid === sleep.pid), 'pid ' + sleep.pid + ' still present');
+
     console.log('\n[8] logout purges volatile state');
     const s1 = await m.storeLogout();
     ok('store logout -> storeAuthenticated=false', s1.storeAuthenticated === false);
@@ -585,6 +639,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:refresh-now']);
             ok('time-card handlers registered (round T: time read/set + timezone write, auth-gated)',
                 !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
+            ok('process-modal handlers registered (round P: procs read open, proc-kill auth-gated, process-control plug)',
+                !!handlers['system:procs'] && !!handlers['system:proc-kill']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',

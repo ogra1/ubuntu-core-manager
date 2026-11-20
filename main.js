@@ -2720,6 +2720,105 @@ function readNetTraffic() {
 
 
 /* ------------------------------------------------------------------ *
+ * 10a. Process control (top/htop-style, the `process-control` plug)
+ * ------------------------------------------------------------------ *
+ * The dashboard's System-load card opens a modal that lists every process
+ * and can STOP one (signal). The snap declares the `process-control`
+ * interface (user-edits snapcraft.yaml): it grants `signal (send)` +
+ * the `kill`/`pkill` binaries (snapd interfaces/builtin/process_control.go).
+ * All process I/O stays /proc + Node process.kill (no shell-out), matching
+ * the host-diagnostics section above.
+ *
+ * readProcs() is called ONCE PER RENDER POLL and returns an INSTANTANEOUS
+ * per-process CPU% (not an average over the process lifetime): it keeps
+ * the previous aggregate + per-pid jiffle snapshot in module state and
+ * takes the delta between polls, exactly like readCpuUtilization does for
+ * the aggregate sparkline. RAM is the RSS from /proc/<pid>/statm (resident
+ * pages; page size from the os module). NAME is comm (truncated to 15 chars
+ * by the kernel - the same value top/ps display). State is the /proc/<pid>/stat
+ * state letter (R/S/D/Z/T...), ppid for context. A vanished pid is skipped.
+ */
+let PROC_PREV = null;   // { cpuTotal, cpuIdle, t:ms, pids: { pid: {ut, st, total} } }
+function readProcs() {
+    // RSS is resident PAGES (/proc/<pid>/statm field 2); convert to bytes with the
+    // page size. The kernel exposes it via sysconf(_SC_PAGESIZE); this Node build
+    // has no os.sysconf, so use the value every Ubuntu Core supported arch ships
+    // (4096) - the same constant top/htop/ps resolve to for RSS-in-bytes.
+    const page = 4096;
+    let cpuTotal = 0, cpuIdle = 0;
+    try {
+        const f = String(fs.readFileSync('/proc/stat', 'utf8')).split('\n')[0].trim().split(/\s+/).slice(1).map(Number);
+        cpuTotal = f.reduce((a, b) => a + (b || 0), 0);
+        cpuIdle = (f[3] || 0) + (f[4] || 0);  // idle + iowait
+    } catch { return []; }
+    let pidDirs = [];
+    try { pidDirs = fs.readdirSync('/proc').filter((n) => n !== '' && n.split('').every((c) => c >= '0' && c <= '9')); } catch { return []; }
+    const now = Date.now();
+    const seen = {};
+    const procs = [];
+    const prevPids = PROC_PREV ? PROC_PREV.pids : null;
+    const dt = PROC_PREV ? (now - PROC_PREV.t) / 1000 : 0;   // seconds since last poll
+    for (const pidStr of pidDirs) {
+        const pid = Number(pidStr);
+        let stat, statm, comm;
+        try {
+            stat = String(fs.readFileSync('/proc/' + pidStr + '/stat', 'utf8'));
+            statm = String(fs.readFileSync('/proc/' + pidStr + '/statm', 'utf8'));
+            comm = String(fs.readFileSync('/proc/' + pidStr + '/comm', 'utf8')).trim();
+        } catch { continue; }  // the process vanished between readdir and read
+        // /proc/<pid>/stat: fields 1..3 are pid, comm (PARENTHESIZED - it may
+        // contain spaces or ')'), state. Everything after the LAST ')' is
+        // field 4 onward, space-separated (field 14 utime, 15 stime, 4 ppid).
+        const rpar = stat.lastIndexOf(')');
+        const rest = stat.slice(rpar + 2).split(' ');
+        const state = stat[rpar - 1];
+        const ppid = Number(rest[0]) || 0;
+        const utime = Number(rest[10]) || 0;
+        const stime = Number(rest[11]) || 0;
+        const rssPages = Number(statm.split(' ')[1]) || 0;
+        const total = utime + stime;
+        seen[pid] = { utime, stime, total };
+        let cpu = null;
+        if (dt > 0 && prevPids) {
+            const pp = prevPids[pid];
+            const prevAgg = cpuTotal - cpuIdle;
+            const nowAgg = cpuTotal - cpuIdle;
+            const dPid = total - (pp ? pp.total : 0);
+            const dAgg = nowAgg - prevAgg;
+            // dAgg <= 0: the aggregate clock did not advance this interval
+            // (frozen/low-res tick) - no rate is computable, report null (—).
+            cpu = (dAgg > 0 && dPid >= 0) ? Math.min(100, Math.max(0, (dPid / dAgg) * 100)) : null;
+            cpu = cpu == null ? null : Math.round(cpu * 10) / 10;
+        }
+        procs.push({ pid, name: comm || ('pid ' + pid), state, ppid, rss: rssPages * page, cpu });
+    }
+    PROC_PREV = { cpuTotal, cpuIdle, t: now, pids: seen };
+    return procs;
+}
+
+/* sendProcSignal(pid, sig): deliver `sig` (a positive integer = the signal
+ * NUMBER, e.g. 9/15/18) to `pid` as this (root) process. process-control
+ * grants signal(send)+capability kill; a plain process.kill needs no
+ * binary at all. Guards: pid must be a POSITIVE integer (never 0 = the
+ * process group, never a negative pid). The renderer only ever requests
+ * SIGKILL/TERM/CONT from the Stop control - this function stays generic so
+ * a future control can widen it. `kill` is a module-scope let (NOT a
+ * function) so the integration test can __setKill a spy; the default is
+ * the REAL process.kill. Returns { pid, sig } on success.
+ */
+let procKill = (pid, sig) => process.kill(pid, sig);
+function sendProcSignal(pid, sig) {
+    const p = Number(pid), s = Number(sig);
+    if (!Number.isInteger(p) || p <= 0) throw new Error('invalid pid: ' + pid);
+    if (!Number.isInteger(s) || s <= 0) throw new Error('invalid signal: ' + sig);
+    procKill(p, s);
+    return { pid: p, sig: s };
+}
+function __setProcKill(fn) { procKill = (typeof fn === 'function') ? fn : (pid, sig) => process.kill(pid, sig); }
+function __resetProcState() { PROC_PREV = null; }
+
+
+/* ------------------------------------------------------------------ *
  * 10. Public API (Electron entry AND headless test harness use this)
  * ------------------------------------------------------------------ */
 
@@ -2764,6 +2863,8 @@ const api = {
     refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
+    // round P: process control (the process-control plug)
+    readProcs, sendProcSignal, __setProcKill, __resetProcState,
     ipfwdStatus, ipfwdSet, ipfwdApplyPref, __setIpfwdNodes,
     getNetDevices, netApplyDevice, buildNetDeviceDef, mergeNetplanDevices,
     listNetDevices, netLinkType, netGlobMatch, netDefMatches, __setNetLive,
@@ -3178,6 +3279,22 @@ function initElectron() {
                                     const ksel = document.querySelector('#keymapSelect');
                                     const kbtn = document.querySelector('#keymapApplyBtn');
                                     sy.kmCard = ksel ? { present: true, opts: ksel.options.length, value: ksel.value, btnPresent: !!kbtn, btnDisabled: kbtn ? kbtn.disabled : null } : { present: false };
+                                    // round P: the REAL process read (main.js readProcs over
+                                    // /proc, exposed through the preload bridge the SAME way the
+                                    // app consumes it). READ-ONLY: the probe never kills anything
+                                    // (the Stop path is SIGKILL - not safe to fire in E2E); it
+                                    // only proves the read path + shape: n>0 and every row
+                                    // well-formed. (The renderer is sandboxed - no process.pid -
+                                    // so the "own pid present" proof lives in the integration
+                                    // suite, which runs readProcs in plain node.)
+                                    try {
+                                        const pr = await core.machine.procs();
+                                        const shape = Array.isArray(pr) && pr.length > 0 && pr.every((r) =>
+                                            Number.isInteger(r.pid) && r.pid > 0 && typeof r.name === 'string' && r.name.length > 0
+                                            && typeof r.state === 'string' && Number.isInteger(r.ppid) && r.ppid >= 0
+                                            && Number.isInteger(r.rss) && r.rss >= 0 && (r.cpu == null || (typeof r.cpu === 'number' && r.cpu >= 0 && r.cpu <= 100)));
+                                        sy.procs = { ok: shape, n: Array.isArray(pr) ? pr.length : 0 };
+                                    } catch (e) { sy.procs = { ok: false, error: String((e && e.message) || e) }; }
                                     // round T: the REAL time READ (timedate1
                                     // Properties.Get — granted by the EXISTING
                                     // timeserver-control plug; READ-ONLY, the
@@ -3411,6 +3528,14 @@ function initElectron() {
         requireAuth();
         return powerScheduledRead();
     }));
+    // round P: the process modal (the `process-control` plug). The read is
+    // open (anyone past the local gate can see the process table - the same
+    // exposure as the journal / system stats); STOP is console-privileged
+    // (requireAuth) and confirm-gated in the renderer, exactly like the power
+    // actions. sig is a POSITIVE integer signal number; the renderer only
+    // ever sends 9 (SIGKILL) / 15 (SIGTERM) / 18 (SIGCONT).
+    ipcMain.handle('system:procs', guard(() => readProcs()));
+    ipcMain.handle('system:proc-kill', guard((pid, sig) => { requireAuth(); return sendProcSignal(pid, sig); }));
     ipcMain.handle('ifaces:list', guard(() => listInterfaces()));
     ipcMain.handle('ifaces:connect', guard((plug, slot) => { requireAuth(); return connectInterface(plug, slot); }));
     ipcMain.handle('ifaces:disconnect', guard((plug, slot) => { requireAuth(); return disconnectInterface(plug, slot); }));

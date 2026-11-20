@@ -30,18 +30,19 @@ apps:
     daemon: simple
     extensions: [ gnome ]
     plugs:
-      - opengl
+      - log-observe
+      - mount-observe
       - network
       - network-bind
-      - snapd-control
-      - system-observe
-      - mount-observe
-      - timeserver-control
-      - time-control
       - network-control
       - network-setup-control
+      - opengl
+      - process-control
       - shutdown
-      - log-observe
+      - snapd-control
+      - system-observe
+      - time-control
+      - timeserver-control
 
 parts:
   app:

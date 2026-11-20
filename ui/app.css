@@ -1707,6 +1707,60 @@ button.is-disabled { pointer-events: none; opacity: .6; }
     font-family: "Ubuntu Mono variable", monospace; font-size: .72rem; line-height: 1.55;
     max-height: calc(100vh - 16rem); overflow: auto; white-space: pre-wrap; word-break: break-word;
     border-radius: .25rem; }
+/* ============================================================================
+   ROUND P - PROCESS CONTROL (the top/htop-style modal from the System load card)
+   ============================================================================ */
+/* The little info icon top-right of the dashboard 'System load' card opens the
+   process modal. The glyph is the house .p-icon--information - the BUNDLE's own
+   THEME-AWARE dual data-URI (black in light, white in .is-dark; the same icon the
+   lock-screen notes use) - so NO app colour override is needed; it only gets a
+   muted opacity (a quiet affordance, not a primary control) + a hover lift.
+   The base button's phantom margins are zeroed (round-7/50/61 logic). */
+.ucm-stat--cpu { position: relative; }
+.ucm-stat__info {
+    position: absolute; top: .55rem; right: .55rem;
+    width: 1.6rem; height: 1.6rem; padding: 0; margin: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 0; background: transparent; border-radius: .25rem; cursor: pointer;
+}
+.ucm-stat__info .p-icon--information { width: 1rem; height: 1rem; opacity: .5; }
+.ucm-stat__info:hover .p-icon--information { opacity: 1; }
+.ucm-stat__info:focus-visible { outline: .125rem solid var(--vf-color-focus); outline-offset: .125rem; }
+
+/* the modal: a bit wider than the default (a 6-column table), the toolbar
+   (count + cadence) sits above a SCROLLABLE table with a sticky header so the
+   columns stay labelled at any row count (top/htop behaviour). It reuses the
+   house .ucm-ifaces-table idiom (faint uppercase header + .ucm-mono value cells)
+   so it blends with every other table in the app. */
+.ucm-modal--procs .ucm-modal__card { max-width: 68rem; }
+.ucm-procs__toolbar { display: flex; align-items: baseline; gap: .8rem; margin-bottom: .7rem; }
+.ucm-procs__status { font-size: .85rem; }
+.ucm-procs__cadence { margin-left: auto; font-size: .75rem; color: #999; }
+.ucm-procs__scroll { max-height: calc(100vh - 16rem); overflow-y: auto; }
+.ucm-procs__table thead th { position: sticky; top: 0; z-index: 1; background: #fff; }
+.ucm-procs__th { cursor: pointer; user-select: none; }
+.ucm-procs__th:hover { color: var(--ucm-orange); }
+.ucm-procs__th.is-sorted { color: #111; font-weight: 600; }
+.ucm-procs__th.is-sorted .ucm-procs__thlabel::after { content: ' \25b2'; font-size: .58rem; }
+.ucm-procs__th.is-sorted-desc .ucm-procs__thlabel::after { content: ' \25bc'; font-size: .58rem; }
+.ucm-procs__th--nosort, .ucm-procs__th--stop { cursor: default; }
+/* numeric columns right-align (top/htop): pid / cpu / ram / action; state centres */
+.ucm-procs__table th:nth-child(1), .ucm-procs__table td:nth-child(1) { text-align: right; }
+.ucm-procs__table th:nth-child(3), .ucm-procs__table td:nth-child(3) { text-align: center; }
+.ucm-procs__table th:nth-child(4), .ucm-procs__table td:nth-child(4) { text-align: right; }
+.ucm-procs__table th:nth-child(5), .ucm-procs__table td:nth-child(5) { text-align: right; }
+.ucm-procs__table th:nth-child(6), .ucm-procs__table td:nth-child(6) { text-align: right; }
+.ucm-procs__table .ucm-mono { font-variant-numeric: tabular-nums; }
+/* the per-row Stop: a compact ghost (.p-button--base) - the phantom bottom margin
+   zeroed so it sits on the row baseline, and confirm-gated in JS (destructive). */
+.ucm-procs__stop { margin: 0; height: 1.75rem; padding: 0 .7rem; font-size: .78rem; white-space: nowrap; }
+/* dark: only the app-chrome carriers the bundle doesn't flip (the sticky header
+   must match the dark card, and the sorted/hover header text + cadence). */
+.is-dark .ucm-procs__table thead th { background: #262626; }
+.is-dark .ucm-procs__th:hover { color: var(--ucm-orange); }
+.is-dark .ucm-procs__th.is-sorted { color: #f2f2f2; }
+.is-dark .ucm-procs__cadence { color: #8c8c8c; }
+
 /* round T-fix19: the Recent-changes Change (kind) cell is the row's click
    target -> the change-detail modal (the in-app `snap change <id>`), exactly
    like the snap-name cell opens snap-info. Pointer + a faint dotted underline
