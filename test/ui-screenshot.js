@@ -1741,7 +1741,18 @@ function mockFactoryJs() {
 
         const sortedTh = Array.from(m.querySelectorAll('thead th')).findIndex((th) => th.classList.contains('is-sorted'));
         const sortedDesc = Array.from(m.querySelectorAll('thead th')).some((th) => th.classList.contains('is-sorted-desc'));
-        return { open: true, ths, rowCount: rows.length, nameCol, stateCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csTh, cardH };
+        // round P2: the per-column widths (the jump probe - they must be stable
+        // across re-renders once the layout is pinned), the icon-only Stop
+        // reads (the suru X: icon child, no visible text, aria-label + title),
+        // and the CPU header sort-arrow glyph (the default-sort pin).
+        const colW = Array.from(m.querySelectorAll('thead th')).map((th) => Math.round(th.getBoundingClientRect().width));
+        const stops = Array.from(m.querySelectorAll('.ucm-procs__stop'));
+        const stopIcon = stops.length ? stops.every((b) => !!b.querySelector('.p-icon--window-close')) : null;
+        const stopNoText = stops.length ? stops.every((b) => !b.textContent.trim()) : null;
+        const stopAria = stops.length ? stops.every((b) => /^Stop \S+ \(\d+\)$/.test(b.getAttribute('aria-label') || '')) : null;
+        const stopTitle = stops.length ? stops.every((b) => ((b.getAttribute('title') || '') === ((b.getAttribute('aria-label') || '')))) : null;
+        const cpuArrow = m.querySelector('.ucm-procs__th.is-sorted-desc .ucm-procs__thlabel') ? getComputedStyle(m.querySelector('.ucm-procs__th.is-sorted-desc .ucm-procs__thlabel'), '::after').content : null;
+        return { open: true, ths, rowCount: rows.length, nameCol, stateCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csTh, cardH, colW, stopIcon, stopNoText, stopAria, stopTitle, cpuArrow };
     });
     let pm = await procModal();
     if (!pm.open) console.log('PAGE ERROR: clicking the info icon must open the process modal (round P)');
@@ -1750,17 +1761,21 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the process table headers are wrong (got ' + JSON.stringify(pm.ths) + ') (round P)');
         if (pm.rowCount !== 4) console.log('PAGE ERROR: the process table must list the 4 seeded processes (got ' + pm.rowCount + ') (round P)');
         if (pm.status !== '4 processes') console.log('PAGE ERROR: the process status line must read the count (got ' + JSON.stringify(pm.status) + ') (round P)');
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'dd-disk', 'mm-mid', 'zz-app']))
-            console.log('PAGE ERROR: default sort must be NAME ascending (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
-        if (JSON.stringify(pm.cpuCol) !== JSON.stringify(['7', '\u2014', '\u2014', '42.5']))
-            console.log('PAGE ERROR: the CPU column must render 7 / (null=em-dash) x2 / 42.5 in name order (got ' + JSON.stringify(pm.cpuCol) + ') (round P)');
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['zz-app', 'aa-core', 'mm-mid', 'dd-disk']))
+            console.log('PAGE ERROR: default sort must be CPU descending (most active on top; the nulls last, by pid) (got ' + JSON.stringify(pm.nameCol) + ') (round P2)');
+        if (JSON.stringify(pm.cpuCol) !== JSON.stringify(['42.5', '7', '\u2014', '\u2014']))
+            console.log('PAGE ERROR: the CPU column must render 42.5 / 7 / (null=em-dash) x2 in cpu-desc order (got ' + JSON.stringify(pm.cpuCol) + ') (round P2)');
+        if (pm.sortedTh !== 3 || pm.sortedDesc !== true)
+            console.log('PAGE ERROR: the CPU % header must show the active DESC sort marker on open (th=' + pm.sortedTh + ' desc=' + pm.sortedDesc + ') (round P2)');
+        if (pm.cpuArrow === 'none' || pm.cpuArrow === null || (pm.cpuArrow || '').indexOf('\u25bc') === -1)
+            console.log('PAGE ERROR: the default CPU-desc header must render the desc arrow (got ' + JSON.stringify(pm.cpuArrow) + ') (round P2)');
         // STATE column: a readable WORD per row (the raw /proc code is not
-        // self-explanatory) - S/D/S/R in name order render as Sleeping / Disk I/O /
-        // Sleeping / Running. A closing paren or a bare letter would be a regression
-        // (the round-P field-index bug). Each cell carries a legend title + the
-        // column header carries the full legend.
-        if (JSON.stringify(pm.stateCol) !== JSON.stringify(['Sleeping', 'Disk I/O', 'Sleeping', 'Running']))
-            console.log('PAGE ERROR: the State column must show readable words per row (got ' + JSON.stringify(pm.stateCol) + ', want Sleeping/Disk I/O/Sleeping/Running) (round P)');
+        // self-explanatory) - R/S/S/D in the default cpu-desc order render as
+        // Running / Sleeping / Sleeping / Disk I/O. A closing paren or a bare
+        // letter would be a regression (the round-P field-index bug). Each cell
+        // carries a legend title + the column header carries the full legend.
+        if (JSON.stringify(pm.stateCol) !== JSON.stringify(['Running', 'Sleeping', 'Sleeping', 'Disk I/O']))
+            console.log('PAGE ERROR: the State column must show readable words per row (got ' + JSON.stringify(pm.stateCol) + ', want Running/Sleeping/Sleeping/Disk I/O in cpu-desc order) (round P)');
         if (!pm.stateCol.every((c) => c.length > 1 && c.indexOf('(') === -1))
             console.log('PAGE ERROR: every State cell must be a readable word, not a letter or a paren (got ' + JSON.stringify(pm.stateCol) + ') (round P)');
         const stateLegend = await page.evaluate(() => {
@@ -1775,6 +1790,18 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: a D State cell must carry a readable legend in its title (got ' + JSON.stringify(stateLegend.cell) + ') (round P)');
         if (pm.nameCellsMono !== true) console.log('PAGE ERROR: the Name (value) cells must be house-mono (ucm-mono) (round P)');
         if (pm.stopCount !== 4) console.log('PAGE ERROR: every row needs a Stop control (got ' + pm.stopCount + ') (round P)');
+        // round P2: the Stop control is the ICON-ONLY X (the interface-
+        // disconnect idiom) - no column of "Stop" words: the suru-close glyph
+        // is the only child, the textContent is empty, and the aria-label +
+        // title carry the meaning (identical, so the hover matches the a11y).
+        if (pm.stopIcon !== true)
+            console.log('PAGE ERROR: every Stop button must carry the suru-close X icon (.p-icon--window-close) (round P2)');
+        if (pm.stopNoText !== true)
+            console.log('PAGE ERROR: the Stop buttons must be icon-only (no visible text; a column of "Stop" words is gone) (round P2)');
+        if (pm.stopAria !== true)
+            console.log('PAGE ERROR: each Stop icon must keep its aria-label naming the process + pid (round P2)');
+        if (pm.stopTitle !== true)
+            console.log('PAGE ERROR: each Stop icon must carry a title equal to its aria-label (the hover) (round P2)');
         // CSS-integrity guard (the house idiom: pin the computed styles that a
         // clobbered app.css rule would silently lose): the numeric columns
         // right-align, the header is the faint uppercase house table idiom, and
@@ -1785,7 +1812,16 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the process header must be the house faint-UPPERCASE table idiom (got ' + JSON.stringify(pm.csTh) + ') (round P)');
         if (!pm.csTh || !pm.csTh.bg || pm.csTh.bg === 'rgba(0, 0, 0, 0)')
             console.log('PAGE ERROR: the sticky process header row must carry a background (got ' + JSON.stringify(pm.csTh) + ') (round P)');
-        // SORT by CPU % (th index 3) -> first click = DESC (the top/htop default)
+        // round P2: the modal OPENS cpu-desc, so the first click TOGGLES to ASC
+        // (nulls first, by pid; then 7.0, 42.5).
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
+        await wait(150);
+        pm = await procModal();
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['mm-mid', 'dd-disk', 'aa-core', 'zz-app']))
+            console.log('PAGE ERROR: the CPU toggle (default desc -> asc) must order nulls (mm,dd) then 7.0, 42.5 (got ' + JSON.stringify(pm.nameCol) + ') (round P2)');
+        if (pm.sortedTh !== 3 || pm.sortedDesc !== false)
+            console.log('PAGE ERROR: after the toggle the CPU header must show ASC (th=' + pm.sortedTh + ' desc=' + pm.sortedDesc + ') (round P2)');
+        // SORT by CPU again -> DESC (42.5, 7.0, then the nulls by pid)
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
         await wait(150);
         pm = await procModal();
@@ -1793,12 +1829,6 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: sorting by CPU desc must order 42.5, 7.0, then the nulls by pid (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
         if (pm.sortedTh !== 3 || pm.sortedDesc !== true)
             console.log('PAGE ERROR: the CPU header must show the active DESC sort marker (th=' + pm.sortedTh + ' desc=' + pm.sortedDesc + ') (round P)');
-        // SORT by CPU again -> ASC (nulls first, by pid; then 7.0, 42.5)
-        await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
-        await wait(150);
-        pm = await procModal();
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['mm-mid', 'dd-disk', 'aa-core', 'zz-app']))
-            console.log('PAGE ERROR: sorting by CPU asc must order nulls (mm,dd) then 7.0, 42.5 (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
         // SORT by RAM (th index 4) -> DESC
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[4].click(); });
         await wait(150);
@@ -1811,11 +1841,41 @@ function mockFactoryJs() {
         pm = await procModal();
         if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'dd-disk', 'mm-mid', 'zz-app']))
             console.log('PAGE ERROR: re-sorting by NAME asc must restore aa-core, dd-disk, mm-mid, zz-app (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        // round P2 - the COLUMN JUMP probe (the user's "can't tell which
+        // column expands/collapses"): the rows are fully rebuilt every 2 s poll
+        // and the content lengths change (state words, cpu, ram, names, count),
+        // so with the auto layout the columns re-computed and slid ~240 px
+        // between polls (measured: State +198, Name +64, Stop -58). With the
+        // pinned fixed layout the colgroup/thead define the widths once -
+        // seed DIFFERENT data (a 26-char name, a new state word, 123.4 % cpu,
+        // 1 GiB ram, a 5th row) and every column width must hold.
+        const colsWBefore = pm.colW;
+        await page.evaluate((seed) => { window.__mockCore.machine.__setprocs(seed); }, [
+            { pid: 200, name: 'zz-application-daemon-worker', state: 'W', ppid: 1,   rss: 1073741824, cpu: 123.4 },
+            { pid: 100, name: 'aa-core',                      state: 'R', ppid: 1,   rss: 1024,       cpu: 0 },
+            { pid: 300, name: 'mm',                           state: 'Z', ppid: 100, rss: 50000000,   cpu: 88.8 },
+            { pid: 400, name: 'dd-disk',                      state: 'S', ppid: 1,   rss: 2048,       cpu: 5 },
+            { pid: 500, name: 'ee-extra-process-long',        state: 'I', ppid: 1,   rss: 4096,       cpu: 3.3 },
+        ]);
+        await wait(2200); // one full poll cycle
+        pm = await procModal();
+        if (JSON.stringify(pm.colW) !== JSON.stringify(colsWBefore))
+            console.log('PAGE ERROR: the process table columns must NOT move when the polled data changes (fixed layout) - ' + JSON.stringify(colsWBefore) + ' -> ' + JSON.stringify(pm.colW) + ' (round P2)');
+        if (pm.rowCount !== 5)
+            console.log('PAGE ERROR: the 5th seeded process must appear on the re-poll (got ' + pm.rowCount + ' rows) (round P2)');
+        // re-seed the original 4 so the Stop flow below is deterministic
+        // (it stops the FIRST row, which the name sort pins to aa-core).
+        await page.evaluate((seed) => { window.__mockCore.machine.__setprocs(seed); }, PROC_SEED);
+        await wait(2200);
+        pm = await procModal();
         // STOP the first row (aa-core, pid 100) - CONFIRM-GATED, then confirm.
         // Capture the card height FIRST: opening the confirm must SQUEEZE the
         // scrollable table (the card is a fixed height), NOT grow the card -
         // that is the round-P-fix "confirm pinned to the bottom" behaviour.
         const cardHBefore = pm.cardH;
+        // round P2: the per-row Stop is the icon-only X (aria-labelled) - the
+        // click path is unchanged, and the confirm-gated SIGKILL flow below is
+        // the same.
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs tbody tr .ucm-procs__stop').click(); });
         await wait(150);
         const confirm = await page.evaluate(() => {

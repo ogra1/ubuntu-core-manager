@@ -4359,8 +4359,8 @@ function openModelModal() {
 function openProcessModal() {
     if (document.querySelector('.ucm-modal')) return; // one modal at a time
     let rows = [];
-    let sortKey = 'name';
-    let sortDir = 1;   // 1 asc, -1 desc
+    let sortKey = 'cpu';
+    let sortDir = -1;  // 1 asc, -1 desc - default CPU % DESC (most active on top)
     let poll = null;
     let busy = false;
     let closing = false;
@@ -4384,6 +4384,16 @@ function openProcessModal() {
         el('span', { class: 'ucm-procs__cadence ucm-muted', text: 'auto-refresh 2 s' }));
 
     const table = el('table', { class: 'p-table ucm-ifaces-table ucm-procs__table' });
+    // the <colgroup> carries the column widths the FIXED table layout reads
+    // (the rows re-render every 2 s poll; only the static thead + cols may
+    // define geometry - see the .ucm-procs__table rule in app.css).
+    table.append(el('colgroup', {},
+        el('col', { class: 'c-procs-pid' }),
+        el('col', { class: 'c-procs-name' }),
+        el('col', { class: 'c-procs-state' }),
+        el('col', { class: 'c-procs-cpu' }),
+        el('col', { class: 'c-procs-ram' }),
+        el('col', { class: 'c-procs-act' })));
     const thead = el('thead');
     const headCols = [
         ['pid', 'PID', false],
@@ -4479,10 +4489,15 @@ function openProcessModal() {
                 el('td', { class: 'ucm-mono ucm-procs__cpu', text: fmtCpu(p.cpu) }),
                 el('td', { class: 'ucm-mono', text: fmtBytes(p.rss) }),
             );
+            // Icon-only X - the same suru-close button as the interface
+            // disconnect (a column of "Stop" words is visually heavy). The
+            // aria-label keeps the meaning; the title is the hover; the click
+            // still opens the same confirm-gated SIGKILL flow.
             const stopBtn = el('button', {
-                class: 'p-button--base p-button ucm-procs__stop', type: 'button',
-                'aria-label': 'Stop ' + p.name + ' (' + p.pid + ')', text: 'Stop',
-            });
+                class: 'p-button--base p-button ucm-procs__stop ucm-iconbtn', type: 'button',
+                'aria-label': 'Stop ' + p.name + ' (' + p.pid + ')',
+                title: 'Stop ' + p.name + ' (' + p.pid + ')',
+            }, el('i', { class: 'p-icon--window-close' }));
             stopBtn.addEventListener('click', () => stopProcess(p.pid, p.name));
             row.append(el('td', { class: 'ucm-procs__act' }, stopBtn));
             return row;

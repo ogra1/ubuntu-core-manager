@@ -1783,6 +1783,21 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-procs__table th:nth-child(5), .ucm-procs__table td:nth-child(5) { text-align: right; }
 .ucm-procs__table th:nth-child(6), .ucm-procs__table td:nth-child(6) { text-align: right; }
 .ucm-procs__table .ucm-mono { font-variant-numeric: tabular-nums; }
+/* the column JUMP fix: .ucm-ifaces-table sets table-layout: AUTO (fine for the
+   static interfaces tables), so every 2 s re-render recomputed each column
+   from the current row content (state words, cpu, ram, names and the row
+   count all vary) and the columns slid ~240 px between polls (measured on
+   the harness: State +198 px, Name +64 px, Stop -58 px). Pin FIXED: the
+   static thead + <colgroup> define the widths once and the re-renders can no
+   longer reflow. Name keeps the space long names earned (they ellipsize);
+   the numeric columns stay compact; the action column is the X only. */
+.ucm-procs__table { table-layout: fixed; }
+.ucm-procs__table col.c-procs-pid   { width: 64px; }
+.ucm-procs__table col.c-procs-name  { width: 236px; }
+.ucm-procs__table col.c-procs-state { width: 112px; }
+.ucm-procs__table col.c-procs-cpu   { width: 96px; }
+.ucm-procs__table col.c-procs-ram   { width: 104px; }
+.ucm-procs__table col.c-procs-act   { width: 48px; }
 /* the Stop confirm: pinned to the BOTTOM of the modal (flex:0 0 auto) so it is
    always visible with padding - opening it squeezes the (scrollable) table
    area upward instead of the confirm flowing out of view (round P-fix). The
@@ -1795,9 +1810,12 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    title tooltip + the column-header legend). */
 .ucm-procs__state { color: #6f6f6f; white-space: nowrap; }
 .is-dark .ucm-procs__state { color: #a8a8a8; }
-/* the per-row Stop: a compact ghost (.p-button--base) - the phantom bottom margin
-   zeroed so it sits on the row baseline, and confirm-gated in JS (destructive). */
-.ucm-procs__stop { margin: 0; height: 1.75rem; padding: 0 .7rem; font-size: .78rem; white-space: nowrap; }
+/* the per-row Stop: an ICON-ONLY X (the interface-disconnect suru-close
+   idiom - .ucm-iconbtn zeroes the text padding/margin the .p-button base
+   would otherwise bring). A column of "Stop" words is visually heavy; the
+   aria-label + title carry the meaning, and the click still opens the
+   confirm-gated SIGKILL flow (destructive). */
+.ucm-procs__stop { margin: 0; }
 /* dark: only the app-chrome carriers the bundle doesn't flip (the sticky header
    must match the dark card, and the sorted/hover header text + cadence). */
 .is-dark .ucm-procs__table thead th { background: #262626; }
