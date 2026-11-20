@@ -4278,7 +4278,7 @@ function openProcessModal() {
     let closing = false;
 
     const box = el('div', { class: 'ucm-modal ucm-modal--procs' });
-    const onKey = (e) => { if (e.key !== 'Escape') return; if (bodyBox.querySelector('.ucm-confirm')) return; closeModal(); };
+    const onKey = (e) => { if (e.key !== 'Escape') return; if (confirmSlot.querySelector('.ucm-confirm')) return; closeModal(); };
     const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
     const inner = el('div', { class: 'ucm-modal__card' });
     const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
@@ -4326,13 +4326,36 @@ function openProcessModal() {
     table.append(thead, tbody);
     const tableWrap = el('div', { class: 'ucm-procs__scroll' }, table);
 
+    const confirmSlot = el('div', { class: 'ucm-procs__confirm' });
     const bodyBox = el('div', { class: 'ucm-modal__body ucm-modal__body--proc' });
-    bodyBox.append(toolbar, tableWrap);
+    bodyBox.append(toolbar, tableWrap, confirmSlot);
     inner.append(bodyBox);
     box.append(backdrop, inner);
 
     const fmtCpu = (v) => (v == null ? '\u2014' : (Number.isInteger(v) ? String(v) : v.toFixed(1)));
-    const stateChar = (st) => st || '?';
+    // State: /proc/<pid>/stat gives a single CODE LETTER (R/S/D/Z/T/...). A bare
+    // letter is not self-explanatory to an operator, so the CELL shows a short
+    // readable WORD (Running, Sleeping, ...) and the FULL meaning rides in a
+    // legend - each cell's title (hover) + the column header's title (round
+    // P: the user asked for readable states, or at least a legend - we do both).
+    const PROC_STATE = {
+        R: 'Running', S: 'Sleeping', D: 'Disk I/O', Z: 'Zombie', T: 'Stopped',
+        t: 'Tracing', W: 'Out of swap', X: 'Dead', I: 'Idle',
+    };
+    const PROC_STATE_DESC = {
+        R: 'Running or runnable (on a CPU)',
+        S: 'Sleeping (waiting for an event or I/O)',
+        D: 'Uninterruptible sleep (usually disk I/O)',
+        Z: 'Zombie (exited; the parent has not reaped it)',
+        T: 'Stopped (a SIGSTOP, or being debugged)',
+        t: 'Tracing stop',
+        W: 'Out of swap (legacy; now D or S)',
+        X: 'Dead (should never be visible)',
+        I: 'Idle (a kernel thread, or unused)',
+    };
+    const stateWord = (st) => PROC_STATE[st] || (st ? ('State ' + st) : 'Unknown');
+    const stateDesc = (st) => (st && PROC_STATE_DESC[st]) ? (st + ' = ' + PROC_STATE_DESC[st]) : stateWord(st);
+    const STATE_LEGEND = 'State: ' + Object.entries(PROC_STATE_DESC).map(([k, v]) => k + ' = ' + v).join('; ');
 
     const sortedRows = () => {
         const copy = rows.slice();
@@ -4364,7 +4387,7 @@ function openProcessModal() {
             row.append(
                 el('td', { class: 'ucm-mono', text: String(p.pid) }),
                 el('td', { class: 'ucm-mono ucm-procs__name', text: p.name }),
-                el('td', { class: 'ucm-mono', text: stateChar(p.state) }),
+                el('td', { class: 'ucm-procs__state', text: stateWord(p.state), title: stateDesc(p.state) }),
                 el('td', { class: 'ucm-mono ucm-procs__cpu', text: fmtCpu(p.cpu) }),
                 el('td', { class: 'ucm-mono', text: fmtBytes(p.rss) }),
             );
@@ -4406,7 +4429,7 @@ function openProcessModal() {
     // self-contained copy bound to THIS box.)
     function stopProcess(pid, name) {
         if (busy) return;
-        if (bodyBox.querySelector('.ucm-confirm')) return;
+        if (confirmSlot.querySelector('.ucm-confirm')) return;
         const cbox = el('div', { class: 'ucm-confirm ucm-confirm--negative' });
         const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Stop?' });
         const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
@@ -4426,7 +4449,7 @@ function openProcessModal() {
                 el('i', { class: 'p-icon--question ucm-confirm__ic' }),
                 el('p', { class: 'p-notification__message ucm-confirm__msg', text: 'Stop ' + name + ' (pid ' + pid + ')? Sending SIGKILL terminates it immediately without cleanup.' })),
             el('div', { class: 'ucm-confirm__actions' }, b, cancel));
-        bodyBox.append(cbox);
+        confirmSlot.append(cbox);
         b.focus();
     }
 
@@ -4439,6 +4462,10 @@ function openProcessModal() {
 
     document.body.append(box);
     document.addEventListener('keydown', onKey);
+    // the State column header carries the full legend (hover the header) -
+    // set here (not at header-build time) so STATE_LEGEND is already initialised
+    const stateTh = headRow.children[2];
+    if (stateTh) stateTh.title = STATE_LEGEND;
     close.focus();
     paintSort();
     refresh();

@@ -2738,19 +2738,13 @@ function readNetTraffic() {
  * by the kernel - the same value top/ps display). State is the /proc/<pid>/stat
  * state letter (R/S/D/Z/T...), ppid for context. A vanished pid is skipped.
  */
-let PROC_PREV = null;   // { cpuTotal, cpuIdle, t:ms, pids: { pid: {ut, st, total} } }
+let PROC_PREV = null;   // { t: ms, pids: { pid: ownCpuJiffies } }
 function readProcs() {
     // RSS is resident PAGES (/proc/<pid>/statm field 2); convert to bytes with the
     // page size. The kernel exposes it via sysconf(_SC_PAGESIZE); this Node build
     // has no os.sysconf, so use the value every Ubuntu Core supported arch ships
     // (4096) - the same constant top/htop/ps resolve to for RSS-in-bytes.
     const page = 4096;
-    let cpuTotal = 0, cpuIdle = 0;
-    try {
-        const f = String(fs.readFileSync('/proc/stat', 'utf8')).split('\n')[0].trim().split(/\s+/).slice(1).map(Number);
-        cpuTotal = f.reduce((a, b) => a + (b || 0), 0);
-        cpuIdle = (f[3] || 0) + (f[4] || 0);  // idle + iowait
-    } catch { return []; }
     let pidDirs = [];
     try { pidDirs = fs.readdirSync('/proc').filter((n) => n !== '' && n.split('').every((c) => c >= '0' && c <= '9')); } catch { return []; }
     const now = Date.now();
@@ -2769,30 +2763,32 @@ function readProcs() {
         // /proc/<pid>/stat: fields 1..3 are pid, comm (PARENTHESIZED - it may
         // contain spaces or ')'), state. Everything after the LAST ')' is
         // field 4 onward, space-separated (field 14 utime, 15 stime, 4 ppid).
+        // /proc/<pid>/stat: after the LAST ')' the space-separated fields are
+        //   [0] state (R/S/D/Z/...)  [1] ppid  ...  [11] utime  [12] stime
+        // (utime/stime are the process's OWN cpu time in USER_HZ ticks; USER_HZ
+        //  is 100 on every Linux kernel, so ticks-per-second == % of one core).
         const rpar = stat.lastIndexOf(')');
         const rest = stat.slice(rpar + 2).split(' ');
-        const state = stat[rpar - 1];
-        const ppid = Number(rest[0]) || 0;
-        const utime = Number(rest[10]) || 0;
-        const stime = Number(rest[11]) || 0;
+        const state = rest[0] || '?';
+        const ppid = Number(rest[1]) || 0;
+        const utime = Number(rest[11]) || 0;
+        const stime = Number(rest[12]) || 0;
         const rssPages = Number(statm.split(' ')[1]) || 0;
         const total = utime + stime;
-        seen[pid] = { utime, stime, total };
+        seen[pid] = total;
+        // CPU% = the process's OWN jiffies-per-second between polls (top/htop
+        // style: 100% = one full core, so a multi-threaded process can exceed
+        // 100). Null on the first sample / for a pid not seen last poll.
+        // (The pre-fix version divided by an aggregate it recomputed from the
+        // SAME snapshot, so the delta was always 0 and every row read "-".)
         let cpu = null;
-        if (dt > 0 && prevPids) {
-            const pp = prevPids[pid];
-            const prevAgg = cpuTotal - cpuIdle;
-            const nowAgg = cpuTotal - cpuIdle;
-            const dPid = total - (pp ? pp.total : 0);
-            const dAgg = nowAgg - prevAgg;
-            // dAgg <= 0: the aggregate clock did not advance this interval
-            // (frozen/low-res tick) - no rate is computable, report null (—).
-            cpu = (dAgg > 0 && dPid >= 0) ? Math.min(100, Math.max(0, (dPid / dAgg) * 100)) : null;
-            cpu = cpu == null ? null : Math.round(cpu * 10) / 10;
+        if (dt > 0 && prevPids && prevPids[pid] != null) {
+            const d = total - prevPids[pid];
+            if (d >= 0) cpu = Math.round(Math.max(0, d / dt) * 10) / 10;
         }
         procs.push({ pid, name: comm || ('pid ' + pid), state, ppid, rss: rssPages * page, cpu });
     }
-    PROC_PREV = { cpuTotal, cpuIdle, t: now, pids: seen };
+    PROC_PREV = { t: now, pids: seen };
     return procs;
 }
 

@@ -1700,9 +1700,10 @@ function mockFactoryJs() {
     // returns a canned live list, kill records the call + removes the pid.
     // Seeds 3 distinct rows so the 3 sorts (name/CPU/RAM) are distinguishable.
     const PROC_SEED = [
-        { pid: 200, name: 'zz-app',  state: 'R', ppid: 1,   rss: 1000,     cpu: 42.5 },
-        { pid: 100, name: 'aa-core', state: 'S', ppid: 1,   rss: 50000000, cpu: 7.0 },
-        { pid: 300, name: 'mm-mid',  state: 'S', ppid: 100, rss: 2048,     cpu: null },
+        { pid: 200, name: 'zz-app',   state: 'R', ppid: 1,   rss: 1000,     cpu: 42.5 },
+        { pid: 100, name: 'aa-core',  state: 'S', ppid: 1,   rss: 50000000, cpu: 7.0 },
+        { pid: 300, name: 'mm-mid',   state: 'S', ppid: 100, rss: 2048,     cpu: null },
+        { pid: 400, name: 'dd-disk',  state: 'D', ppid: 1,   rss: 4096,     cpu: null },
     ];
     await page.evaluate((seed) => { window.__mockCore.machine.__setprocs(seed); }, PROC_SEED);
     const pInfo = await page.evaluate(() => {
@@ -1729,7 +1730,9 @@ function mockFactoryJs() {
         const ths = Array.from(m.querySelectorAll('thead th')).map((th) => th.textContent.trim());
         const rows = Array.from(m.querySelectorAll('tbody tr'));
         const nameCol = rows.map((tr) => tr.children[1].textContent.trim());
+        const stateCol = rows.map((tr) => tr.children[2].textContent.trim());
         const cpuCol = rows.map((tr) => tr.children[3].textContent.trim());
+        const cardH = m.querySelector('.ucm-modal__card') ? Math.round(m.querySelector('.ucm-modal__card').getBoundingClientRect().height) : null;
         const status = (m.querySelector('.ucm-procs__status') || {}).textContent || null;
         const nameCellsMono = rows.every((tr) => tr.children[1].classList.contains('ucm-mono'));
         const stopBtns = m.querySelectorAll('.ucm-procs__stop');
@@ -1738,21 +1741,40 @@ function mockFactoryJs() {
 
         const sortedTh = Array.from(m.querySelectorAll('thead th')).findIndex((th) => th.classList.contains('is-sorted'));
         const sortedDesc = Array.from(m.querySelectorAll('thead th')).some((th) => th.classList.contains('is-sorted-desc'));
-        return { open: true, ths, rowCount: rows.length, nameCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csTh };
+        return { open: true, ths, rowCount: rows.length, nameCol, stateCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csTh, cardH };
     });
     let pm = await procModal();
     if (!pm.open) console.log('PAGE ERROR: clicking the info icon must open the process modal (round P)');
     else {
         if (JSON.stringify(pm.ths) !== JSON.stringify(['PID', 'Name', 'State', 'CPU %', 'RAM', 'Stop']))
             console.log('PAGE ERROR: the process table headers are wrong (got ' + JSON.stringify(pm.ths) + ') (round P)');
-        if (pm.rowCount !== 3) console.log('PAGE ERROR: the process table must list the 3 seeded processes (got ' + pm.rowCount + ') (round P)');
-        if (pm.status !== '3 processes') console.log('PAGE ERROR: the process status line must read the count (got ' + JSON.stringify(pm.status) + ') (round P)');
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'mm-mid', 'zz-app']))
+        if (pm.rowCount !== 4) console.log('PAGE ERROR: the process table must list the 4 seeded processes (got ' + pm.rowCount + ') (round P)');
+        if (pm.status !== '4 processes') console.log('PAGE ERROR: the process status line must read the count (got ' + JSON.stringify(pm.status) + ') (round P)');
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'dd-disk', 'mm-mid', 'zz-app']))
             console.log('PAGE ERROR: default sort must be NAME ascending (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
-        if (JSON.stringify(pm.cpuCol) !== JSON.stringify(['7', '\u2014', '42.5']))
-            console.log('PAGE ERROR: the CPU column must render 7 / (null=em-dash) / 42.5 in name order (got ' + JSON.stringify(pm.cpuCol) + ') (round P)');
+        if (JSON.stringify(pm.cpuCol) !== JSON.stringify(['7', '\u2014', '\u2014', '42.5']))
+            console.log('PAGE ERROR: the CPU column must render 7 / (null=em-dash) x2 / 42.5 in name order (got ' + JSON.stringify(pm.cpuCol) + ') (round P)');
+        // STATE column: a readable WORD per row (the raw /proc code is not
+        // self-explanatory) - S/D/S/R in name order render as Sleeping / Disk I/O /
+        // Sleeping / Running. A closing paren or a bare letter would be a regression
+        // (the round-P field-index bug). Each cell carries a legend title + the
+        // column header carries the full legend.
+        if (JSON.stringify(pm.stateCol) !== JSON.stringify(['Sleeping', 'Disk I/O', 'Sleeping', 'Running']))
+            console.log('PAGE ERROR: the State column must show readable words per row (got ' + JSON.stringify(pm.stateCol) + ', want Sleeping/Disk I/O/Sleeping/Running) (round P)');
+        if (!pm.stateCol.every((c) => c.length > 1 && c.indexOf('(') === -1))
+            console.log('PAGE ERROR: every State cell must be a readable word, not a letter or a paren (got ' + JSON.stringify(pm.stateCol) + ') (round P)');
+        const stateLegend = await page.evaluate(() => {
+            const m = document.querySelector('.ucm-modal--procs');
+            const head = m.querySelector('thead th:nth-child(3)');
+            const dCell = Array.from(m.querySelectorAll('tbody tr')).find((tr) => tr.children[2].textContent.trim() === 'Disk I/O');
+            return { head: head ? head.title : null, cell: dCell ? dCell.children[2].title : null };
+        });
+        if (!stateLegend.head || stateLegend.head.indexOf('D = Uninterruptible sleep') === -1 || stateLegend.head.indexOf('R = Running') === -1)
+            console.log('PAGE ERROR: the State column header must carry the full legend (got ' + JSON.stringify(stateLegend.head) + ') (round P)');
+        if (!stateLegend.cell || stateLegend.cell.indexOf('Uninterruptible') === -1)
+            console.log('PAGE ERROR: a D State cell must carry a readable legend in its title (got ' + JSON.stringify(stateLegend.cell) + ') (round P)');
         if (pm.nameCellsMono !== true) console.log('PAGE ERROR: the Name (value) cells must be house-mono (ucm-mono) (round P)');
-        if (pm.stopCount !== 3) console.log('PAGE ERROR: every row needs a Stop control (got ' + pm.stopCount + ') (round P)');
+        if (pm.stopCount !== 4) console.log('PAGE ERROR: every row needs a Stop control (got ' + pm.stopCount + ') (round P)');
         // CSS-integrity guard (the house idiom: pin the computed styles that a
         // clobbered app.css rule would silently lose): the numeric columns
         // right-align, the header is the faint uppercase house table idiom, and
@@ -1767,36 +1789,61 @@ function mockFactoryJs() {
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
         await wait(150);
         pm = await procModal();
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['zz-app', 'aa-core', 'mm-mid']))
-            console.log('PAGE ERROR: sorting by CPU desc must order 42.5, 7.0, null (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['zz-app', 'aa-core', 'mm-mid', 'dd-disk']))
+            console.log('PAGE ERROR: sorting by CPU desc must order 42.5, 7.0, then the nulls by pid (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
         if (pm.sortedTh !== 3 || pm.sortedDesc !== true)
             console.log('PAGE ERROR: the CPU header must show the active DESC sort marker (th=' + pm.sortedTh + ' desc=' + pm.sortedDesc + ') (round P)');
-        // SORT by CPU again -> ASC (nulls first)
+        // SORT by CPU again -> ASC (nulls first, by pid; then 7.0, 42.5)
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[3].click(); });
         await wait(150);
         pm = await procModal();
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['mm-mid', 'aa-core', 'zz-app']))
-            console.log('PAGE ERROR: sorting by CPU asc must order null, 7.0, 42.5 (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['mm-mid', 'dd-disk', 'aa-core', 'zz-app']))
+            console.log('PAGE ERROR: sorting by CPU asc must order nulls (mm,dd) then 7.0, 42.5 (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
         // SORT by RAM (th index 4) -> DESC
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[4].click(); });
         await wait(150);
         pm = await procModal();
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'mm-mid', 'zz-app']))
-            console.log('PAGE ERROR: sorting by RAM desc must order 50MB, 2KB, 1KB (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'dd-disk', 'mm-mid', 'zz-app']))
+            console.log('PAGE ERROR: sorting by RAM desc must order 50MB, 4KB, 2KB, 1KB (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
         // back to NAME asc (th index 1) so the Stop row below is deterministic
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs thead th').parentElement.children[1].click(); });
         await wait(150);
         pm = await procModal();
-        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'mm-mid', 'zz-app']))
-            console.log('PAGE ERROR: re-sorting by NAME asc must restore aa-core, mm-mid, zz-app (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
-        // STOP the first row (aa-core, pid 100) - CONFIRM-GATED, then confirm
+        if (JSON.stringify(pm.nameCol) !== JSON.stringify(['aa-core', 'dd-disk', 'mm-mid', 'zz-app']))
+            console.log('PAGE ERROR: re-sorting by NAME asc must restore aa-core, dd-disk, mm-mid, zz-app (got ' + JSON.stringify(pm.nameCol) + ') (round P)');
+        // STOP the first row (aa-core, pid 100) - CONFIRM-GATED, then confirm.
+        // Capture the card height FIRST: opening the confirm must SQUEEZE the
+        // scrollable table (the card is a fixed height), NOT grow the card -
+        // that is the round-P-fix "confirm pinned to the bottom" behaviour.
+        const cardHBefore = pm.cardH;
         await page.evaluate(() => { document.querySelector('.ucm-modal--procs tbody tr .ucm-procs__stop').click(); });
         await wait(150);
         const confirm = await page.evaluate(() => {
-            const c = document.querySelector('.ucm-modal--procs .ucm-confirm');
+            const m = document.querySelector('.ucm-modal--procs');
+            const c = m ? m.querySelector('.ucm-confirm') : null;
             if (!c) return { present: false };
-            return { present: true, msg: (c.querySelector('.ucm-confirm__msg') || {}).textContent || null, btn: !!c.querySelector('button.p-button--negative') };
+            const card = m.querySelector('.ucm-modal__card');
+            const btn = c.querySelector('button.p-button--negative');
+            const b = btn.getBoundingClientRect();
+            const cr = card.getBoundingClientRect();
+            return {
+                present: true,
+                msg: (c.querySelector('.ucm-confirm__msg') || {}).textContent || null,
+                btn: !!btn,
+                cardH: card ? Math.round(cr.height) : null,
+                // the confirm button must sit INSIDE the card, near its bottom,
+                // with the card's own bottom padding below it (not flush to the
+                // edge, not clipped below the card).
+                btnWithinCard: btn ? (b.bottom <= cr.bottom + 1 && b.top >= cr.top) : false,
+                btnBottomPad: btn ? Math.round(cr.bottom - b.bottom) : null,
+            };
         });
+        if (confirm.present) {
+            if (confirm.btnWithinCard !== true)
+                console.log('PAGE ERROR: the Stop confirm button must be fully INSIDE the modal card (not clipped out of view) (round P-fix)');
+            if (confirm.btnBottomPad == null || confirm.btnBottomPad < 8)
+                console.log('PAGE ERROR: the Stop confirm button must keep the card bottom padding below it (got ' + JSON.stringify(confirm.btnBottomPad) + 'px) (round P-fix)');
+        }
         if (!confirm.present) console.log('PAGE ERROR: Stop must be confirm-gated (an in-modal .ucm-confirm) (round P)');
         else {
             if (!confirm.msg || confirm.msg.indexOf('aa-core (pid 100)') === -1 || confirm.msg.indexOf('SIGKILL') === -1)
@@ -1819,10 +1866,29 @@ function mockFactoryJs() {
         });
         if (JSON.stringify(afterKill.killCalls) !== JSON.stringify([{ pid: 100, sig: 9 }]))
             console.log('PAGE ERROR: confirming Stop must send SIGKILL (sig 9) to pid 100 (got ' + JSON.stringify(afterKill.killCalls) + ') (round P)');
-        if (afterKill.rowCount !== 2 || !afterKill.killed)
+        if (afterKill.rowCount !== 3 || !afterKill.killed)
             console.log('PAGE ERROR: the stopped process must disappear on re-poll (got ' + JSON.stringify(afterKill.names) + ') (round P)');
         if (!afterKill.toast) console.log('PAGE ERROR: a successful Stop must toast "Process stopped" (round P)');
         await page.screenshot({ path: path.join(SHOTS, '3c-procs-modal.png'), fullPage: true });
+        // SQUEEZE test (round P-fix): with a TALL table (the real case - dozens of
+        // processes overflow the bounded card), opening the Stop confirm must NOT
+        // grow the card - the scrollable table area shrinks so the confirm fits with
+        // bottom padding. Seed 60 rows so the table is definitely taller than the
+        // card, open the confirm, and assert the card height is unchanged + the
+        // button is inside with padding. Then Cancel (do not kill) and reset.
+        await page.evaluate((n) => { const seed = []; for (let i = 1; i <= n; i++) seed.push({ pid: 1000 + i, name: 'proc-' + String(i).padStart(2, '0'), state: 'S', ppid: 1, rss: i * 1024, cpu: (i % 7) * 3 }); window.__mockCore.machine.__setprocs(seed); }, 60);
+        await wait(2200); // one full poll cycle (the modal refreshes every 2 s)
+        const tall0 = await page.evaluate(() => { const m = document.querySelector('.ucm-modal--procs'); const sc = m.querySelector('.ucm-procs__scroll'); const tb = m.querySelector('tbody'); return { cardH: Math.round(m.querySelector('.ucm-modal__card').getBoundingClientRect().height), scrollable: sc ? sc.scrollHeight > sc.clientHeight : false, rowsRendered: tb ? tb.querySelectorAll('tr').length : null }; });
+        if (!tall0.scrollable) console.log('PAGE ERROR: the 60-row table must overflow the card (be scrollable) for the squeeze test (got ' + JSON.stringify(tall0) + ') (round P-fix)');
+        await page.evaluate(() => { document.querySelector('.ucm-modal--procs tbody tr .ucm-procs__stop').click(); });
+        await wait(200);
+        const tall1 = await page.evaluate(() => { const m = document.querySelector('.ucm-modal--procs'); const card = m.querySelector('.ucm-modal__card'); const c = m.querySelector('.ucm-confirm'); const btn = c ? c.querySelector('button.p-button--negative') : null; const b = btn.getBoundingClientRect(); const cr = card.getBoundingClientRect(); return { cardH: Math.round(cr.height), btnWithin: btn ? (b.bottom <= cr.bottom + 1 && b.top >= cr.top) : false, pad: btn ? Math.round(cr.bottom - b.bottom) : null }; });
+        if (tall0.cardH != null && tall1.cardH != null && tall1.cardH - tall0.cardH > 1)
+            console.log('PAGE ERROR: with a tall table the Stop confirm must SQUEEZE the scroll area, not grow the card - height ' + tall0.cardH + ' -> ' + tall1.cardH + ' (round P-fix)');
+        if (tall1.btnWithin !== true) console.log('PAGE ERROR: with a tall table the Stop confirm button must stay inside the card (round P-fix)');
+        if (tall1.pad == null || tall1.pad < 8) console.log('PAGE ERROR: with a tall table the Stop confirm must keep bottom padding (got ' + JSON.stringify(tall1.pad) + 'px) (round P-fix)');
+        await page.evaluate(() => { const c = document.querySelector('.ucm-modal--procs .ucm-confirm'); const b = c && c.querySelector('button.p-button--base'); if (b) b.click(); });
+        await wait(150);
         // CLOSE the modal (the close button) and confirm the poll stopped
         await page.evaluate(() => { const m = document.querySelector('.ucm-modal--procs'); const b = m && m.querySelector('.ucm-modal__head button[aria-label="Close"]'); if (b) b.click(); });
         await wait(150);

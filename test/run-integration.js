@@ -500,10 +500,22 @@ function ok(name, cond, extra = '') {
     ok('readProcs: a freshly spawned child appears (name=comm "sleep")',
         pr2.some((r) => r.pid === sleep.pid && r.name === 'sleep'),
         'pid ' + sleep.pid);
-    // the second sample has an aggregate delta -> the current pid's cpu is a number
-    ok('readProcs: 2nd sample reports a numeric cpu for a live pid (0..100)',
-        pr2.every((r) => r.cpu == null || (typeof r.cpu === 'number' && r.cpu >= 0 && r.cpu <= 100)),
-        JSON.stringify(pr2.find((r) => r.pid === process.pid)));
+    // THE CPU FIX (round P-fix2): a genuinely BUSY process must report cpu > 0 on
+    // the 2nd sample. The pre-fix version always returned null (it divided by an
+    // aggregate recomputed from the SAME snapshot, so the delta was 0) - every row
+    // read '-'. A spin loop burns ~one full core -> ~100% (100 ticks/s USER_HZ).
+    const spin = require('child_process').spawn('/bin/bash', ['-c', 'while :; do :; done']);
+    await new Promise((r) => setTimeout(r, 80));
+    m.readProcs(); // baseline for the spin
+    await new Promise((r) => setTimeout(r, 1200)); // let it burn jiffies
+    const spinRow = m.readProcs().find((r) => r.pid === spin.pid);
+    ok('readProcs: a busy process reports cpu > 0 on the 2nd sample (the CPU fix)',
+        !!spinRow && typeof spinRow.cpu === 'number' && spinRow.cpu > 0,
+        JSON.stringify(spinRow));
+    ok('readProcs: state is a clean single letter (the field-index fix; no paren/garbage)',
+        pr2.every((r) => typeof r.state === 'string' && r.state.length === 1 && /[RSDZTtWIX]/.test(r.state)),
+        JSON.stringify([...new Set(pr2.map((r) => r.state))]));
+    try { spin.kill('SIGKILL'); } catch { /* already gone */ }
     // invalid pids/signals are rejected BEFORE any signal is sent
     let badPid = null, badSig = null;
     try { m.sendProcSignal(0, 9); } catch (e) { badPid = e; }

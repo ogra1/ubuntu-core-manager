@@ -1732,11 +1732,28 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    columns stay labelled at any row count (top/htop behaviour). It reuses the
    house .ucm-ifaces-table idiom (faint uppercase header + .ucm-mono value cells)
    so it blends with every other table in the app. */
-.ucm-modal--procs .ucm-modal__card { max-width: 68rem; }
+/* the modal is a FLEX COLUMN bounded by max-height: head + toolbar + confirm are
+   fixed-size, and the table area is the ONLY flexible child - so opening the Stop
+   confirm SQUEEZES the scrollable table upward instead of growing the card or
+   clipping the confirm (round P-fix; the old body flowed the confirm out of view).
+   Scoped to .ucm-modal--procs so every other modal is untouched. */
+.ucm-modal--procs .ucm-modal__card {
+    max-width: 68rem;
+    max-height: min(84vh, 62rem);
+    display: flex; flex-direction: column;
+}
+.ucm-modal--procs .ucm-modal__head { flex: 0 0 auto; }
+.ucm-modal--procs .ucm-modal__body--proc {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column;
+    max-height: none;
+    overflow: hidden;
+}
+.ucm-modal--procs .ucm-procs__toolbar { flex: 0 0 auto; }
 .ucm-procs__toolbar { display: flex; align-items: baseline; gap: .8rem; margin-bottom: .7rem; }
 .ucm-procs__status { font-size: .85rem; }
 .ucm-procs__cadence { margin-left: auto; font-size: .75rem; color: #999; }
-.ucm-procs__scroll { max-height: calc(100vh - 16rem); overflow-y: auto; }
+.ucm-procs__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .ucm-procs__table thead th { position: sticky; top: 0; z-index: 1; background: #fff; }
 .ucm-procs__th { cursor: pointer; user-select: none; }
 .ucm-procs__th:hover { color: var(--ucm-orange); }
@@ -1751,6 +1768,18 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-procs__table th:nth-child(5), .ucm-procs__table td:nth-child(5) { text-align: right; }
 .ucm-procs__table th:nth-child(6), .ucm-procs__table td:nth-child(6) { text-align: right; }
 .ucm-procs__table .ucm-mono { font-variant-numeric: tabular-nums; }
+/* the Stop confirm: pinned to the BOTTOM of the modal (flex:0 0 auto) so it is
+   always visible with padding - opening it squeezes the (scrollable) table
+   area upward instead of the confirm flowing out of view (round P-fix). The
+   .ucm-modal .ucm-confirm two-row layout still owns the internal spacing. */
+.ucm-procs__confirm { flex: 0 0 auto; }
+.ucm-procs__confirm:empty { display: none; }
+.ucm-procs__confirm .ucm-confirm { padding-top: .7rem; margin-top: .2rem; border-top: 1px solid var(--ucm-grey-90); }
+.is-dark .ucm-procs__confirm .ucm-confirm { border-top-color: #3a3a3a; }
+/* State cell: a short code, muted + centred (the readable meaning is in the
+   title tooltip + the column-header legend). */
+.ucm-procs__state { color: #6f6f6f; white-space: nowrap; }
+.is-dark .ucm-procs__state { color: #a8a8a8; }
 /* the per-row Stop: a compact ghost (.p-button--base) - the phantom bottom margin
    zeroed so it sits on the row baseline, and confirm-gated in JS (destructive). */
 .ucm-procs__stop { margin: 0; height: 1.75rem; padding: 0 .7rem; font-size: .78rem; white-space: nowrap; }
