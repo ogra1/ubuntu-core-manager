@@ -4386,7 +4386,10 @@ function openProcessModal() {
     const table = el('table', { class: 'p-table ucm-ifaces-table ucm-procs__table' });
     // the <colgroup> carries the column widths the FIXED table layout reads
     // (the rows re-render every 2 s poll; only the static thead + cols may
-    // define geometry - see the .ucm-procs__table rule in app.css).
+    // define geometry - see the .ucm-procs__table rule in app.css). The Name
+    // col has NO width (CSS): it is the flexible filler, so the table's
+    // minimum width is only the five fixed cols and a narrow window can never
+    // overflow horizontally (round P3c).
     table.append(el('colgroup', {},
         el('col', { class: 'c-procs-pid' }),
         el('col', { class: 'c-procs-name' }),

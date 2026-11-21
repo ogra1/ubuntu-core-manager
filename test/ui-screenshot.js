@@ -1813,8 +1813,8 @@ function mockFactoryJs() {
         // round P3b: the right-hand GROUP is the balance fix - State joins the
         // right-aligned numeric columns, and Name is the dominant column
         // (>= 50% of the table; the old 25% felt starved next to 17% State).
-        if (pm.csStateTd !== 'right')
-            console.log('PAGE ERROR: the State column must right-align with the numeric group (got ' + JSON.stringify(pm.csStateTd) + ') (round P3b)');
+        if (pm.csStateTd !== 'center')
+            console.log('PAGE ERROR: the State column content must be CENTERED (its position is the right-hand group; the P3b right-align was a misread) (got ' + JSON.stringify(pm.csStateTd) + ') (round P3c)');
         if (pm.nameColPct == null || pm.nameColPct < 50)
             console.log('PAGE ERROR: the Name column must be the dominant (>= 50%) column (got ' + JSON.stringify(pm.nameColPct) + '%) (round P3b)');
         if (!pm.csTh || pm.csTh.tt !== 'uppercase')
@@ -1877,6 +1877,61 @@ function mockFactoryJs() {
         await page.evaluate((seed) => { window.__mockCore.machine.__setprocs(seed); }, PROC_SEED);
         await wait(2200);
         pm = await procModal();
+        // round P3c - the user's 1280x800 VM reported a HORIZONTAL SCROLLBAR
+        // (the table's fixed column-sum was its minimum width and the wrap had
+        // zero slack) and the "STOP" header ellipsized to "S...". Name is now
+        // the width-less flexible filler, so resize to the user's viewport and
+        // assert: the table fits the wrap (no horizontal overflow) and the STOP
+        // header renders in full (Range text box vs the cell content box -
+        // clientWidth misses single-line clipping; scrollWidth did not).
+        await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+        await wait(200);
+        const narrow = await page.evaluate(() => {
+            const m = document.querySelector('.ucm-modal--procs');
+            const wrap = m.querySelector('.ucm-procs__scroll');
+            const t = m.querySelector('table');
+            const stopTh = m.querySelectorAll('thead th')[5];
+            const r = document.createRange(); r.selectNodeContents(stopTh);
+            const tb = r.getBoundingClientRect();
+            const cb = stopTh.getBoundingClientRect();
+            // the cell is box-sizing:border-box with .5rem (.41rem) horizontal
+            // padding - the "STOP" text must fit the CONTENT box (cell minus
+            // padding), not the full cell, or it ellipsizes (P3b's 40 px col
+            // left 24 px of content for a 30.8 px "STOP").
+            const cs = getComputedStyle(stopTh);
+            const contentW = cb.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            const xIcon = t.querySelector('.ucm-procs__stop .p-icon--window-close');
+            return {
+                overflow: wrap.scrollWidth - wrap.clientWidth,
+                tableFits: t.getBoundingClientRect().width <= wrap.clientWidth + 1,
+                stopHeaderClipped: tb.width > contentW + 1,
+                xFits: xIcon ? xIcon.getBoundingClientRect().width <= cb.width : false,
+            };
+        });
+        // AND a 900px viewport: the card caps at 68rem so the wrap is 1037 px
+        // at any width >= ~1150, but at 900 the wrap is only 849 px - P3b's six
+        // fixed px widths summed to 1037 (the table's MINIMUM width) and would
+        // overflow here (1037 > 849) = the user's horizontal scrollbar. With the
+        // width-less Name filler the table min is only the five fixed cols
+        // (~424 px), so it fits at ANY wrap width.
+        await page.setViewport({ width: 900, height: 800, deviceScaleFactor: 1 });
+        await wait(200);
+        const tight = await page.evaluate(() => {
+            const m = document.querySelector('.ucm-modal--procs');
+            const wrap = m.querySelector('.ucm-procs__scroll');
+            const t = m.querySelector('table');
+            return { wrapClient: wrap.clientWidth, tableW: Math.round(t.getBoundingClientRect().width), overflows: wrap.scrollWidth - wrap.clientWidth };
+        });
+        await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+        await wait(200);
+        if (narrow.tableFits !== true || narrow.overflow > 1)
+            console.log('PAGE ERROR: at 1280x800 the process table must fit its wrap with no horizontal overflow (Name is the flexible filler) (got ' + JSON.stringify(narrow) + ') (round P3c)');
+        if (narrow.stopHeaderClipped !== false)
+            console.log('PAGE ERROR: the STOP header must render in full (no ellipsis) at 1280x800 (got ' + JSON.stringify(narrow) + ') (round P3c)');
+        if (narrow.xFits !== true)
+            console.log('PAGE ERROR: the X icon must fit the action column (got ' + JSON.stringify(narrow) + ') (round P3c)');
+        if (tight.overflows > 1 || tight.tableW > tight.wrapClient + 1)
+            console.log('PAGE ERROR: at a 900px viewport (wrap 849 px) the process table must still fit - the Name filler keeps the table min-width tiny (got ' + JSON.stringify(tight) + ') (round P3c)');
         // STOP the first row (aa-core, pid 100) - CONFIRM-GATED, then confirm.
         // Capture the card height FIRST: opening the confirm must SQUEEZE the
         // scrollable table (the card is a fixed height), NOT grow the card -
