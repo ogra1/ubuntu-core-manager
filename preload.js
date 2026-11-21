@@ -118,6 +118,7 @@ const api = Object.freeze({
     system: Object.freeze({
         info: invoke('sys:info'),               // { snapd, host, model, netdev, warnings }
         model: invoke('sys:model'),             // model assertion headers { model, base, grade, 'brand-id', ... }
+        serial: invoke('sys:serial'),            // serial assertion headers { 'brand-id', model, serial, 'device-key-sha3-384', ... } or {} (no serial yet)
         dataDisk: invoke('sys:data-disk'),      // /run/mnt/data usage { mount, device, fsType, total/free/used/reservedBytes, usedPercent, source }
         cpu: invoke('sys:cpu'),                 // => number|null[] (oldest->newest, 0..100; null = pre-boot sample)
         net: invoke('sys:net'),                 // => { iface, series:{r,x}|null[] } — rates in KiB/s (in=down r, out=up x), counted iface = default-route

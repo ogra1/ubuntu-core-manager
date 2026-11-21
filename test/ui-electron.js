@@ -203,6 +203,13 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('the REAL model assertion (GET /v2/assertions/model via the bridge) resolves without error',
         sy.ok === true && sy.sy && sy.sy.model && sy.sy.model.ok === true && sy.sy.model.keys >= 0,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.model) : sy.error));
+    // round SER: the serial read RESOLVES to an object even on an unregistered
+    // box (daemon swallows not-found into an empty 200 body -> {}). hasSerial
+    // is asserted ONLY when keys>0, so a box that HAS registered passes too.
+    ok('the REAL serial assertion (GET /v2/assertions/serial via the bridge) resolves without error ({} when unregistered)',
+        sy.ok === true && sy.sy && sy.sy.serial && sy.sy.serial.ok === true && sy.sy.serial.keys >= 0
+        && (sy.sy.serial.keys === 0 || sy.sy.serial.hasSerial === true),
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.serial) : sy.error));
     ok('the REAL login1 ScheduledShutdown read works (D-Bus; nothing scheduled here)',
         sy.ok === true && sy.sy && sy.sy.scheduled && !sy.sy.scheduled.error && sy.sy.scheduled.active === false,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.scheduled) : sy.error));

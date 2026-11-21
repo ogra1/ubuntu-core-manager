@@ -630,6 +630,27 @@ async function getModelAssertion() {
     return parseModelAssertion(data && (typeof data === 'string' ? data : data.raw));
 }
 
+/** GET /v2/assertions/serial — the DEVICE SERIAL assertion (the REST
+    equivalent of `snap known serial`): minted by the store when the device
+    REGISTERS (automatic on a core device; absent on classic boxes and on
+    test devices before registration). snapd serves the raw assertion text
+    (same content-type as the model read — snapdRequest's parse-fallback
+    yields { raw: text }, exactly the shape getModelAssertion handles).
+    ABSENT serial = HTTP 200 with an EMPTY body (the daemon swallows
+    asserts.NotFoundError, verified in the snapd source) -> {} after parsing,
+    so a no-serial device resolves to an empty object, never an error; the
+    model modal then simply omits the Serial section.
+    parseModelAssertion is the (deliberately) generic header parser: it reads
+    col-0 headers until the BLANK line that separates them from the signature
+    block, so the serial's identity headers parse and the signature block is
+    never read. The only indented field (the multi-line `device-key:`)
+    collects as an empty value that the modal's empty-skip guard drops — the
+    UI shows neither the key nor the signature (user: not needed in a UI). */
+async function getSerialAssertion() {
+    const data = await snapdRequest('GET', '/v2/assertions/serial', { auth: A() });
+    return parseModelAssertion(data && (typeof data === 'string' ? data : data.raw));
+}
+
 /** GET /v2/changes/{id} — one change. The id is a numeric change ID from a
     snapd 2xx write response (validated here; snapd itself 400s anything else). */
 async function getChange(id) {
@@ -2837,7 +2858,7 @@ const api = {
     // store auth (optional, volatile)
     storeLogin, storeLogout,
 
-    getSystemInfo, getModelAssertion, parseModelAssertion, modelSystemSnaps,
+    getSystemInfo, getModelAssertion, getSerialAssertion, parseModelAssertion, modelSystemSnaps,
     getDataPartition, mountsTable, defaultRouteIface,
     listChanges, getWarnings,
     listSnaps, getSnapInfo, searchSnaps, getChange,
@@ -3303,6 +3324,17 @@ function initElectron() {
                                         const isObj = mm && typeof mm === 'object' && !Array.isArray(mm);
                                         sy.model = { ok: !!isObj, keys: isObj ? Object.keys(mm).length : 0, hasModel: !!(isObj && mm.model) };
                                     } catch (e) { sy.model = { ok: false, error: String((e && e.message) || e) }; }
+                                    // round SER: the REAL serial-assertion READ (core.system.serial ->
+                                    // main.js getSerialAssertion -> GET /v2/assertions/serial, the REST
+                                    // equivalent of 'snap known serial'). READ-ONLY. Shape, not content:
+                                    // this box is unregistered -> the daemon answers 200 with an EMPTY
+                                    // body -> {} after parsing (NOT an error). Proves the PATH resolves
+                                    // to an object and, when a serial IS present, it carries a header.
+                                    try {
+                                        const ss = await core.system.serial();
+                                        const so = ss && typeof ss === 'object' && !Array.isArray(ss);
+                                        sy.serial = { ok: !!so, keys: so ? Object.keys(ss).length : 0, hasSerial: !!(so && ss.serial) };
+                                    } catch (e) { sy.serial = { ok: false, error: String((e && e.message) || e) }; }
                                     // round T: the REAL time READ (timedate1
                                     // Properties.Get — granted by the EXISTING
                                     // timeserver-control plug; READ-ONLY, the
@@ -3396,6 +3428,7 @@ function initElectron() {
     // Net traffic rates (sparklines). Same read-only /proc class as sys:cpu.
     ipcMain.handle('sys:net', guard(() => readNetTraffic()));
     ipcMain.handle('sys:model', guard(() => getModelAssertion()));
+    ipcMain.handle('sys:serial', guard(() => getSerialAssertion()));
     // Data partition usage (/run/mnt/data on core, / elsewhere). Read-only.
     ipcMain.handle('sys:data-disk', guard(getDataPartition));
     ipcMain.handle('sys:changes', guard((select) => listChanges(select)));

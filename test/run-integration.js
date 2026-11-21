@@ -150,6 +150,22 @@ function ok(name, cond, extra = '') {
     ok('model assertion: signature block NOT parsed as headers',
         !Object.keys(mod).some((k) => k.includes('STUBSIGNATUREBLOCK')) && mod.type === 'model',
         Object.keys(mod).join(','));
+
+    // serial assertion (round SER): RAW text over the socket, parsed by the SAME
+    // generic header parser (getSerialAssertion -> GET /v2/assertions/serial,
+    // the REST equivalent of 'snap known serial'). The col-0 identity headers
+    // parse; the indented device-key lines and the signature block do NOT.
+    const ser = await m.getSerialAssertion();
+    ok('serial assertion parsed: brand-id/model/serial (identity headers)',
+        ser.type === 'serial' && ser['brand-id'] === 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP'
+        && ser.model === 'frame-uc24' && ser.serial === 'f6d4b37a-3659-48f4-9617-6a93c831c0b0',
+        JSON.stringify(ser).slice(0, 160));
+    ok('serial assertion: the indented device-key lines do NOT parse as headers',
+        ser['device-key'] === '' && !Object.keys(ser).some((k) => k.includes('AcbBTQRWhcGA')),
+        JSON.stringify(Object.keys(ser)));
+    ok('serial assertion: signature block NOT parsed as headers',
+        !Object.keys(ser).some((k) => k.includes('AcLBUgQAAQo')) && ser['sign-key-sha3-384'] === 'wrfougkz3Huq2T_KklfnufCC0HzG7bJ9wP99GV0FF-D3QH3eJtuSRlQc2JhrAoh1',
+        Object.keys(ser).join(','));
     // direct parser unit checks (edge cases without the socket)
     ok('parser: classic:true -> boolean true',
         m.parseModelAssertion('type: model\nclassic: true\nmodel: x\n\nSIG').classic === true);
@@ -653,6 +669,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
             ok('process-modal handlers registered (round P: procs read open, proc-kill auth-gated, process-control plug)',
                 !!handlers['system:procs'] && !!handlers['system:proc-kill']);
+            ok('serial-assertion handler registered (round SER: sys:serial read-only, like sys:model)',
+                !!handlers['sys:serial']);
             if (handlers['auth:create']) {
                 const r = await new Promise((res) => handlers['auth:create'](null, 'testpass-123').then(res));
                 ok('auth:create returns guard result (no .then-on-sync crash)',

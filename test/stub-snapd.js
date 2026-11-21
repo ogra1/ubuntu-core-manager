@@ -233,6 +233,30 @@ function makeServer(socketPath, state) {
                     'STUBSIGNATUREBLOCK-NOT-PART-OF-HEADERS\n'
                 );
             }
+            // ---- serial assertion (round SER): RAW assertion text over the
+            //      socket, exactly as a registered core VM serves it - the
+            //      multi-line device-key is INDENTED and a signature block
+            //      follows the blank line (neither may parse as headers; same
+            //      contract as the model stub).
+            if (p === '/v2/assertions/serial' && req.method === 'GET') {
+                res.setHeader('Content-Type', 'application/x.ubuntu.assertion; bundle=y');
+                return res.end(
+                    'type: serial\n' +
+                    'authority-id: generic\n' +
+                    'brand-id: QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP\n' +
+                    'model: frame-uc24\n' +
+                    'serial: f6d4b37a-3659-48f4-9617-6a93c831c0b0\n' +
+                    'device-key:\n' +
+                    '    AcbBTQRWhcGAARAA3/qB4LDr45rZf5hSQWCEVrRYCBaChAOnfstTfNDYjf/bobFDilhlsd+KmBnQ\n' +
+                    '    c3te8V7PCS+XxrCPJpNkIWtd1FQkechX+1Pr7nacliK7GQYsaw3HXyvf0lzaMTTvXQomt4WUe4p+\n' +
+                    'device-key-sha3-384: nGHMcwRduTnrdVN5cqd0YqoG7g6OhvYMfyBnINYVfwBrpL8_i7ukSMS5PM6CY5e7\n' +
+                    'timestamp: 2026-11-13T10:59:36.526205Z\n' +
+                    'sign-key-sha3-384: wrfougkz3Huq2T_KklfnufCC0HzG7bJ9wP99GV0FF-D3QH3eJtuSRlQc2JhrAoh1\n' +
+                    '\n' +
+                    'AcLBUgQAAQoABgUCavbtmAAAG88QAFH5GL6/5QF5JAqD96s1X3iuBNONt1ONfqfyp/agDJ3HYHbC\n' +
+                    '2dooOg1bJS0DL0QbQGixHp+VIhLO9xQO2KnhUd20rYin0UWxAAGa1T7rcNXlJoOhzcCaj1L+WXZ+\n'
+                );
+            }
             // ---- warnings / changes ----------------------------------------
             if (p === '/v2/warnings' && req.method === 'GET') {
                 // LIVE-VERIFIED shape: { message, first-seen, last-seen }

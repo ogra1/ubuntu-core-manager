@@ -329,6 +329,22 @@ function mockFactoryJs() {
            (dark kiosk); the harness hands off to light after asserting it. */
         let __appearance = 'dark';
         let __appearanceCalls = 0;
+        // the serial assertion (round SER): {} = the device has not registered
+        // with the store yet (a classic box / pre-registration) - the modal
+        // omits the Serial section.
+        let __serial = {
+            'authority-id': 'generic',
+            'brand-id': 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP',
+            model: 'frame-uc24',
+            serial: 'f6d4b37a-3659-48f4-9617-6a93c831c0b0',
+            // the parser collects the indented device-key block as an EMPTY
+            // value (faithful to the real getSerialAssertion() output) - the
+            // modal's empty-value skip must drop it (never show a blank row).
+            'device-key': '',
+            'device-key-sha3-384': 'nGHMcwRduTnrdVN5cqd0YqoG7g6OhvYMfyBnINYVfwBrpL8_i7ukSMS5PM6CY5e7',
+            timestamp: '2026-11-13T10:59:36.526205Z',
+            'sign-key-sha3-384': 'wrfougkz3Huq2T_KklfnufCC0HzG7bJ9wP99GV0FF-D3QH3eJtuSRlQc2JhrAoh1',
+        };
         /* round I: local pages (embedded localhost web UIs) — mock of main.js
            localPages + setLocalPages. Default [] = a fresh console (no pages). */
         let __localPages = [];
@@ -573,6 +589,13 @@ function mockFactoryJs() {
                         ],
                     };
                 },
+                async serial() {
+                    // the dedicated sys:serial route (main.js getSerialAssertion
+                    // -> GET /v2/assertions/serial, the REST equivalent of
+                    // 'snap known serial'). {} = no serial yet.
+                    return JSON.parse(JSON.stringify(__serial));
+                },
+                __setserial: (v) => { __serial = (v == null) ? {} : Object.assign({}, v); return __serial; },
                 async model() {
                     // the dedicated sys:model route (main.js getModelAssertion)
                     // — loadSnaps uses it when the dashboard's sys:info hasn't
@@ -2049,7 +2072,16 @@ function mockFactoryJs() {
         const ths = Array.from(m.querySelectorAll('.ucm-model__snaps thead th')).map((th) => th.textContent.trim());
         const rows = Array.from(m.querySelectorAll('.ucm-model__snaps tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.trim()));
         const summary = (m.querySelector('.ucm-model__summary') || {}).textContent || null;
-        return { open: true, head, kvPairs, ths, rows, summary };
+        // round SER: the Serial section (appended at the BOTTOM, after the
+        // snaps table) - its KV rows + caption + position relative to the
+        // snaps table.
+        const serialCap = (m.querySelector('.ucm-model__serial') || {}).textContent || null;
+        const serialKv = m.querySelector('.ucm-model__serial-kv');
+        const serialPairs = serialKv ? Array.from(serialKv.querySelectorAll(':scope > div')).map((d) => [d.querySelector('dt').textContent.trim(), d.querySelector('dd').textContent.trim()]) : [];
+        // serialKv.compareDocumentPosition(snapsTable) reports PRECEDING when
+        // the snaps table comes BEFORE the serial kv (serial at the bottom).
+        const serialAfterSnaps = (serialKv && m.querySelector('.ucm-model__snaps')) ? (serialKv.compareDocumentPosition(m.querySelector('.ucm-model__snaps')) & Node.DOCUMENT_POSITION_PRECEDING) !== 0 : null;
+        return { open: true, head, kvPairs, ths, rows, summary, serialCap, serialPairs, serialAfterSnaps };
     });
     if (!modelModal.open) console.log('PAGE ERROR: clicking the Model info icon must open the model-assertion modal (round M)');
     else {
@@ -2074,12 +2106,54 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the required app row (snap-store) is wrong - presence "required" must show (got ' + JSON.stringify(r4) + ') (round M)');
         if (!modelModal.summary || modelModal.summary.indexOf('Model core-24-kvm') === -1 || modelModal.summary.indexOf('base core24') === -1)
             console.log('PAGE ERROR: the model summary line must name the model + base (got ' + JSON.stringify(modelModal.summary) + ') (round M)');
+        // round SER: the Serial section (the device's store registration) sits
+        // at the BOTTOM of the modal with a "Serial" caption and a KV list of
+        // the serial assertion's identity headers - raw field names, faithful
+        // to `snap known serial`. The multi-line device-key and the signature
+        // block are NOT shown (user: not needed in a UI).
+        if (modelModal.serialCap !== 'Serial')
+            console.log('PAGE ERROR: the model modal must carry a "Serial" caption at the bottom (got ' + JSON.stringify(modelModal.serialCap) + ') (round SER)');
+        const serMap = Object.fromEntries(modelModal.serialPairs);
+        const wantSer = { 'brand-id': 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP', model: 'frame-uc24', serial: 'f6d4b37a-3659-48f4-9617-6a93c831c0b0', 'device-key-sha3-384': 'nGHMcwRduTnrdVN5cqd0YqoG7g6OhvYMfyBnINYVfwBrpL8_i7ukSMS5PM6CY5e7', timestamp: '2026-11-13T10:59:36.526205Z', 'sign-key-sha3-384': 'wrfougkz3Huq2T_KklfnufCC0HzG7bJ9wP99GV0FF-D3QH3eJtuSRlQc2JhrAoh1' };
+        for (const [k, v] of Object.entries(wantSer)) {
+            if (serMap[k] !== v) console.log('PAGE ERROR: the Serial section is missing/wrong ' + k + ' (got ' + JSON.stringify(serMap[k]) + ', want ' + v + ') (round SER)');
+        }
+        if ('device-key' in serMap) console.log('PAGE ERROR: the multi-line device-key must NOT be shown in the Serial section (round SER)');
+        if ('type' in serMap) console.log('PAGE ERROR: the raw assertion type header is not an identity field - it must not clutter the Serial section (got ' + JSON.stringify(serMap) + ') (round SER)');
+        if (modelModal.serialAfterSnaps !== true)
+            console.log('PAGE ERROR: the Serial section must sit at the BOTTOM of the modal (after the snaps table) (got ' + JSON.stringify(modelModal.serialAfterSnaps) + ') (round SER)');
         await page.screenshot({ path: path.join(SHOTS, '3e-model-modal.png'), fullPage: true });
         // close it
         await page.evaluate(() => { const m = document.querySelector('.ucm-modal'); const b = m && m.querySelector('.ucm-modal__head button[aria-label="Close"]'); if (b) b.click(); });
         await wait(150);
         const mClosed = await page.evaluate(() => ({ gone: !document.querySelector('.ucm-model__kv') }));
         if (mClosed.gone !== true) console.log('PAGE ERROR: the close button must close the model modal (round M)');
+        // round SER: a device WITHOUT a serial ({} - classic box / not yet
+        // registered) must OPEN the same modal with the model intact and the
+        // Serial section OMITTED (no empty caption). Restore the mock serial
+        // afterwards.
+        await page.evaluate(() => { window.__mockCore.system.__setserial({}); });
+        await page.click('#modelInfoBtn');
+        await wait(400);
+        const noSer = await page.evaluate(() => {
+            const m = document.querySelector('.ucm-modal');
+            if (!m) return { open: false };
+            return {
+                open: true,
+                modelKv: !!m.querySelector('.ucm-model__kv'),
+                serialCap: !!m.querySelector('.ucm-model__serial'),
+                serialKv: !!m.querySelector('.ucm-model__serial-kv'),
+            };
+        });
+        if (!noSer.open) console.log('PAGE ERROR: the model modal must open even without a serial (round SER)');
+        else {
+            if (noSer.modelKv !== true) console.log('PAGE ERROR: the model section must stay intact when the serial is absent (round SER)');
+            if (noSer.serialCap !== false || noSer.serialKv !== false)
+                console.log('PAGE ERROR: without a serial the Serial section must be OMITTED (got ' + JSON.stringify(noSer) + ') (round SER)');
+        }
+        await page.evaluate(() => { const m = document.querySelector('.ucm-modal'); const b = m && m.querySelector('.ucm-modal__head button[aria-label="Close"]'); if (b) b.click(); });
+        await wait(150);
+        await page.evaluate(() => { window.__mockCore.system.__setserial({ 'authority-id': 'generic', 'brand-id': 'QfOqF7d2M1Pk2O0SbEKqTdB9Ry2aI0BP', model: 'frame-uc24', serial: 'f6d4b37a-3659-48f4-9617-6a93c831c0b0', 'device-key-sha3-384': 'nGHMcwRduTnrdVN5cqd0YqoG7g6OhvYMfyBnINYVfwBrpL8_i7ukSMS5PM6CY5e7', timestamp: '2026-11-13T10:59:36.526205Z', 'sign-key-sha3-384': 'wrfougkz3Huq2T_KklfnufCC0HzG7bJ9wP99GV0FF-D3QH3eJtuSRlQc2JhrAoh1' }); });
     }
 
 

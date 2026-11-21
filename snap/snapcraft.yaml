@@ -26,9 +26,11 @@ grade: stable
 
 apps:
   manager:
+    command-chain:
+      - bin/wayland-launch
     command: bin/launcher
     daemon: simple
-    extensions: [ gnome ]
+    extensions: [ gpu ]
     plugs:
       - log-observe
       - mount-observe
@@ -43,6 +45,61 @@ apps:
       - system-observe
       - time-control
       - timeserver-control
+      - wayland
+    environment:
+      LIBGL_DRIVERS_PATH: $SNAP/gpu-2404/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
+      XDG_DATA_HOME: $SNAP_USER_DATA
+      XDG_DATA_DIRS: $SNAP/usr/share:$SNAP/gpu-2404/usr/share
+      GTK_USE_PORTAL: 0
+      GDK_GL: gles
+
+environment:
+  # Other, generally useful environment settings...
+  # XDG config
+  XDG_CACHE_HOME:  $SNAP_USER_COMMON/.cache
+  XDG_CONFIG_HOME: $SNAP_USER_DATA/.config
+  XDG_CONFIG_DIRS: $SNAP/etc/xdg
+  XDG_DATA_DIRS:   $SNAP/usr/local/share:$SNAP/usr/share
+  # XKB config
+  XKB_CONFIG_ROOT: $SNAP/usr/share/X11/xkb
+
+# The `layout` ensures that files can be found by applications where they are expected by the toolkit or application.
+layout:
+  # Other, generally useful paths
+  /usr/share/fonts:
+    bind: $SNAP/usr/share/fonts
+  /usr/share/icons:
+    bind: $SNAP/usr/share/icons
+  /usr/share/sounds:
+    bind: $SNAP/usr/share/sounds
+  /etc/fonts:
+    bind: $SNAP/etc/fonts
+  # GTK
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0:
+    bind: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gdk-pixbuf-2.0
+  /usr/libexec/glycin-loaders:
+    bind: $SNAP/usr/libexec/glycin-loaders
+  /usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/gtk-3.0:
+    bind: $SNAP/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/gtk-3.0
+  /usr/share/mime:
+    bind: $SNAP/usr/share/mime
+  /etc/gtk-3.0:
+    bind: $SNAP/etc/gtk-3.0
+
+lint:
+  ignore:
+    - library:
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libcolordprivate.so.2.0.5
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libdconf.so.1.0.0
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libfreebl3.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libfreeblpriv3.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libnssckbi.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libnssdbm3.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libsoftokn3.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libssl3.so
+      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libdconf.so.1.0.0
+    - gpu:
+      - electron/libvulkan.so.1
 
 parts:
   app:
@@ -74,11 +131,17 @@ parts:
       # --no-sandbox is required under strict confinement (no user namespaces).
       # --user-data-dir keeps Chromium's writable profile in the writable
       # $SNAP_COMMON (the snap home is read-only).
+      EXTRA_ARGS=""
+      if [ ! -e /dev/dri/renderD128 ]; then
+        EXTRA_ARGS="--use-gl=angle --use-angle=swiftshader"
+      fi
+
       exec "$SNAP"/electron/electron \
            --enable-features=UseOzonePlatform \
            --ozone-platform=wayland \
            --disable-dev-shm-usage \
            --no-sandbox \
+           $EXTRA_ARGS \
            --user-data-dir="$SNAP_COMMON/electron" \
            "$SNAP"/app/main.js
       LAUNCHER
@@ -107,3 +170,62 @@ parts:
     stage-packages:
       - libnspr4
       - libnss3
+      - libatk-bridge2.0-0
+      - libcups2
+      - libgtk-3-0
+      - libasound2t64
+      - xkb-data
+
+  gsettings+pixbuf+immodules:
+    plugin: nil
+    build-packages:
+      - libgdk-pixbuf2.0-0
+      - librsvg2-common
+      - shared-mime-info
+      - libgtk-3-0
+    override-build: |
+      craftctl default
+      # Update mime database
+      update-mime-database ${CRAFT_PART_INSTALL}/usr/share/mime
+      # build immodules cache
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/gtk-3.0/3.0.0/
+      /usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/libgtk-3-0t64/gtk-query-immodules-3.0 > ${CRAFT_PART_INSTALL}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/gtk-3.0/3.0.0/immodules.cache
+    stage-packages:
+      - librsvg2-common
+      - gsettings-desktop-schemas
+      - libglib2.0-bin
+    override-prime: |
+      craftctl default
+      # Compile the gsettings schemas
+      /usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/glib-2.0/glib-compile-schemas "$CRAFT_PRIME/usr/share/glib-2.0/schemas"
+      # Index the pixbuf loaders
+      LOADERS_PATH=$(echo ${CRAFT_PRIME}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/gdk-pixbuf-2.0/*/loaders)
+      QUERY_LOADERS=/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_ON}/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders
+      GDK_PIXBUF_MODULEDIR=${LOADERS_PATH} ${QUERY_LOADERS} > ${LOADERS_PATH}/../loaders.cache
+      sed s!$CRAFT_PRIME!!g --in-place ${LOADERS_PATH}/../loaders.cache
+
+  setup:
+    plugin: dump
+    source: wayland-launch
+    override-build: |
+      # The plugs needed to run Wayland. (wayland-launch checks them, setup.sh connects them)
+      # You may add further plugs here if you want these options
+      #PLUGS="opengl wayland gpu-2404 browser-support network network-bind"
+      PLUGS="opengl wayland gpu-2404 network network-bind"
+      sed --in-place "s/%PLUGS%/$PLUGS/g" $CRAFT_PART_BUILD/bin/wayland-launch
+      craftctl default
+    stage-packages:
+      - inotify-tools
+
+  cleanup:
+    after:
+      - app
+      - electron
+      - gsettings+pixbuf+immodules
+      - setup
+    plugin: nil
+    override-prime: |
+      craftctl default
+      cd "$CRAFT_PRIME/usr/share/"
+      rm -rf applications apport bash-completion dbus-1 doc-base doc gtk-doc\
+             help linitan pkgconfig libthai man metainfo themes thumbnailers xml

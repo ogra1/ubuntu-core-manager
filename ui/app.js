@@ -4353,6 +4353,34 @@ function openModelModal() {
         if (mod.model) {
             bodyBox.prepend(el('p', { class: 'ucm-model__summary', text: 'Model ' + mod.model + (mod.base ? ' \u00b7 base ' + mod.base : '') + (mod.grade ? ' \u00b7 ' + mod.grade : '') }));
         }
+        // The DEVICE SERIAL section (appended at the BOTTOM - user: "attach the
+        // data, keep the popup as-is otherwise"). Read through core.system.serial()
+        // (main.js getSerialAssertion -> GET /v2/assertions/serial, the REST
+        // equivalent of `snap known serial`). A core device that has registered
+        // with the store carries it; a classic box / a device that has not
+        // registered resolves to {} (the daemon swallows the not-found into an
+        // empty body) and the section is OMITTED (an empty caption would be
+        // noise). Shown: the identity headers in raw field names (faithful to
+        // `snap known serial`) - NOT the multi-line device-key and NOT the
+        // signature block (the user does not need them in a UI; they stay in the
+        // CLI). The empty-value guard also drops the parser's empty device-key.
+        let ser;
+        try { ser = await core.system.serial(); } catch { ser = null; }
+        if (ser && typeof ser === 'object' && Object.keys(ser).length > 0) {
+            const skv = el('dl', { class: 'ucm-kv ucm-model__serial-kv' });
+            Object.keys(ser).forEach((k) => {
+                if (k === 'snaps') return;
+                const v = ser[k];
+                if (v == null || v === '') return;
+                skv.append(el('div', {},
+                    el('dt', { text: k }),
+                    el('dd', { class: 'ucm-mono', text: String(v) })));
+            });
+            if (skv.children.length) {
+                bodyBox.append(el('p', { class: 'ucm-model__snaps-cap ucm-model__serial', text: 'Serial' }));
+                bodyBox.append(skv);
+            }
+        }
     })();
 }
 
