@@ -1737,6 +1737,8 @@ function mockFactoryJs() {
         const nameCellsMono = rows.every((tr) => tr.children[1].classList.contains('ucm-mono'));
         const stopBtns = m.querySelectorAll('.ucm-procs__stop');
         const csCpuTd = rows.length ? getComputedStyle(rows[0].children[3]).textAlign : null;
+        const csStateTd = rows.length ? getComputedStyle(rows[0].children[2]).textAlign : null;
+        const nameColPct = (() => { const t = m.querySelector('table'); const n = t && t.querySelectorAll('thead th')[1]; return t && n ? Math.round((n.getBoundingClientRect().width / t.getBoundingClientRect().width) * 100) : null; })();
         const csTh = m.querySelector('thead th') ? { tt: getComputedStyle(m.querySelector('thead th')).textTransform, bg: getComputedStyle(m.querySelector('thead th')).backgroundColor } : null;
 
         const sortedTh = Array.from(m.querySelectorAll('thead th')).findIndex((th) => th.classList.contains('is-sorted'));
@@ -1752,7 +1754,7 @@ function mockFactoryJs() {
         const stopAria = stops.length ? stops.every((b) => /^Stop \S+ \(\d+\)$/.test(b.getAttribute('aria-label') || '')) : null;
         const stopTitle = stops.length ? stops.every((b) => ((b.getAttribute('title') || '') === ((b.getAttribute('aria-label') || '')))) : null;
         const cpuArrow = m.querySelector('.ucm-procs__th.is-sorted-desc .ucm-procs__thlabel') ? getComputedStyle(m.querySelector('.ucm-procs__th.is-sorted-desc .ucm-procs__thlabel'), '::after').content : null;
-        return { open: true, ths, rowCount: rows.length, nameCol, stateCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csTh, cardH, colW, stopIcon, stopNoText, stopAria, stopTitle, cpuArrow };
+        return { open: true, ths, rowCount: rows.length, nameCol, stateCol, cpuCol, status, nameCellsMono, stopCount: stopBtns.length, sortedTh, sortedDesc, csCpuTd, csStateTd, nameColPct, csTh, cardH, colW, stopIcon, stopNoText, stopAria, stopTitle, cpuArrow };
     });
     let pm = await procModal();
     if (!pm.open) console.log('PAGE ERROR: clicking the info icon must open the process modal (round P)');
@@ -1808,6 +1810,13 @@ function mockFactoryJs() {
         // the header row carries a background (the sticky-header surface).
         if (pm.csCpuTd !== 'right')
             console.log('PAGE ERROR: the CPU (numeric) column must right-align (got ' + JSON.stringify(pm.csCpuTd) + ') (round P)');
+        // round P3b: the right-hand GROUP is the balance fix - State joins the
+        // right-aligned numeric columns, and Name is the dominant column
+        // (>= 50% of the table; the old 25% felt starved next to 17% State).
+        if (pm.csStateTd !== 'right')
+            console.log('PAGE ERROR: the State column must right-align with the numeric group (got ' + JSON.stringify(pm.csStateTd) + ') (round P3b)');
+        if (pm.nameColPct == null || pm.nameColPct < 50)
+            console.log('PAGE ERROR: the Name column must be the dominant (>= 50%) column (got ' + JSON.stringify(pm.nameColPct) + '%) (round P3b)');
         if (!pm.csTh || pm.csTh.tt !== 'uppercase')
             console.log('PAGE ERROR: the process header must be the house faint-UPPERCASE table idiom (got ' + JSON.stringify(pm.csTh) + ') (round P)');
         if (!pm.csTh || !pm.csTh.bg || pm.csTh.bg === 'rgba(0, 0, 0, 0)')

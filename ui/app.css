@@ -1776,9 +1776,11 @@ button.is-disabled { pointer-events: none; opacity: .6; }
 .ucm-procs__th.is-sorted .ucm-procs__thlabel::after { content: ' \25b2'; font-size: .58rem; }
 .ucm-procs__th.is-sorted-desc .ucm-procs__thlabel::after { content: ' \25bc'; font-size: .58rem; }
 .ucm-procs__th--nosort, .ucm-procs__th--stop { cursor: default; }
-/* numeric columns right-align (top/htop): pid / cpu / ram / action; state centres */
+/* the right-hand group right-aligns (top/htop): pid / state / cpu / ram /
+   action - State joins the group (round P3b) so its words sit flush against
+   the CPU numbers; Name is the one left-aligned, dominant column */
 .ucm-procs__table th:nth-child(1), .ucm-procs__table td:nth-child(1) { text-align: right; }
-.ucm-procs__table th:nth-child(3), .ucm-procs__table td:nth-child(3) { text-align: center; }
+.ucm-procs__table th:nth-child(3), .ucm-procs__table td:nth-child(3) { text-align: right; }
 .ucm-procs__table th:nth-child(4), .ucm-procs__table td:nth-child(4) { text-align: right; }
 .ucm-procs__table th:nth-child(5), .ucm-procs__table td:nth-child(5) { text-align: right; }
 .ucm-procs__table th:nth-child(6), .ucm-procs__table td:nth-child(6) { text-align: right; }
@@ -1789,15 +1791,21 @@ button.is-disabled { pointer-events: none; opacity: .6; }
    count all vary) and the columns slid ~240 px between polls (measured on
    the harness: State +198 px, Name +64 px, Stop -58 px). Pin FIXED: the
    static thead + <colgroup> define the widths once and the re-renders can no
-   longer reflow. Name keeps the space long names earned (they ellipsize);
-   the numeric columns stay compact; the action column is the X only. */
+   longer reflow. Under fixed layout the specified widths act as PROPORTIONS
+   (they scale to fill the 100% table), so rebalance = new proportions.
+   Round P3b (user: "State and CPU are way too wide, it looked more balanced
+   before"): Name takes the slack (long names ellipsize - that is what the
+   width is for) and the four right-hand columns form one slim, RIGHT-ALIGNED
+   numeric group (State + CPU + RAM + the X) the way top/htop reads. Sizing
+   off measured text bounds (harness viewport): longest state word
+   "Out of swap" ~86 px, "123.4" cpu ~40 px, "1024 MiB" ~65 px, X 16 px. */
 .ucm-procs__table { table-layout: fixed; }
-.ucm-procs__table col.c-procs-pid   { width: 64px; }
-.ucm-procs__table col.c-procs-name  { width: 236px; }
-.ucm-procs__table col.c-procs-state { width: 112px; }
-.ucm-procs__table col.c-procs-cpu   { width: 96px; }
-.ucm-procs__table col.c-procs-ram   { width: 104px; }
-.ucm-procs__table col.c-procs-act   { width: 48px; }
+.ucm-procs__table col.c-procs-pid   { width: 56px; }
+.ucm-procs__table col.c-procs-name  { width: 685px; }
+.ucm-procs__table col.c-procs-state { width: 104px; }
+.ucm-procs__table col.c-procs-cpu   { width: 64px; }
+.ucm-procs__table col.c-procs-ram   { width: 88px; }
+.ucm-procs__table col.c-procs-act   { width: 40px; }
 /* the Stop confirm: pinned to the BOTTOM of the modal (flex:0 0 auto) so it is
    always visible with padding - opening it squeezes the (scrollable) table
    area upward instead of the confirm flowing out of view (round P-fix). The
