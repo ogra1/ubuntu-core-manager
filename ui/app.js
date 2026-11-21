@@ -2109,13 +2109,16 @@ function clearStoreResults() {
 async function searchStore() {
     const nameEl = $('#snapSearchName');
     const q = nameEl.value.trim();
-    if (!q) { toast('caution', 'Search', 'Enter a snap name to search the store.'); return; }
+    if (!q) { toast('caution', 'Search', 'Enter something to search the store (names and descriptions).'); return; }
     const box = $('#snapSearchResults');
     box.classList.remove('ucm-hidden');
     $('#snapSearchBody').innerHTML = '';
     $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'Searching…' })));
     try {
-        const results = await core.snaps.search(q, 8);
+        // FULL-TEXT store search (mode 'q' = the snapd /v2/find?q=... the
+        // `snap find` CLI sends) — matches names AND summaries, not just
+        // known snap names.
+        const results = await core.snaps.search(q, 8, 'q');
         $('#snapSearchBody').innerHTML = '';
         if (!results.length) {
             $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'No store results.' })));

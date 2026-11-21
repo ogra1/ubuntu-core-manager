@@ -1,7 +1,3 @@
-# USER-VERIFIED PACKAGING (2026-10-29): built and run by the user on the
-# Ubuntu Core VM under ubuntu-frame (pure Wayland, no X11). Do not revert to
-# the first-draft version (x11/desktop plugs + ~71 explicit stage-packages ≈
-# 120MB of unused X/krb5/avahi stack) — kept at /root/snapcraft.yaml.old-bloaty.bak.
 name: ubuntu-core-manager
 base: core24
 version: '1.0.0'

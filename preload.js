@@ -131,7 +131,7 @@ const api = Object.freeze({
     snaps: Object.freeze({
         list: invoke('snaps:list'),             // installed snaps
         info: invoke('snaps:info'),             // (name)
-        search: invoke('snaps:search'),         // (query, limit?) — store
+        search: invoke('snaps:search'),         // (query, limit?, mode?) — store; mode 'q' = FULL-TEXT (snap find), default = exact-name resolve (snap info)
         install: invoke('snaps:install'),       // (name, channel='stable') — store
         action: invoke('snaps:action'),         // (name, action, extra?)
         component: invoke('snaps:component'),   // (name, 'install'|'remove', component) — round 47m

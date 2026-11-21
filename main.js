@@ -673,15 +673,26 @@ async function getSnapInfo(name) {
     return snapdRequest('GET', '/v2/snaps/' + encodeURIComponent(name), { auth: A() });
 }
 
-/** GET /v2/find — search the store. Unauthenticated by design: global-store search
+/** GET /v2/find — query the store. Unauthenticated by design: global-store search
     works without a /v2/login macaroon (store login is reserved for a later
     private-brand store). Results carry each snap's full `channels` map; the UI
-    populates the deploy pulldown from it. */
-async function searchSnaps(query, limit = 10) {
+    populates the deploy pulldown from it.
+    The snapd daemon (verified in the local snapd source, daemon/api_find.go)
+    serves TWO different find modes, and the app uses both:
+      - mode 'q'    -> /v2/find?q=...  the FULL-TEXT store search — exactly what
+    `snap find <query>` sends on the wire (cmd_find.go -> client.FindOptions.Query)
+    and what the Store SEARCH BOX wants (match names AND summaries/descriptions);
+      - default     -> /v2/find?name=...  EXACT-NAME resolution (snapd calls this
+    findOne) — what the snap-INFO channel pickers need (they hold one specific
+    snap's name and want THAT snap's channels; a full-text query for that name
+    would return many snaps and the picker's store[0] heuristic would pick the
+    wrong one). `snap name <snap>` / `snap info` are the CLI equivalents. */
+async function searchSnaps(query, limit = 10, mode) {
     if (typeof query !== 'string' || query.length > 120) throw new Error('invalid search query');
     const clean = query.replace(/[^\p{L}\p{N}._\-+ ]/gu, '').trim();
     const n = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
-    const res = await snapdRequest('GET', '/v2/find?name=' + encodeURIComponent(clean) + '&n=' + n, { auth: A() });
+    const param = (mode === 'q') ? 'q' : 'name';
+    const res = await snapdRequest('GET', '/v2/find?' + param + '=' + encodeURIComponent(clean) + '&n=' + n, { auth: A() });
     return Array.isArray(res) ? res : (res && res.snaps) || [];
 }
 
@@ -3437,7 +3448,7 @@ function initElectron() {
 
     ipcMain.handle('snaps:list', guard(() => listSnaps()));
     ipcMain.handle('snaps:info', guard((name) => getSnapInfo(name)));
-    ipcMain.handle('snaps:search', guard((q, n) => searchSnaps(q, n)));
+    ipcMain.handle('snaps:search', guard((q, n, mode) => searchSnaps(q, n, mode)));
     ipcMain.handle('snaps:install', guard((name, channel) => { requireAuth(); return installSnap(name, channel); }));
     ipcMain.handle('snaps:action', guard((name, action, extra) => { requireAuth(); return snapAction(name, action, extra || {}); }));
     ipcMain.handle('snaps:component', guard((name, action, component) => { requireAuth(); return snapComponent(name, action, component); }));

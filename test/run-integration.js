@@ -184,8 +184,28 @@ function ok(name, cond, extra = '') {
         JSON.stringify(Array.from(m.modelSystemSnaps(mod))));
     const snaps = await m.listSnaps();
     ok('listSnaps returns array of 5 (round KM: the frame is seeded too)', Array.isArray(snaps) && snaps.length === 5, JSON.stringify(snaps).slice(0, 60));
-    const find = await m.searchSnaps('fire');
-    ok('store search filters', Array.isArray(find) && find.length === 1 && find[0].name === 'firefox', JSON.stringify(find).slice(0, 80));
+    // round FS: the store SEARCH is full-text (mode 'q' = the snapd
+    // /v2/find?q=... `snap find` sends) — it matches summaries, not just
+    // names. 'broker' hits mosquitto (summary "MQTT broker") even though no
+    // snap is named 'broker'; 'mosquitto-tools' appears too (name match). The
+    // DEFAULT (no mode) stays EXACT-NAME resolution for the channel pickers:
+    // searchSnaps('fire') with no mode returns only the firefox name.
+    const ft = await m.searchSnaps('broker', 10, 'q');
+    ok('store FULL-TEXT search (mode q, snap find) matches summaries',
+        Array.isArray(ft) && ft.length === 2
+        && ft.some((s) => s.name === 'mosquitto') && ft.some((s) => s.name === 'mosquitto-tools'),
+        JSON.stringify(ft.map((s) => s.name)));
+    // the exact path is EXACT (no prefix/substring): 'firefox' resolves, a
+    // prefix ('fire') or a summary term ('broker') does NOT - that separation
+    // is what keeps the channel pickers pointing at one specific snap.
+    const exact = await m.searchSnaps('firefox');
+    ok('store search default stays EXACT-NAME (name=, the channel pickers\' path)',
+        Array.isArray(exact) && exact.length === 1 && exact[0].name === 'firefox',
+        JSON.stringify(exact.map((s) => s.name)));
+    const prefix = await m.searchSnaps('fire');
+    ok('the exact path does NOT do prefix/substring matching (a find regression)',
+        Array.isArray(prefix) && prefix.length === 0,
+        JSON.stringify(prefix.map((s) => s.name)));
     const conns = await m.listInterfaces();
     ok('interfaces list has plugs+slots (live /v2/interfaces shape)',
         Array.isArray(conns.plugs) && Array.isArray(conns.slots),

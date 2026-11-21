@@ -678,15 +678,24 @@ function mockFactoryJs() {
                 },
                 // Store search/install: unauthenticated by design (model
                 // attachment at image build time) — no store login needed.
-                async search(q) {
-                    // the info modal queries the STORE for one installed
-                    // snap's channels (round 47g) — resolve it first; a
-                    // missing entry (e.g. 'core24') = a local snap -> [].
-                    if (STORE[q]) return [{ name: q, channels: STORE[q], 'download-size': SIZES[q] }];
+                async search(q, limit, mode) {
+                    // The store search has TWO modes, mirroring the daemon
+                    // (api_find.go) that main.js searchSnaps now targets:
+                    //   mode 'q'   -> FULL-TEXT (snap find): match NAME + SUMMARY
+                    //   (default)  -> EXACT-NAME resolve (snap info): one installed
+                    //   snap's channels (the channel-picker path; a missing entry
+                    //   e.g. 'core24' = a local snap -> []).
+                    if (mode !== 'q') {
+                        if (STORE[q]) return [{ name: q, channels: STORE[q], 'download-size': SIZES[q] }];
+                        return [];
+                    }
+                    const query = (q || '').toLowerCase();
                     return [
-                        { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, 'download-size': 4841472, channels: { 'latest/stable': {} } },
+                        { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, 'download-size': 4841472, channels: STORE['mosquitto'] || { 'latest/stable': {} } },
+                        { name: 'mosquitto-tools', summary: 'MQTT broker admin CLI', publisher: { username: 'mosquitto-dev' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
                         { name: 'mqtt-spy', summary: 'Simple MQTT traffic inspector', publisher: { username: 'iot-labs' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
-                    ].filter((s) => s.name.includes((q || '').toLowerCase()));
+                        { name: 'firefox', summary: 'Web browser', publisher: { username: 'mozilla-canonical' }, 'download-size': 52428800, channels: STORE['firefox'] || {} },
+                    ].filter((s) => (s.name + ' ' + s.summary).toLowerCase().includes(query));
                 },
                 async install(n, ch) {
                     const id = '17';
@@ -4284,8 +4293,26 @@ function mockFactoryJs() {
     // ---- 4. snaps view (search works WITHOUT a store login) ----
     await page.click('.ucm-side a[data-view="snaps"]');
     await wait(700);
-    await page.type('#snapSearchName', 'mosquitto');
+    // round FS: the store search is now FULL-TEXT (mode 'q' = the snapd
+    // /v2/find?q=... the `snap find` CLI sends) — it matches summaries, not
+    // just known names. 'broker' is NOT a snap name, but both mosquitto and
+    // mosquitto-tools carry it in their summary -> both rows appear. (Before
+    // this round the search resolved names only and would have returned
+    // nothing for 'broker'.)
+    await page.type('#snapSearchName', 'broker');
     await page.keyboard.press('Enter'); // search field is search-only (Enter must NOT install)
+    await wait(700);
+    const ftRows = await page.evaluate(() => Array.from(document.querySelectorAll('#snapSearchBody tr'))
+        .map((r) => r.cells && r.cells[0] ? r.cells[0].textContent.trim() : null).filter(Boolean));
+    if (!ftRows.includes('mosquitto'))
+        console.log('PAGE ERROR: full-text search for "broker" must return mosquitto (a summary match; no snap is named "broker") (got ' + JSON.stringify(ftRows) + ') (round FS)');
+    if (!ftRows.includes('mosquitto-tools'))
+        console.log('PAGE ERROR: full-text search for "broker" must also return mosquitto-tools (got ' + JSON.stringify(ftRows) + ') (round FS)');
+    // re-run with a NAME (mosquitto) — the install drive below keys off this
+    // row — and capture the results shot.
+    await page.evaluate(() => { const f = document.querySelector('#snapSearchName'); f.value = ''; });
+    await page.type('#snapSearchName', 'mosquitto');
+    await page.keyboard.press('Enter');
     await wait(700);
     await page.screenshot({ path: path.join(SHOTS, '10-snaps-search.png'), fullPage: true });
 
@@ -5547,7 +5574,7 @@ function mockFactoryJs() {
         if (snCards.counts[0] !== '4 snaps' || snCards.counts[1] !== '7 snaps')
             console.log('PAGE ERROR: card meta counts wrong (' + JSON.stringify(snCards.counts) + ', want ["4 snaps","7 snaps"])');
         if (snCards.legacyWrap) console.log('PAGE ERROR: the old scrollable table wrap (.ucm-table-wrap.ucm-snaps-table) is still in the DOM');
-        const wantPh = 'e.g. rocketchat-server, nextcloud, mosquitto — Enter runs the search';
+        const wantPh = 'e.g. mqtt broker, rocketchat, nextcloud — full-text, Enter runs the search';
         if (snCards.searchPh !== wantPh) console.log('PAGE ERROR: store-search placeholder is not the Ubuntu-Core examples (' + JSON.stringify(snCards.searchPh) + ', round 47j)');
         if (snCards.oldBody) console.log('PAGE ERROR: the old #snapsBody table is still in the DOM');
     }

@@ -652,11 +652,21 @@ function makeServer(socketPath, state) {
 
             // ---- find (store search) -------------------------------------------
             if (p === '/v2/find' && req.method === 'GET') {
-                const q = (url.searchParams.get('name') || '').toLowerCase();
-                return json(res, 200, [
+                // Mirror the daemon (api_find.go): `q=` = FULL-TEXT store search
+                // (matches name + summary — what `snap find` sends); `name=` =
+                // EXACT-NAME resolution (what the channel pickers send). The
+                // mosquitto-tools row only matches the FULL-TEXT 'broker' query
+                // (its name doesn't), proving the two modes differ.
+                const q = (url.searchParams.get('q') || '').toLowerCase();
+                const name = (url.searchParams.get('name') || '').toLowerCase();
+                const cat = [
                     { name: 'mosquitto', summary: 'MQTT broker', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
+                    { name: 'mosquitto-tools', summary: 'MQTT broker admin CLI', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
                     { name: 'firefox', summary: 'Web browser', publisher: { username: 'mozilla-canonical' }, channels: { 'latest/stable': {} } },
-                ].filter((s) => s.name.includes(q)));
+                ];
+                if (name) return json(res, 200, cat.filter((s) => s.name === name));
+                if (q) return json(res, 200, cat.filter((s) => (s.name + ' ' + s.summary).includes(q)));
+                return json(res, 200, cat);
             }
 
             // ---- interfaces ------------------------------------------------------
