@@ -476,6 +476,14 @@ html, body {
    :hover underline lands on the cell itself. */
 #snapSearchBody td.ucm-storename { cursor: pointer; }
 #snapSearchBody td.ucm-storename:hover { text-decoration: underline dotted; }
+/* round STORECOUNT-FIX: the store card's title is a .p-heading--5, and the
+   bundle gives .p-heading--5 a padding-top (~6.5px) that EVERY other card
+   title zeroes (the .ucm-snaps-card / .ucm-ifaces-card rules above) - the
+   store card was missed, so its title box ran ~6.5px TALLER than the count
+   box. With both rows align-items:center, the count then centred in the
+   taller box and read ~3px HIGH vs the title text. Zero it, like every
+   sibling card, so title + count sit on the same baseline row. */
+#snapSearchResults .p-heading--5 { padding-top: 0; }
 /* round T-fix15: the busy Install + Remove? buttons must keep their
    label + spinner on ONE line - white-space:nowrap so the spinner can
    never drop to a second line under the text at any width. Scoped to

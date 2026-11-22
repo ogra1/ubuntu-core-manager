@@ -4312,6 +4312,28 @@ function mockFactoryJs() {
     // interface/snaps-card count idiom). 'broker' -> 2 results.
     const countB = await page.evaluate(() => (document.querySelector('#snapSearchCount') || {}).textContent || '');
     if (countB !== '2 snaps') console.log('PAGE ERROR: the Store results caption must count the results found (got ' + JSON.stringify(countB) + ', want 2 snaps — round STORECOUNT)');
+    // round STORECOUNT-FIX: the store card title must zero the bundle
+    // .p-heading--5 padding-top (like every sibling card) so its box is the
+    // SAME height as the count's - a taller title box centred the count ~3px
+    // high. (Regression: the store card was the only card title missed.)
+    const countAlign = await page.evaluate(() => {
+        const st = document.querySelector('#snapSearchResults .p-card__header .p-heading--5');
+        const sc = document.querySelector('#snapSearchCount');
+        const ot = document.querySelector('#snapsCards .p-card .p-heading--5');
+        return st && sc && ot ? {
+            padTop: getComputedStyle(st).paddingTop,
+            titleH: +st.getBoundingClientRect().height.toFixed(1),
+            countH: +sc.getBoundingClientRect().height.toFixed(1),
+            refTitleH: +ot.getBoundingClientRect().height.toFixed(1),
+        } : null;
+    });
+    if (countAlign) {
+        if (countAlign.padTop !== '0px') console.log('PAGE ERROR: the store card title must zero the bundle padding-top (got ' + countAlign.padTop + ' — round STORECOUNT-FIX)');
+        if (countAlign.titleH !== countAlign.countH) console.log('PAGE ERROR: the store title box (' + countAlign.titleH + 'px) must match the count box (' + countAlign.countH + 'px) or the count shifts (round STORECOUNT-FIX)');
+        if (countAlign.titleH !== countAlign.refTitleH) console.log('PAGE ERROR: the store title box (' + countAlign.titleH + 'px) must match the reference card title (' + countAlign.refTitleH + 'px) (round STORECOUNT-FIX)');
+    } else {
+        console.log('PAGE ERROR: could not measure the store title/count boxes (round STORECOUNT-FIX)');
+    }
     // round STORECOUNT (singular): 'firefox' is the ONE catalog hit (the
     // others are broker/mqtt/inspector) -> the caption must read '1 snap'.
     // (The full-text 'mosquitto' re-search below hits BOTH mosquitto and
