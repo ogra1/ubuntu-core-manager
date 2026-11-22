@@ -198,6 +198,16 @@ function ok(name, cond, extra = '') {
     // the exact path is EXACT (no prefix/substring): 'firefox' resolves, a
     // prefix ('fire') or a summary term ('broker') does NOT - that separation
     // is what keeps the channel pickers pointing at one specific snap.
+    // round LASTCH-FIX: a REAL /v2/find?q= row carries NO channel map
+    // (store.Find -> storeSnap: "TODO: not yet defined: channel map") —
+    // searchSnaps must merge the exact-name (findOne) map per row, or the
+    // UI's per-row channel picker + 'Last changed' degrade to stable-only /
+    // '—' (the reported regression; the stub now models this honestly).
+    ok('store FULL-TEXT results carry the MERGED channel map (findOne per row; store.Find returns none)',
+        ft.length === 2 && ft.every((s) => s.channels && Object.keys(s.channels).length > 0)
+        && ft.find((s) => s.name === 'mosquitto').channels['latest/edge']['released-at'] === '2026-10-21T12:00:00Z'
+        && ft.find((s) => s.name === 'mosquitto-tools').channels['latest/stable']['released-at'] === '2026-08-02T12:00:00Z',
+        JSON.stringify(ft.map((s) => [s.name, s.channels ? Object.keys(s.channels).length : null])));
     const exact = await m.searchSnaps('firefox');
     ok('store search default stays EXACT-NAME (name=, the channel pickers\' path)',
         Array.isArray(exact) && exact.length === 1 && exact[0].name === 'firefox',

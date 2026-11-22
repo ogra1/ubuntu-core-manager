@@ -81,11 +81,11 @@ const STORE = {
     // foot-gun. The switcher must be suppressed by the x revision, NOT by
     // this being empty (it is not empty).
     gadget: { 'latest/stable': {}, 'pc/stable': {} },
-    htop: { 'latest/stable': {}, 'latest/candidate': {}, 'latest/beta': {}, 'latest/edge': {},
-        '3.3/stable': {}, '3.3/candidate': {}, '3.2/stable': {} },
+    htop: { 'latest/stable': { 'released-at': '2026-10-20T09:15:00Z' }, 'latest/candidate': { 'released-at': '2026-10-12T09:15:00Z' }, 'latest/beta': { 'released-at': '2026-10-01T09:15:00Z' }, 'latest/edge': { 'released-at': '2026-10-18T09:15:00Z' },
+        '3.3/stable': { 'released-at': '2026-10-20T09:15:00Z' }, '3.3/candidate': { 'released-at': '2026-09-30T09:15:00Z' }, '3.2/stable': { 'released-at': '2026-08-15T09:15:00Z' } },
     firefox: { 'latest/stable': {}, 'latest/candidate': {}, 'latest/edge': {},
         '141/stable': {}, '140/stable': {} },
-    mosquitto: { 'latest/stable': {}, 'latest/edge': {}, '2.0/stable': {} },
+    mosquitto: { 'latest/stable': { 'released-at': '2026-09-14T12:00:00Z' }, 'latest/edge': { 'released-at': '2026-10-21T12:00:00Z' }, '2.0/stable': { 'released-at': '2026-09-14T12:00:00Z' } },
 };
 
 // Store DOWNLOAD sizes (bytes) per snap (round 47n) — the /v2/find result's
@@ -693,7 +693,7 @@ function mockFactoryJs() {
                     return [
                         { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', version: '2.0.20', publisher: { id: 'mosq-dev', username: 'mosquitto-dev', 'display-name': 'EMQ', validation: 'verified' }, 'download-size': 4841472, channels: STORE['mosquitto'] || { 'latest/stable': {} } },
                         { name: 'mosquitto-tools', summary: 'MQTT broker admin CLI', publisher: { username: 'mosquitto-dev' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
-                        { name: 'mqtt-spy', title: 'MQTT Spy', summary: 'Simple MQTT traffic inspector', version: '1.2.3', description: 'MQTT **Spy** inspects live MQTT traffic for debugging.', publisher: { id: 'iot-labs', username: 'iot-labs', 'display-name': 'IotLabs', validation: 'starred' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
+                        { name: 'mqtt-spy', title: 'MQTT Spy', summary: 'Simple MQTT traffic inspector', version: '1.2.3', channel: 'latest/stable', description: 'MQTT **Spy** inspects live MQTT traffic for debugging.', publisher: { id: 'iot-labs', username: 'iot-labs', 'display-name': 'IotLabs', validation: 'starred' }, 'download-size': 1048576, channels: { 'latest/stable': { 'released-at': '2026-10-11T08:30:00Z' }, 'latest/edge': { 'released-at': '2026-10-15T08:30:00Z' }, '1.0/stable': { 'released-at': '2026-05-02T08:30:00Z' } } },
                         { name: 'firefox', summary: 'Web browser', publisher: { username: 'mozilla-canonical' }, 'download-size': 52428800, channels: STORE['firefox'] || {} },
                     ].filter((s) => (s.name + ' ' + s.summary).toLowerCase().includes(query));
                 },
@@ -4549,7 +4549,7 @@ function mockFactoryJs() {
             desc: (body.querySelector('.ucm-info__desc') || {}).textContent || null,
             hasMarkdown: !!body.querySelector('.ucm-info__desc') && body.querySelector('.ucm-info__desc').textContent.includes('**'),
             publisher: dt('Publisher'),
-            version: dt('Version'), size: dt('Size'),
+            version: dt('Version'), size: dt('Size'), lastChanged: dt('Last changed'),
             noChan: !Array.from(body.querySelectorAll('.ucm-kv dt')).some((x) => x.textContent === 'Track/Channel'),
             noInstallBtn: !body.querySelector('button.p-button--brand'),
         };
@@ -4562,6 +4562,7 @@ function mockFactoryJs() {
         if (!si.desc || si.hasMarkdown) console.log('PAGE ERROR: the store-info description must render plain (got ' + JSON.stringify(si.desc && si.desc.slice(0, 40)) + ', round SEARCH-FIN)');
         if (si.publisher !== 'IotLabs\u272A') console.log('PAGE ERROR: the store-info Publisher must show the name + starred badge (got ' + JSON.stringify(si.publisher) + ', round SEARCH-FIN)');
         if (si.version !== '1.2.3') console.log('PAGE ERROR: the store-info Version must be the store row version (got ' + JSON.stringify(si.version) + ', round SEARCH-FIN)');
+        if (si.lastChanged !== '15.10.2026') console.log('PAGE ERROR: the store-info Last changed must be the LATEST release across the channel map — maintained-or-stale, not one channel (got ' + JSON.stringify(si.lastChanged) + ', want 15.10.2026 — round LASTCH-FIX)');
         if (si.size !== '1.0 MiB') // fmtBytes toFixed(1) under 100 console.log('PAGE ERROR: the store-info Size must be the formatted download-size (got ' + JSON.stringify(si.size) + ', round SEARCH-FIN)');
         if (!si.noChan) console.log('PAGE ERROR: a not-installed store snap must NOT offer a Track/Channel row (round SEARCH-FIN)');
         if (!si.noInstallBtn) console.log('PAGE ERROR: the read-only store-info modal must NOT carry an Install button (round SEARCH-FIN)');
@@ -5961,7 +5962,7 @@ function mockFactoryJs() {
             title: t('.ucm-info__name'), id: t('.ucm-info__id'),
             summary: t('.ucm-info__summary'),
             chip0: (body && body.querySelector('.ucm-info__chips .p-status-label') || {}).textContent || null,
-            version: dd('Version'), channel: (ddEl('Track/Channel') && (ddEl('Track/Channel').querySelector('.ucm-mono') || {}).textContent || '').trim(), publisher: dd('Publisher'),
+            version: dd('Version'), channel: (ddEl('Track/Channel') && (ddEl('Track/Channel').querySelector('.ucm-mono') || {}).textContent || '').trim(), publisher: dd('Publisher'), lastChanged: dd('Last changed'),
             website: dd('Website'), source: dd('Source'),
             hasDesc: !!t('.ucm-info__desc'),
             descPlain: (t('.ucm-info__desc') || '').includes('**') ? 'STILL-MARKDOWN' : 'plain',
@@ -5984,6 +5985,7 @@ function mockFactoryJs() {
         if (info.summary !== 'Interactive ps') console.log('PAGE ERROR: info modal summary wrong (' + info.summary + ')');
         if (info.chip0 !== 'active') console.log('PAGE ERROR: info modal status chip wrong (' + info.chip0 + ')');
         if (info.version !== '3.3.0 (5533)') console.log('PAGE ERROR: info modal version wrong (' + info.version + ')');
+        if (info.lastChanged !== '20.10.2026') console.log('PAGE ERROR: the info modal Last changed is not the current channel\u2019s released-at, date only (got ' + JSON.stringify(info.lastChanged) + ', want 20.10.2026 — round LASTCH)');
         if (info.channel !== 'latest/stable') console.log('PAGE ERROR: info modal track/channel wrong (' + info.channel + ')');
         if (info.publisher !== 'htop-dev\u272A') console.log('PAGE ERROR: info modal publisher wrong (want the name + a star, got ' + JSON.stringify(info.publisher) + ')');
         if (info.pubBadgeChar !== '\u272A') console.log('PAGE ERROR: starred publisher is not the yellow star glyph (got ' + JSON.stringify(info.pubBadgeChar) + ', round 47e)');
@@ -6030,7 +6032,7 @@ function mockFactoryJs() {
         };
         const pb = body ? body.querySelector('.ucm-pub-badge') : null;
         return { shown: !!body, title: t('.ucm-info__name'), hasId: !!t('.ucm-info__id') && t('.ucm-info__id') !== '',
-                 publisher: dd('Publisher'), badgeChar: pb ? pb.textContent : null,
+                 publisher: dd('Publisher'), lastChanged: dd('Last changed'), badgeChar: pb ? pb.textContent : null,
                  badgeColor: pb ? getComputedStyle(pb).color : null,
                  divPresent: body ? !!body.querySelector('.ucm-info__div') : false };
     });
@@ -6041,6 +6043,7 @@ function mockFactoryJs() {
         if (c24.publisher !== 'Canonical\u2713') console.log('PAGE ERROR: verified publisher is not the name + a check (want ' + JSON.stringify('Canonical\u2713') + ', got ' + JSON.stringify(c24.publisher) + ')');
         if (c24.badgeChar !== '\u2713') console.log('PAGE ERROR: verified publisher is not the check glyph (got ' + JSON.stringify(c24.badgeChar) + ', round 47e)');
         if (c24.badgeColor !== 'rgb(14, 132, 32)') console.log('PAGE ERROR: check badge is not the positive green (got ' + c24.badgeColor + ', round 47e)');
+        if (c24.lastChanged !== '—') console.log('PAGE ERROR: a snap with no store channels must keep Last changed = — (got ' + JSON.stringify(c24.lastChanged) + ', round LASTCH)');
         if (c24.divPresent !== true) console.log('PAGE ERROR: no divider before the technical info on a no-description snap (round 47e)');
     }
     await page.keyboard.down('Escape');

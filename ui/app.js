@@ -65,6 +65,16 @@ const fmtDm = (iso) => {
     return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };;
 
+// round LASTCH: date-only sibling of fmtDm — the house DD.MM.YYYY idiom with
+// the HH:MM dropped (the info card's 'Last changed' stamp).
+const fmtDay = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+};
+
 /* ------------------------------- toasts ---------------------------------- */
 
 function toast(kind, title, message, ttl = 6000) {
@@ -2212,6 +2222,38 @@ function isLocalSnap(snap) {
 // round SEARCH-FIN: the publisher identity for a snap/store object —
 // the display name first (snapd's longPublisher idiom), falling back to
 // username / id / the historic developer field.
+// round LASTCH: the date (iso) the snap's CURRENT channel was released, from
+// a /v2/find store row's channels map — snapd fills ChannelSnapInfo's
+// released-at per channel (the store's 'Last revised' in `snap info`). The
+// snap's own
+// channel is the key (installed snaps: info.channel; store rows: r.channel).
+// Unknown channel or empty map -> null (the row renders '—').
+function lastChangedFromMap(snap, chanMap) {
+    if (!snap || !chanMap) return null;
+    // Installed info: `channel` is the RISK ('stable'), but the store map is
+    // keyed by the full TRACK/RISK — the `tracking-channel` is the exact key
+    // (the fmtTrackChannel idiom). Store rows: the row's own `channel` is
+    // already the full key (no tracking-channel present).
+    const tc = String(snap.tracking_channel || snap.trackingChannel || snap['tracking-channel'] || '');
+    const ch = String(snap.channel || '');
+    const c = (tc && chanMap[tc]) || (ch && chanMap[ch]);
+    return c && c['released-at'] ? c['released-at'] : null;
+}
+
+// round LASTCH-FIX: the LATEST released-at across the WHOLE channel map
+// (any channel) — for the search-results info card: "is this snap still
+// maintained?" must not hinge on which single channel the row references
+// (a store search row's `channel` is 'stable' by default — an old one when
+// the snap moved on). null when no entry carries a released-at.
+function latestFromMap(chanMap) {
+    let best = null;
+    Object.values(chanMap || {}).forEach((c) => {
+        const t = c && c['released-at'];
+        if (t && (!best || t > best)) best = t;
+    });
+    return best;
+}
+
 function publisherName(pub, info) {
     const p = pub || {};
     return p['display-name'] || p.username || p.id || (info && info.developer) || null;
@@ -2320,6 +2362,7 @@ function openSnapInfo(name, storeRow) {
         if (pubName)
             kv.append(el('div', {}, el('dt', { text: 'Publisher' }), el('dd', {}, publisherSpan(r.publisher || {}, pubName))));
         row('Version', r.version || null);
+        row('Last changed', fmtDay(latestFromMap(r.channels || {})));
         row('Size', r['download-size'] != null ? fmtBytes(r['download-size']) : null);
         row('Confinement', r.confinement || null);
         row('Grade', r.grade || null);
@@ -2361,6 +2404,11 @@ function openSnapInfo(name, storeRow) {
             kv.append(el('div', {}, el('dt', { text: k }), el('dd', { text: String(v), class: mono ? 'mono' : undefined })));
         };
         row('Version', `${info.version || '—'} (${info.revision != null ? info.revision : '—'})`);
+        // round LASTCH: 'Last changed' — the CURRENT channel's released-at
+        // from the store's channel map. Built with '—' (the channels load
+        // async, like the Track/Channel loading marker); renderChannelRow
+        // fills it when they land (local builds / unknown channels keep '—').
+        row('Last changed', fmtDay(null));
         // Track/Channel — the value is followed by a transient "loading"
         // marker until the store channels resolve (round 47g); the switcher
         // or 'local' marker replaces it.
@@ -2489,6 +2537,12 @@ function openSnapInfo(name, storeRow) {
         const chanMap = (store[0] && store[0].channels) || {};
         dd.innerHTML = '';
         dd.append(val);
+        // round LASTCH: the store channels just landed — fill the 'Last
+        // changed' row with the CURRENT channel's released-at (unknown
+        // channel / local builds keep the '—' the row was built with).
+        const lcRow = Array.from(bodyBox.querySelectorAll('.ucm-kv > div'))
+            .find((d) => (d.querySelector('dt') || {}).textContent === 'Last changed');
+        if (lcRow) lcRow.querySelector('dd').textContent = fmtDay(lastChangedFromMap(info, chanMap));
         // round 47h: a local build (x revision) is NEVER offered a store
         // switch, even if a same-named store snap has channels — refreshing
         // to one would replace the local build. The 'local' marker covers

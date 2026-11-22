@@ -652,19 +652,32 @@ function makeServer(socketPath, state) {
 
             // ---- find (store search) -------------------------------------------
             if (p === '/v2/find' && req.method === 'GET') {
-                // Mirror the daemon (api_find.go): `q=` = FULL-TEXT store search
-                // (matches name + summary — what `snap find` sends); `name=` =
-                // EXACT-NAME resolution (what the channel pickers send). The
-                // mosquitto-tools row only matches the FULL-TEXT 'broker' query
-                // (its name doesn't), proving the two modes differ.
+                // Mirror the daemon (api_find.go) AND the store client (store.go)
+                // HONESTLY (round LASTCH-FIX — the old version gave q rows a
+                // channel map, which real snapd does NOT):
+                //   name= (findOne) -> full per-snap object WITH the channel
+                //       map: infoFromStoreInfo builds info.Channels from the
+                //       channel-map, released-at per entry (details_v2.go).
+                //   q= (store.Find) -> summary rows WITHOUT any channel map:
+                //       the storeSnap struct carries only a single `channel`
+                //       ("// TODO: not yet defined: channel map"; FindFields
+                //       requests just 'channel'). main.js searchSnaps merges
+                //       the per-row findOne map for the full-text mode.
+                // The mosquitto-tools row only matches the FULL-TEXT 'broker'
+                // query (its name doesn't), proving the two modes differ.
                 const q = (url.searchParams.get('q') || '').toLowerCase();
                 const name = (url.searchParams.get('name') || '').toLowerCase();
+                const chanMaps = {
+                    mosquitto: { 'latest/stable': { 'released-at': '2026-09-14T12:00:00Z' }, 'latest/edge': { 'released-at': '2026-10-21T12:00:00Z' }, '2.0/stable': { 'released-at': '2026-09-14T12:00:00Z' } },
+                    'mosquitto-tools': { 'latest/stable': { 'released-at': '2026-08-02T12:00:00Z' } },
+                    firefox: { 'latest/stable': { 'released-at': '2026-10-30T12:00:00Z' }, 'latest/candidate': { 'released-at': '2026-11-01T12:00:00Z' } },
+                };
                 const cat = [
-                    { name: 'mosquitto', summary: 'MQTT broker', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
-                    { name: 'mosquitto-tools', summary: 'MQTT broker admin CLI', publisher: { username: 'mosquitto-dev' }, channels: { 'latest/stable': {} } },
-                    { name: 'firefox', summary: 'Web browser', publisher: { username: 'mozilla-canonical' }, channels: { 'latest/stable': {} } },
+                    { name: 'mosquitto', summary: 'MQTT broker', publisher: { username: 'mosquitto-dev' }, channel: 'stable' },
+                    { name: 'mosquitto-tools', summary: 'MQTT broker admin CLI', publisher: { username: 'mosquitto-dev' }, channel: 'stable' },
+                    { name: 'firefox', summary: 'Web browser', publisher: { username: 'mozilla-canonical' }, channel: 'stable' },
                 ];
-                if (name) return json(res, 200, cat.filter((s) => s.name === name));
+                if (name) return json(res, 200, cat.filter((s) => s.name === name).map((s) => Object.assign({}, s, { channels: chanMaps[s.name] || {} })));
                 if (q) return json(res, 200, cat.filter((s) => (s.name + ' ' + s.summary).includes(q)));
                 return json(res, 200, cat);
             }

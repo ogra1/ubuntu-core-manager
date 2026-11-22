@@ -691,9 +691,28 @@ async function searchSnaps(query, limit = 10, mode) {
     if (typeof query !== 'string' || query.length > 120) throw new Error('invalid search query');
     const clean = query.replace(/[^\p{L}\p{N}._\-+ ]/gu, '').trim();
     const n = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
-    const param = (mode === 'q') ? 'q' : 'name';
-    const res = await snapdRequest('GET', '/v2/find?' + param + '=' + encodeURIComponent(clean) + '&n=' + n, { auth: A() });
-    return Array.isArray(res) ? res : (res && res.snaps) || [];
+    const isFullText = (mode === 'q');
+    const res = await snapdRequest('GET', '/v2/find?' + (isFullText ? 'q' : 'name') + '=' + encodeURIComponent(clean) + '&n=' + n, { auth: A() });
+    const rows = Array.isArray(res) ? res : (res && res.snaps) || [];
+    if (!isFullText) return rows;
+    // round LASTCH-FIX: a real FULL-TEXT search (/v2/find?q=, the daemon's
+    // store.Find) carries NO channel map — the storeSnap struct is
+    // "// TODO: not yet defined: channel map" (FindFields request only a
+    // single `channel`), while EXACT-NAME resolution (findOne) DOES return
+    // the full channel map with per-channel released-at (infoFromStoreInfo).
+    // The search UI needs both: the per-row channel picker AND the
+    // 'Last changed' date — so merge each q row's channel map from the
+    // findOne call (the same name= request the channel pickers already
+    // make). A failure keeps the row as-is (picker -> stable-only list).
+    return Promise.all(rows.map(async (r) => {
+        try {
+            const one = await snapdRequest('GET', '/v2/find?name=' + encodeURIComponent(r.name) + '&n=1', { auth: A() });
+            const src = Array.isArray(one) ? one[0] : one;
+            if (src && src.channels && Object.keys(src.channels).length)
+                return Object.assign({}, r, { channels: src.channels });
+        } catch (e) { /* keep the row as-is */ }
+        return r;
+    }));
 }
 
 /* ------------------------------------------------------------------ *
