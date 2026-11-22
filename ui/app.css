@@ -455,6 +455,27 @@ html, body {
    1080-1440 (card scrollWidth == clientWidth) and the busy button stays
    one line at every width. */
 #snapSearchResults .p-table { table-layout: auto; }
+/* round SEARCH-FIN: the store-results headers use the HOUSE faint header
+   style — the same .7rem uppercase #757575 look as the OS / installed-snaps
+   (.ucm-ifaces-table) and interfaces tables, instead of the bundle's darker
+   0.75rem thead. The bundle clips td/th to one line (text-overflow:
+   ellipsis), so narrow columns' headers would truncate: nowrap is the
+   house idiom (the .ucm-ifaces-table th rule sets it too), and the Summary
+   header keeps its td's min-width via the existing .ucm-wrap override. */
+#snapSearchResults .p-table thead th {
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: #757575;
+    white-space: nowrap;
+}
+/* round SEARCH-FIN: the name is the store row's click target -> the snap-
+   info modal (openSnapInfo), exactly the installed-snaps .ucm-snaps-name
+   affordance: pointer + faint dotted hover underline, kept subtle so the
+   table stays calm. The cell content is a text node (not a <span>), so the
+   :hover underline lands on the cell itself. */
+#snapSearchBody td.ucm-storename { cursor: pointer; }
+#snapSearchBody td.ucm-storename:hover { text-decoration: underline dotted; }
 /* round T-fix15: the busy Install + Remove? buttons must keep their
    label + spinner on ONE line - white-space:nowrap so the spinner can
    never drop to a second line under the text at any width. Scoped to

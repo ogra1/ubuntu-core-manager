@@ -2104,6 +2104,12 @@ function channelSelect(r) {
 function clearStoreResults() {
     $('#snapSearchBody').innerHTML = '';
     $('#snapSearchResults').classList.add('ucm-hidden');
+    // round SEARCH-FIN: a closed card is a FINISHED search - the input must
+    // not linger with its stale query (the user reported it stayed forever).
+    // All close paths funnel here: the card's icon X, the document-level ESC
+    // handler, and the post-install success path.
+    const inp = $('#snapSearchName');
+    if (inp) inp.value = '';
 }
 
 async function searchStore() {
@@ -2125,7 +2131,6 @@ async function searchStore() {
             return;
         }
         results.forEach((r) => {
-            const publisher = r.publisher && r.publisher.username;
             const chSel = channelSelect(r);
             const installBtn = el('button', {
                 class: 'p-button--brand p-button ucm-rowbtn',
@@ -2133,9 +2138,15 @@ async function searchStore() {
                 onclick: () => installFromRow(r.name, chSel.value, installBtn),
             }, 'Install');
             $('#snapSearchBody').append(el('tr', {},
-                el('td', { text: r.name, class: 'ucm-mono' }),
+                // round SEARCH-FIN: the name is the row's click target ->
+                // the snap-info modal (the installed-snaps .ucm-snaps-name
+                // idiom). Store-only snaps render a READ-ONLY store-info
+                // modal (renderStoreInfo); the row's Install button stays
+                // the only install drive (user choice).
+                el('td', { class: 'ucm-mono ucm-storename', title: 'Show snap info',
+                    onclick: () => openSnapInfo(r.name, r) }, r.name),
                 el('td', { class: 'ucm-wrap', text: r.summary || '' }),
-                el('td', { text: publisher || '—' }),
+                el('td', {}, publisherSpan(r.publisher || {}, publisherName(r.publisher || {}, r) || '\u2014')),
                 el('td', {}, chSel),
                 // round 47n: the store size (download-size, LIVE-verified on
                 // /v2/find); em-dash when the store omits it.
@@ -2198,7 +2209,27 @@ function isLocalSnap(snap) {
     return /^x/.test(String(snap && snap.revision));
 }
 
-function openSnapInfo(name) {
+// round SEARCH-FIN: the publisher identity for a snap/store object —
+// the display name first (snapd's longPublisher idiom), falling back to
+// username / id / the historic developer field.
+function publisherName(pub, info) {
+    const p = pub || {};
+    return p['display-name'] || p.username || p.id || (info && info.developer) || null;
+}
+
+// The publisher NAME + validation badge as DOM: the terminal's green check /
+// yellow star (round 47e) — the ONE badge idiom in the app, now shared by
+// the info modal's Publisher row and the store-results Publisher column.
+function publisherSpan(pub, name) {
+    const p = pub || {};
+    const span = el('span', { class: 'ucm-mono', text: name == null ? '' : String(name) });
+    const v = p.validation;
+    if (v === 'verified' || v === 'starred')
+        span.append(el('span', { class: 'ucm-pub-badge ' + (v === 'verified' ? 'ucm-pub-badge--verified' : 'ucm-pub-badge--starred'), text: v === 'verified' ? '\u2713' : '\u272A' }));
+    return span;
+}
+
+function openSnapInfo(name, storeRow) {
     // Esc closes the modal (round 47e, robustified in 47g): the listener
     // lives on `document` for the modal's whole life — focus can fall to
     // <body> after an async re-render (e.g. a channel switch), and a
@@ -2231,6 +2262,12 @@ function openSnapInfo(name) {
         try {
             loaded = await core.snaps.info(name);
         } catch (e) {
+            // round SEARCH-FIN: a search result that is NOT installed -> the
+            // SAME info modal, read-only, fed by the /v2/find?q= row (it
+            // carries title/summary/description/publisher+validation/
+            // version/confinement/grade/links/channels). Install stays on
+            // the results ROW (user choice).
+            if (storeRow) { renderStoreInfo(storeRow); return; }
             bodyBox.innerHTML = '';
             bodyBox.append(el('p', { class: 'p-status-label p-status-label--negative', text: 'Could not load snap info: ' + e.message }));
             return;
@@ -2248,6 +2285,46 @@ function openSnapInfo(name) {
         try { chans = await core.snaps.search(info.name); } catch (e) { /* store unavailable: no picker */ }
         renderChannelRow(info.name, chans || []);
     })();
+
+    // round SEARCH-FIN: the READ-ONLY store-info body for a NOT-INSTALLED
+    // snap (openSnapInfo's storeRow drive from a store-results row). Same
+    // header structure as renderSnapInfo: display title, mono real name,
+    // summary, a 'Not installed' chip (a store row's 'available' status is
+    // not an on-disk state, so the status chip is replaced by this marker),
+    // the plainified description, and the Publisher / Version / Size rows
+    // (Size = download-size, the store's number). No Track/Channel row
+    // (nothing installed to switch); no Links row (the search row's links
+    // map is sparse; keep the read-only card lean). Nested like
+    // renderSnapInfo so it captures the modal's box/bodyBox.
+    function renderStoreInfo(r) {
+        if (!box.isConnected) return; // closed (Esc) while the 404 was in flight
+        bodyBox.innerHTML = '';
+        bodyBox.append(el('p', { class: 'ucm-info__name', text: r.title || r.name }));
+        if (r.title && r.title !== r.name)
+            bodyBox.append(el('p', { class: 'ucm-info__id ucm-mono', text: r.name }));
+        if (r.summary)
+            bodyBox.append(el('p', { class: 'ucm-info__summary', text: r.summary }));
+        const chips = el('div', { class: 'ucm-info__chips' });
+        chips.append(el('span', { class: 'p-status-label p-status-label--information', text: 'Not installed' }));
+        bodyBox.append(chips);
+        if (r.description) {
+            bodyBox.append(el('p', { class: 'ucm-info__sec', text: 'Description' }));
+            bodyBox.append(el('p', { class: 'ucm-info__desc', text: infoPlain(r.description) }));
+        }
+        const kv = el('dl', { class: 'ucm-kv' });
+        const row = (k, v, mono) => {
+            if (v == null || v === '') return;
+            kv.append(el('div', {}, el('dt', { text: k }), el('dd', { text: String(v), class: mono ? 'mono' : undefined })));
+        };
+        const pubName = publisherName(r.publisher || {}, r);
+        if (pubName)
+            kv.append(el('div', {}, el('dt', { text: 'Publisher' }), el('dd', {}, publisherSpan(r.publisher || {}, pubName))));
+        row('Version', r.version || null);
+        row('Size', r['download-size'] != null ? fmtBytes(r['download-size']) : null);
+        row('Confinement', r.confinement || null);
+        row('Grade', r.grade || null);
+        if (kv.children.length) bodyBox.append(kv);
+    }
 
     function renderSnapInfo() {
         bodyBox.innerHTML = '';
@@ -2290,16 +2367,13 @@ function openSnapInfo(name) {
         const chanDd = el('dd');
         chanDd.append(el('span', { class: 'ucm-mono', text: fmtTrackChannel(info) }), loading.cloneNode(true));
         kv.append(el('div', {}, el('dt', { text: 'Track/Channel' }), chanDd));
-        // Publisher (round 47e): the terminal's green check / yellow star
+        // Publisher (round 47e): the terminal's green check / yellow star —
+        // publisherName()/publisherSpan() are SHARED with the store-results
+        // Publisher column (round SEARCH-FIN), one badge idiom app-wide.
         const pub = info.publisher || {};
-        const pubName = pub['display-name'] || pub.username || pub.id || info.developer || null;
-        if (pubName) {
-            const pubVal = el('span', { class: 'ucm-mono', text: pubName });
-            const v = pub.validation;
-            if (v === 'verified' || v === 'starred')
-                pubVal.append(el('span', { class: 'ucm-pub-badge ' + (v === 'verified' ? 'ucm-pub-badge--verified' : 'ucm-pub-badge--starred'), text: v === 'verified' ? '\u2713' : '\u272A' }));
-            kv.append(el('div', {}, el('dt', { text: 'Publisher' }), el('dd', {}, pubVal)));
-        }
+        const pubName = publisherName(pub, info);
+        if (pubName)
+            kv.append(el('div', {}, el('dt', { text: 'Publisher' }), el('dd', {}, publisherSpan(pub, pubName))));
         row('Size', info['installed-size'] != null ? fmtBytes(info['installed-size']) : null);
         row('Installed', info['install-date'] ? fmtDm(info['install-date']) : null);
         row('Confinement', info.confinement || null);

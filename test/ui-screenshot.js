@@ -672,7 +672,7 @@ function mockFactoryJs() {
                 async list() { return SNAPS; },
                 async info(n) {
                     const s = SNAPS.find((x) => x.name === n);
-                    if (!s) return null;
+                    if (!s) throw Object.assign(new Error('cannot get info for snap "' + n + '": no such snap'), { name: 'SnapdError', status: 404, kind: 'snap-not-found' });
                     return Object.assign({}, s, INFO[n] || {},
                         (COMPONENTS[n] ? { components: JSON.parse(JSON.stringify(COMPONENTS[n])) } : {}));
                 },
@@ -691,9 +691,9 @@ function mockFactoryJs() {
                     }
                     const query = (q || '').toLowerCase();
                     return [
-                        { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', publisher: { username: 'mosquitto-dev' }, 'download-size': 4841472, channels: STORE['mosquitto'] || { 'latest/stable': {} } },
+                        { name: 'mosquitto', summary: 'MQTT broker for IoT messaging', version: '2.0.20', publisher: { id: 'mosq-dev', username: 'mosquitto-dev', 'display-name': 'EMQ', validation: 'verified' }, 'download-size': 4841472, channels: STORE['mosquitto'] || { 'latest/stable': {} } },
                         { name: 'mosquitto-tools', summary: 'MQTT broker admin CLI', publisher: { username: 'mosquitto-dev' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
-                        { name: 'mqtt-spy', summary: 'Simple MQTT traffic inspector', publisher: { username: 'iot-labs' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
+                        { name: 'mqtt-spy', title: 'MQTT Spy', summary: 'Simple MQTT traffic inspector', version: '1.2.3', description: 'MQTT **Spy** inspects live MQTT traffic for debugging.', publisher: { id: 'iot-labs', username: 'iot-labs', 'display-name': 'IotLabs', validation: 'starred' }, 'download-size': 1048576, channels: { 'latest/stable': {} } },
                         { name: 'firefox', summary: 'Web browser', publisher: { username: 'mozilla-canonical' }, 'download-size': 52428800, channels: STORE['firefox'] || {} },
                     ].filter((s) => (s.name + ' ' + s.summary).toLowerCase().includes(query));
                 },
@@ -4364,12 +4364,55 @@ function mockFactoryJs() {
     if (!escClosed.activeNotField) console.log('PAGE ERROR: the ESC-close drive must run with the search field BLURRED (focus-independent, round T-fix15)');
     if (!escClosed.hidden) console.log('PAGE ERROR: ESC must close the Store results card with the field unfocused (document-level handler, round T-fix15)');
     if (escClosed.rows !== 0) console.log('PAGE ERROR: ESC must clear the Store results rows (got ' + escClosed.rows + ', round T-fix15)');
-    // re-run the search so the install drive below still has the mosquitto row.
-    // Re-focus the field first: the focus-independence proof above already
-    // captured the card-closed-at-blur moment; Enter needs the field focused.
+    // round SEARCH-FIN: closing the card ALSO clears the input (it used to
+    // linger forever) — assert the reset, then re-type so the install drive
+    // below still has the mosquitto row.
+    const escCleared = await page.evaluate(() => document.querySelector('#snapSearchName').value);
+    if (escCleared !== '') console.log('PAGE ERROR: ESC-closing the Store results card must also CLEAR the search input (got ' + JSON.stringify(escCleared) + ', round SEARCH-FIN)');
+    // re-run the search (re-type: the field was just reset). Enter needs the
+    // field focused: the focus-independence proof above blurred it.
     await page.focus('#snapSearchName');
+    await page.type('#snapSearchName', 'mosquitto');
     await page.keyboard.press('Enter');
     await wait(700);
+    // round SEARCH-FIN: the results table adopts the HOUSE faint header
+    // (.ucm-ifaces-table th: .7rem / uppercase / #757575 / nowrap) and the
+    // rows carry the publisher validation badge + the name click-target.
+    const finRow = await page.evaluate(() => {
+        const ths = Array.from(document.querySelector('#snapSearchBody').closest('table').querySelectorAll('thead th'));
+        const th = ths[0]; const thCs = getComputedStyle(th);
+        const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))
+            .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
+        const pubBadge = row && row.cells[2] ? row.cells[2].querySelector('.ucm-pub-badge--verified') : null;
+        const pubCs = pubBadge ? getComputedStyle(pubBadge) : null;
+        const nameCell = row ? row.cells[0] : null;
+        const nameCs = nameCell ? getComputedStyle(nameCell) : null;
+        return {
+            head: ths.map((t) => t.textContent.trim()),
+            thColor: thCs.color, thSize: thCs.fontSize, thTransform: thCs.textTransform, thLs: thCs.letterSpacing, thWs: thCs.whiteSpace,
+            thSummaryTransform: getComputedStyle(ths[1]).textTransform, thSummaryWs: getComputedStyle(ths[1]).whiteSpace,
+            pubText: row && row.cells[2] ? row.cells[2].textContent.trim() : null,
+            badgeClass: pubBadge ? pubBadge.className : null,
+            badgeChar: pubBadge ? pubBadge.textContent : null,
+            badgeColor: pubCs ? pubCs.color : null,
+            nameCls: nameCell ? nameCell.className : null,
+            nameTitle: nameCell ? nameCell.title : null,
+            nameCursor: nameCs ? nameCs.cursor : null,
+        };
+    });
+    if (finRow.thColor !== 'rgb(117, 117, 117)') console.log('PAGE ERROR: store-results headers must use the house faint #757575 (got ' + finRow.thColor + ', round SEARCH-FIN)');
+    if (finRow.thSize !== '11.2px') console.log('PAGE ERROR: store-results headers must be .7rem (got ' + finRow.thSize + ', round SEARCH-FIN)');
+    if (finRow.thTransform !== 'uppercase' || finRow.thLs !== '0.448px') // .04em @11.2px console.log('PAGE ERROR: store-results headers must be uppercase + .04em tracking (got ' + finRow.thTransform + ' / ' + finRow.thLs + ', round SEARCH-FIN)');
+    if (finRow.thWs !== 'nowrap') console.log('PAGE ERROR: store-results headers must be white-space:nowrap (got ' + finRow.thWs + ', round SEARCH-FIN)');
+    // the Summary header keeps the wrap override (td wraps; header nowrap)
+    if (finRow.thSummaryTransform !== 'uppercase') console.log('PAGE ERROR: the Summary header lost the faint uppercase style (got ' + finRow.thSummaryTransform + ', round SEARCH-FIN)');
+    if (finRow.pubText !== 'EMQ\u2713') console.log('PAGE ERROR: the store Publisher cell must show the display name + verified check (got ' + JSON.stringify(finRow.pubText) + ', round SEARCH-FIN)');
+    if (finRow.badgeClass !== 'ucm-pub-badge ucm-pub-badge--verified') console.log('PAGE ERROR: the store Publisher badge is not the verified class (got ' + finRow.badgeClass + ', round SEARCH-FIN)');
+    if (finRow.badgeColor !== 'rgb(14, 132, 32)') console.log('PAGE ERROR: the verified store badge is not the app positive green (got ' + finRow.badgeColor + ', round SEARCH-FIN)');
+    if (finRow.nameCls !== 'ucm-mono ucm-storename') console.log('PAGE ERROR: the store Name cell is not the click-target class (got ' + finRow.nameCls + ', round SEARCH-FIN)');
+    if (finRow.nameTitle !== 'Show snap info') console.log('PAGE ERROR: the store Name cell has no title affordance (got ' + finRow.nameTitle + ', round SEARCH-FIN)');
+    if (finRow.nameCursor !== 'pointer') console.log('PAGE ERROR: the store Name cell is not a pointer (got ' + finRow.nameCursor + ', round SEARCH-FIN)');
+    if (finRow.head.join('|') !== 'Name|Summary|Publisher|Channel|Size|Install') console.log('PAGE ERROR: store header columns changed (got ' + JSON.stringify(finRow.head) + ', round SEARCH-FIN)');
     // install mosquitto from its store row -> the card must hide on success
     await page.evaluate(() => {
         const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))
@@ -4468,6 +4511,68 @@ function mockFactoryJs() {
     if (!layAfterModal.modalGone) console.log('PAGE ERROR: the first Esc must close the topmost info modal (round T-fix15)');
     if (!layAfterModal.cardStill || layAfterModal.rows < 1) console.log('PAGE ERROR: an open modal must OWN the Esc - the store card must STAY (got cardStill ' + layAfterModal.cardStill + ' rows ' + layAfterModal.rows + ', round T-fix15)');
     await page.keyboard.press('Escape'); // now topmost -> close the card
+    await wait(300);
+    // ---- 4a-storeinfo. round SEARCH-FIN: a NOT-installed store result's
+    // NAME opens the SAME snap-info modal, READ-ONLY — fed by the /v2/find?q=
+    // row (display title, plainified description, the 'Not installed' chip,
+    // Publisher badge, Version, Size = download-size). No status chip, no
+    // Track/Channel row, no install in the modal (the row's Install stays the
+    // drive). mqtt-spy is in the mock store catalog but NOT in SNAPS, so
+    // info() 404s -> the app's store-row branch.
+    await page.focus('#snapSearchName');
+    await page.type('#snapSearchName', 'mqtt');
+    await page.keyboard.press('Enter');
+    await wait(700);
+    const siPre = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#snapSearchBody tr'));
+        return { count: rows.length, names: rows.map((r) => r.cells && r.cells[0] ? r.cells[0].textContent.trim() : null).filter(Boolean) };
+    });
+    if (!siPre.names.includes('mqtt-spy')) console.log('PAGE ERROR: the store drive must find mqtt-spy (got ' + JSON.stringify(siPre.names) + ', round SEARCH-FIN)');
+    await page.evaluate(() => {
+        const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))
+            .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mqtt-spy');
+        if (!row) throw new Error('mqtt-spy row missing');
+        row.cells[0].click();
+    });
+    await wait(600);
+    const si = await page.evaluate(() => {
+        const body = document.querySelector('.ucm-modal__body.ucm-info');
+        if (!body) return { shown: false };
+        const dt = (k) => { const d = Array.from(body.querySelectorAll('.ucm-kv dt')).find((x) => x.textContent === k); return d ? d.parentElement.querySelector('dd').textContent.trim() : null; };
+        const chip = body.querySelector('.ucm-info__chips .p-status-label');
+        return {
+            shown: true,
+            title: (body.querySelector('.ucm-info__name') || {}).textContent || null,
+            id: (body.querySelector('.ucm-info__id') || {}).textContent || null,
+            chip: chip ? chip.textContent : null,
+            chipClass: chip ? chip.className : null,
+            desc: (body.querySelector('.ucm-info__desc') || {}).textContent || null,
+            hasMarkdown: !!body.querySelector('.ucm-info__desc') && body.querySelector('.ucm-info__desc').textContent.includes('**'),
+            publisher: dt('Publisher'),
+            version: dt('Version'), size: dt('Size'),
+            noChan: !Array.from(body.querySelectorAll('.ucm-kv dt')).some((x) => x.textContent === 'Track/Channel'),
+            noInstallBtn: !body.querySelector('button.p-button--brand'),
+        };
+    });
+    if (!si.shown) console.log('PAGE ERROR: clicking a store result name must open the snap-info modal (round SEARCH-FIN)');
+    else {
+        if (si.title !== 'MQTT Spy' || si.id !== 'mqtt-spy') console.log('PAGE ERROR: store-info modal title/id wrong (got ' + JSON.stringify({ t: si.title, id: si.id }) + ', round SEARCH-FIN)');
+        if (si.chip !== 'Not installed') console.log('PAGE ERROR: a not-installed store snap must show the Not installed chip (got ' + JSON.stringify(si.chip) + ', round SEARCH-FIN)');
+        if (si.chipClass !== 'p-status-label p-status-label--information') console.log('PAGE ERROR: the Not installed chip must be the information tone (got ' + si.chipClass + ', round SEARCH-FIN)');
+        if (!si.desc || si.hasMarkdown) console.log('PAGE ERROR: the store-info description must render plain (got ' + JSON.stringify(si.desc && si.desc.slice(0, 40)) + ', round SEARCH-FIN)');
+        if (si.publisher !== 'IotLabs\u272A') console.log('PAGE ERROR: the store-info Publisher must show the name + starred badge (got ' + JSON.stringify(si.publisher) + ', round SEARCH-FIN)');
+        if (si.version !== '1.2.3') console.log('PAGE ERROR: the store-info Version must be the store row version (got ' + JSON.stringify(si.version) + ', round SEARCH-FIN)');
+        if (si.size !== '1.0 MiB') // fmtBytes toFixed(1) under 100 console.log('PAGE ERROR: the store-info Size must be the formatted download-size (got ' + JSON.stringify(si.size) + ', round SEARCH-FIN)');
+        if (!si.noChan) console.log('PAGE ERROR: a not-installed store snap must NOT offer a Track/Channel row (round SEARCH-FIN)');
+        if (!si.noInstallBtn) console.log('PAGE ERROR: the read-only store-info modal must NOT carry an Install button (round SEARCH-FIN)');
+    }
+    await page.keyboard.press('Escape'); // close the store-info modal (the card stays: the modal owns this Esc)
+    await wait(300);
+    const siCard = await page.evaluate(() => ({ cardStill: !document.querySelector('#snapSearchResults').classList.contains('ucm-hidden'), modalGone: !document.querySelector('.ucm-modal') }));
+    if (!siCard.modalGone || !siCard.cardStill) console.log('PAGE ERROR: Esc must close the store-info modal and KEEP the results card (got ' + JSON.stringify(siCard) + ', round SEARCH-FIN)');
+    await page.screenshot({ path: path.join(SHOTS, '12-store-info-modal.png') });
+    await page.keyboard.press('Escape'); // now close the card (also resets the input)
+    await wait(250);
     await wait(300);
     const layAfterCard = await page.evaluate(() => ({ cardGone: !!document.querySelector('#snapSearchResults.ucm-hidden'), rows: document.querySelectorAll('#snapSearchBody tr').length }));
     if (!layAfterCard.cardGone || layAfterCard.rows !== 0) console.log('PAGE ERROR: the second Esc (modal gone) must close the store card (got ' + JSON.stringify(layAfterCard) + ', round T-fix15)');
