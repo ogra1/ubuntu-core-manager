@@ -2120,6 +2120,9 @@ function clearStoreResults() {
     // handler, and the post-install success path.
     const inp = $('#snapSearchName');
     if (inp) inp.value = '';
+    // round STORECOUNT: the caption must not show a stale count on a closed
+    // card (the next search re-sets it before the card reopens).
+    $('#snapSearchCount').textContent = '';
 }
 
 async function searchStore() {
@@ -2135,6 +2138,10 @@ async function searchStore() {
         // `snap find` CLI sends) — matches names AND summaries, not just
         // known snap names.
         const results = await core.snaps.search(q, 8, 'q');
+        // round STORECOUNT: the card caption counts the results found (the
+        // house interface/snaps-card idiom — the store q response has no
+        // separate total, so this is the number actually in the table).
+        $('#snapSearchCount').textContent = results.length + (results.length === 1 ? ' snap' : ' snaps');
         $('#snapSearchBody').innerHTML = '';
         if (!results.length) {
             $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'No store results.' })));
@@ -2165,6 +2172,7 @@ async function searchStore() {
             ));
         });
     } catch (e) {
+        $('#snapSearchCount').textContent = '0 snaps';
         $('#snapSearchBody').innerHTML = '';
         $('#snapSearchBody').append(el('tr', {}, el('td', { colspan: '5', class: 'ucm-muted', text: 'Search failed: ' + e.message })));
     }

@@ -4308,6 +4308,20 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: full-text search for "broker" must return mosquitto (a summary match; no snap is named "broker") (got ' + JSON.stringify(ftRows) + ') (round FS)');
     if (!ftRows.includes('mosquitto-tools'))
         console.log('PAGE ERROR: full-text search for "broker" must also return mosquitto-tools (got ' + JSON.stringify(ftRows) + ') (round FS)');
+    // round STORECOUNT: the card caption counts the results found (the house
+    // interface/snaps-card count idiom). 'broker' -> 2 results.
+    const countB = await page.evaluate(() => (document.querySelector('#snapSearchCount') || {}).textContent || '');
+    if (countB !== '2 snaps') console.log('PAGE ERROR: the Store results caption must count the results found (got ' + JSON.stringify(countB) + ', want 2 snaps — round STORECOUNT)');
+    // round STORECOUNT (singular): 'firefox' is the ONE catalog hit (the
+    // others are broker/mqtt/inspector) -> the caption must read '1 snap'.
+    // (The full-text 'mosquitto' re-search below hits BOTH mosquitto and
+    // mosquitto-tools, so it is the '2 snaps' case — not the singular one.)
+    await page.evaluate(() => { const f = document.querySelector('#snapSearchName'); f.value = ''; });
+    await page.type('#snapSearchName', 'firefox');
+    await page.keyboard.press('Enter');
+    await wait(700);
+    const countF = await page.evaluate(() => (document.querySelector('#snapSearchCount') || {}).textContent || '');
+    if (countF !== '1 snap') console.log('PAGE ERROR: a single-result search caption must be singular (got ' + JSON.stringify(countF) + ', want 1 snap — round STORECOUNT)');
     // re-run with a NAME (mosquitto) — the install drive below keys off this
     // row — and capture the results shot.
     await page.evaluate(() => { const f = document.querySelector('#snapSearchName'); f.value = ''; });
@@ -4414,14 +4428,22 @@ function mockFactoryJs() {
     if (finRow.nameCursor !== 'pointer') console.log('PAGE ERROR: the store Name cell is not a pointer (got ' + finRow.nameCursor + ', round SEARCH-FIN)');
     if (finRow.head.join('|') !== 'Name|Summary|Publisher|Channel|Size|Install') console.log('PAGE ERROR: store header columns changed (got ' + JSON.stringify(finRow.head) + ', round SEARCH-FIN)');
     // install mosquitto from its store row -> the card must hide on success
-    await page.evaluate(() => {
+    // round STORECOUNT: the exact-name 'mosquitto' search -> 1 result
+    // (singular 'snap'). The caption is read in the same evaluate that clicks
+    // Install, but the check runs in NODE context — a console.log inside
+    // page.evaluate fires in the BROWSER console, which the harness does not
+    // aggregate (only node-context PAGE ERROR logs count).
+    const countM = await page.evaluate(() => {
         const row = Array.from(document.querySelectorAll('#snapSearchBody tr'))
             .find((r) => r.cells && r.cells[0] && r.cells[0].textContent.trim() === 'mosquitto');
         if (!row) throw new Error('mosquitto store row missing');
         const btn = row.querySelector('button.p-button--brand');
         if (!btn) throw new Error('store row Install button missing');
+        const caption = (document.querySelector('#snapSearchCount') || {}).textContent || '';
         btn.click();
+        return caption;
     });
+    if (countM !== '2 snaps') console.log('PAGE ERROR: a single-result search caption must be singular (got ' + JSON.stringify(countM) + ', want 2 snaps — round STORECOUNT)');
     // ---- 4a-busy. Round T-fix14: while the install runs (mock settles at
     // 250ms), the Install button must show the BUSY state: the Vanilla
     // is-processing class (opacity 1, overriding the .is-disabled 0.33
