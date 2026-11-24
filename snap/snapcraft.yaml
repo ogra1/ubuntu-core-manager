@@ -1,21 +1,34 @@
 name: ubuntu-core-manager
 base: core24
 version: '1.0.0'
-summary: Hardened kiosk console for managing Ubuntu Core systems
+summary: A GUI frontend to manage Ubuntu Core devices
+title: Manage your Ubuntu core device
 description: |
-  Electron kiosk (frameless, always-on-top, input-trapped) for managing an
-  Ubuntu Core device: snap lifecycle, network configuration via snapd's
-  netplan external config, plug/slot interface control, and system
-  monitoring. All privileged I/O goes through the snapd Unix Domain Socket
-  (/run/snapd.socket, exposed by the connected `snapd-control` interface).
-  Live network state is read with the standard tools the `network-control`
-  interface is built around (ip, iw, resolvectl); network config is written
-  through snapd's netplan external config (the 90 origin). A successful device
-  edit also deletes the first-boot seed file /etc/netplan/00-snapd-config.yaml
-  (catch-all boilerplate) via the `network-setup-control` interface, so snapd's
-  netplan Apply does not re-merge it on top of the app's config. Every renderer
-  payload is validated by regex allow-lists in the main process before it
-  reaches the socket.
+  A GUI that puts you in the driver seat of your Ubuntu Core device
+
+  Manage all aspects of Ubuntu Core through this GUI app running on
+  top of ubuntu-frame on your Ubuntu Core device.
+
+  Ubuntu Core manager gives every known snapd command a graphical
+  option, refresh, revert or hold your snaps with a single mouse click.
+
+  Configure snap settings and manage services in snaps easily.
+
+  Set the update schedule for your device or switch to completely manual
+  updates as you like.
+
+  Connect and disconnect interfaces, manage running processes, set time
+  and time zone as well as the keymap layout and watch the system journal.
+
+  Manage network interfaces, proxies, network time sync and ip forwarding rules
+  through the network page and embed local web UIs of snap packages directly
+  in the app.
+
+contact: https://github.com/ogra1/ubuntu-core-manager/issues
+license: GPL-2.0-only
+issues: https://github.com/ogra1/ubuntu-core-manager/issues
+source-code: https://github.com/ogra1/ubuntu-core-manager
+website: https://github.com/ogra1/ubuntu-core-manager
 
 confinement: strict
 grade: stable
