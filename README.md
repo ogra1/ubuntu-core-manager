@@ -1,12 +1,24 @@
 # Ubuntu Core Manager
 
 Hardened **Electron kiosk** for managing an **Ubuntu Core** device from a
-locked-down terminal. Built for `confinement: strict` snaps on top of an
-`ubuntu-frame`-style Wayland compositor.
+locked-down terminal. 
 
-The UI is Canonical **Vanilla Framework** (compiled locally, CSP `self`), and
-all privileged I/O happens in the main process over the **snapd Unix Domain
-Socket** — never in the renderer, never via shell-outs or `/etc` writes.
+## Screenshots
+
+Main dashboard
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/74932a32-2269-4fc4-aa3f-1e81b1094874" />
+Network settings
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/5b9f71b0-5f01-4e14-aacb-1827f0ed705f" />
+Snap management
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/8ce59036-e56b-49c4-b8e8-222dcfd820dc" />
+Interface management
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/84ae99aa-e902-46ff-9410-6ad556201c65" />
+App settings
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/b625e646-5d26-4ee3-8d81-9421a52c4973" />
+System settings (I)
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/e609a200-068b-49f4-98e8-17a492d01692" />
+System settings (II)
+<img width="2571" height="1591" alt="image" src="https://github.com/user-attachments/assets/07e5a64b-e799-4c94-ac47-84076b8a2ad8" />
 
 ```
 ubuntu-core-manager/
