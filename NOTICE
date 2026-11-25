@@ -1,0 +1,47 @@
+ubuntu-core-manager
+Copyright 2026 Ubuntu Core Manager contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under
+the License.
+
+=====================================================================
+THIRD-PARTY COMPONENTS
+=====================================================================
+The following third-party components are shipped with this application. Each
+is loaded as a separate file at runtime and is NOT incorporated into, or
+derived from, this project's source code; each is governed by its own license
+as listed here.
+
+Vanilla Framework — build/css/vanilla-framework.css
+  Copyright (c) Canonical Ltd.
+  License: GNU Lesser General Public License, version 3 only (LGPL-3.0-only)
+  Source:  https://github.com/canonical/vanilla-framework (bundled: 4.61.0)
+  Note: the bundled CSS is a local compilation of the Vanilla SCSS; its
+  @font-face rules were rewritten from the canonical CDN to the bundled
+  build/fonts/ so the UI renders fully offline.
+
+Suru icons — build/images/suru-*.svg
+  Copyright (c) Canonical Ltd.
+  License: Creative Commons Attribution-ShareAlike 4.0 (CC-BY-SA-4.0), the
+  commercial-friendly option of the dual GPL-3.0 / CC-BY-SA-4.0 license.
+  Attribution: "Suru Icons" — https://snwh.org/
+  Note: the bundled SVGs have their fill changed to #000000 for legibility at
+  16px; all glyph geometry is kept verbatim from the originals.
+
+Ubuntu font family — build/fonts/Ubuntu-*.woff2
+  License: SIL Open Font License, version 1.1 (OFL-1.1)
+  Source:  https://fonts.google.com/specimen/Ubuntu
+  (The OFL copyright notice travels with the font files themselves.)
+
+Electron, dbus-next and other Node.js dependencies — electron/,
+app/node_modules/
+  License: MIT / BSD (each package ships its own license file)

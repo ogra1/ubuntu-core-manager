@@ -29,13 +29,21 @@ ubuntu-core-manager/
 │   ├── index.html              # Vanilla Framework SPA shell + login view
 │   ├── app.js                  # Renderer controller (dashboard/network/snaps/interfaces)
 │   └── app.css                 # Kiosk layout + aubergine theme over Vanilla
-├── build/css/
-│   └── vanilla-framework.css   # Compiled Vanilla 4.61 (local, 'self')
+├── build/
+│   ├── css/vanilla-framework.css  # Compiled Vanilla (local, 'self')
+│   ├── fonts/                     # Ubuntu font family (offline @font-face)
+│   ├── data/                      # keymaps.json + timezones.json (system page)
+│   └── images/                    # Suru icons (inlined data-URI)
+├── wayland-launch/
+│   └── bin/wayland-launch      # command-chain: waits for the Wayland socket + checks plugs
 ├── package.json
-├── snap/snapcraft.yaml         # strict-confinement snap (snapd-control plug)
+├── package-lock.json
+├── snap/
+│   ├── snapcraft.yaml          # strict-confinement snap (snapd-control plug)
+│   └── hooks/configure.sh      # no-op post-install hook
 └── test/
     ├── stub-snapd.js           # snapd emulator over a UDS
-    ├── run-integration.js      # 38-test socket + validation suite
+    ├── run-integration.js      # 442-assert socket + validation suite
     └── ui-screenshot.js        # headless QA (mock bridge + Puppeteer)
 ```
 
@@ -118,3 +126,22 @@ snap connect ubuntu-core-manager:snapd-control
   never required to enter the console. Reset of the local password is by design
   offline-privileged only (wipe `$SNAP_COMMON/admin.cred`); there is no
   network-based recovery path.
+
+## License
+
+**Ubuntu Core Manager** (this project — `main.js`, `preload.js`, `ui/`) is
+licensed under the **Apache License, Version 2.0** — see [`LICENSE.md`](LICENSE.md).
+
+It ships a number of **third-party components, each under its own license**,
+loaded as separate files at runtime and not incorporated into this project's
+source. The full attribution table is in [`NOTICE`](NOTICE):
+
+| Component | Location | License |
+|---|---|---|
+| Vanilla Framework | `build/css/vanilla-framework.css` | LGPL-3.0-only |
+| Suru icons | `build/images/suru-*.svg` | CC-BY-SA-4.0 (dual GPL-3.0) |
+| Ubuntu font family | `build/fonts/Ubuntu-*.woff2` | OFL-1.1 |
+| Electron, dbus-next, Node deps | `electron/`, `app/node_modules/` | MIT / BSD |
+
+The app's own code stays Apache-2.0; none of the bundled components are
+derived from, or derive from, that code.
