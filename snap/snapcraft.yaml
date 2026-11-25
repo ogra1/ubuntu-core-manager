@@ -33,6 +33,10 @@ website: https://github.com/ogra1/ubuntu-core-manager
 confinement: strict
 grade: stable
 
+platforms:
+  amd64:
+  arm64:
+
 apps:
   manager:
     command-chain:
