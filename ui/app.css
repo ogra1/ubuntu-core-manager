@@ -48,6 +48,26 @@ html, body {
     height: 100vh;
 }
 
+/* round LP-SHIFT: every .p-switch hides its checkbox (the bundle ships
+   .p-switch__input { opacity:0; position:absolute } with no offsets). Every
+   ancestor of the app's switches up to <body> is static, and body is
+   position:relative - so that hidden input's CONTAINING BLOCK is <body>
+   itself and it escapes the .ucm-main/.ucm-side scrollers. On a long view
+   (the Settings Appearance card, once 4+ local-page rows have pushed it
+   below the fold at 1280x800) the input's box lands past the viewport and
+   inflates the body's scrollable overflow. html,body{overflow:hidden} keeps
+   it inert until the user CLICKS the switch: focusing the hidden input makes
+   Chromium scroll the document to reveal the focused control, and the whole
+   canvas (rail + page + topbar) translates up by exactly that overflow -
+   the top clips, a themed html-canvas band shows at the bottom (the 'canvas
+   shifted to the top' bug; the old clock-toggle ghost was the same control
+   type + same focus-scroll path). position:relative anchors each hidden
+   input to its own .p-switch (a display:flex box the size of the slider)
+   instead: the input's overflow then lives INSIDE the scroller, and
+   focusing it can never scroll the document. Visually inert either way
+   (the input is opacity:0 at the switch's origin). */
+.p-switch { position: relative; }
+
 /* sticky left navigation (p-side-navigation, Yaru dark) */
 .ucm-side {
     background: var(--ucm-aubergine);
