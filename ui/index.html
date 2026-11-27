@@ -518,6 +518,24 @@
                             <div class="ucm-sys__row">
                                 <button class="p-button ucm-sys__btn" type="button" id="journalOpenBtn">View system journal</button>
                             </div>
+                            <!-- round JRN: the PERSISTENT JOURNAL toggle (the
+                                 core journal.persistent option; the .ucm-sys
+                                 holdrow idiom of the refresh card's Pause
+                                 toggle). ON = the journal is written to disk
+                                 (/var/log/journal) and survives reboots; OFF =
+                                 volatile (the fresh-Core default). The switch
+                                 syncs from the conf-doc read on load, so a
+                                 change made OUTSIDE the app (snap set) is
+                                 reflected on re-entry. -->
+                            <div class="ucm-sys__sep" role="separator"></div>
+                            <div class="ucm-sys__row ucm-sys__holdrow">
+                                <span class="ucm-sys__holdlabel">Persistent journal</span>
+                                <label class="p-switch ucm-sys__holdsw" title="When on, the system journal is written to disk and survives reboots. When off, it is kept in memory only (the default) and is cleared on reboot.">
+                                    <input class="p-switch__input" type="checkbox" id="journalPersistentSwitch">
+                                    <span class="p-switch__slider"></span>
+                                </label>
+                                <span id="journalPersistentState" class="ucm-sys__now">Volatile</span>
+                            </div>
                         </div>
                     </div>
                     <div class="p-card ucm-sys">

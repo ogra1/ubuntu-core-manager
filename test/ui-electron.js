@@ -188,6 +188,18 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
         && sy.sy.memCard.tmp.value === '' && sy.sy.memCard.swap.value === ''
         && sy.sy.memCard.btns === true,
         JSON.stringify(sy.ok ? (sy.sy && sy.sy.memCard) : sy.sy.error));
+    // round JRN: the REAL journal persistence READ (core journal.persistent
+    // through real main.js + the real stub socket; a fresh stub core doc
+    // carries neither -> null = the volatile default) + the REAL Journal
+    // card toggle DOM (unchecked + the "Volatile" state line on a fresh core).
+    ok('the REAL journal persistence read returns the volatile default (fresh core doc)',
+        sy.ok === true && sy.sy && sy.sy.journalPersistent && !sy.sy.journalPersistent.error
+        && sy.sy.journalPersistent.persistent === false,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.journalPersistent) : sy.sy.error));
+    ok('the Journal card shows the persistence toggle (unchecked, "Volatile" on a fresh core)',
+        sy.ok === true && sy.sy && sy.sy.jrnCard && sy.sy.jrnCard.present === true
+        && sy.sy.jrnCard.checked === false && sy.sy.jrnCard.state === 'Volatile',
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.jrnCard) : sy.sy.error));
     // round T-KM4: the Keyboard card is present, fed by the real 98-entry list,
     // and the Apply button ships (enabled once the picker settles).
     ok('the system page shows the KEYBOARD card (picker fed, Apply button present)',

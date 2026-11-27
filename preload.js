@@ -229,6 +229,13 @@ const api = Object.freeze({
         // '' = unset -> the built-in default applies again).
         memoryRead: invoke('system:memory-read'),             // -> { tmp, swap }
         memoryWrite: invoke('system:memory-write'),           // (field, value) -> async snapd change
+        // Round JRN: the Journal card's persistence toggle (core
+        // journal.persistent). The read is the stored conf doc (boolean-ish:
+        // true = on-disk journal, false/absent = volatile, the default); the
+        // write is an async snapd change ('true' | 'false' — never '', so an
+        // ON->OFF actually tears the dir down).
+        journalPersistentRead: invoke('system:journal-persistent-read'), // -> { persistent }
+        journalPersistentWrite: invoke('system:journal-persistent-write'), // (value) -> async snapd change
         // Round T: the Time card. timeRead = the LIVE wall clock +
         // timezone + NTP flag + the bundled zone list; timeSet is the
         // gated manual set (time-control plug, SetTime xbb); timeZoneWrite

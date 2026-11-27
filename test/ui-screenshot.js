@@ -1344,6 +1344,28 @@ function mockFactoryJs() {
                         __m.memWrites.push([field, value]);
                         return await core.snaps.confSet('core', { [field + '.size']: value });
                     },
+                    // round JRN: the Journal card's persistence toggle (core
+                    // journal.persistent). The read models the REAL conf doc
+                    // (nested journal.persistent; absent = the volatile
+                    // default). The write routes through the REAL mock confSet
+                    // (async change + 250ms settle) EXACTLY like the memory
+                    // write, so the renderer's waitChangeSettled runs the real
+                    // path. NOTE: the mock stores the raw STRING the renderer
+                    // sends ('true'/'false') - the real main.js bridge would
+                    // JSON-infer it to a boolean (confInferType), so the read
+                    // (and the app) must accept both.
+                    async journalPersistentRead() {
+                        const doc = __store['core'] || JSON.parse(JSON.stringify(CONF['core'] || {}));
+                        const isVal = (x) => x === true || x === false || typeof x === 'string' || typeof x === 'number';
+                        if (isVal(doc['journal.persistent'])) return { persistent: doc['journal.persistent'] };
+                        if (doc.journal && typeof doc.journal === 'object' && isVal(doc.journal.persistent)) return { persistent: doc.journal.persistent };
+                        return { persistent: null };
+                    },
+                    async journalPersistentWrite(value) {
+                        __m.journalWrites = __m.journalWrites || [];
+                        __m.journalWrites.push(value);
+                        return await core.snaps.confSet('core', { 'journal.persistent': value });
+                    },
                     // round P: procs returns the LIVE canned list (a deep copy -
                     // the real main reads /proc fresh every poll); kill records
                     // the call AND removes the pid (so the next re-poll no longer
@@ -8157,7 +8179,97 @@ function mockFactoryJs() {
     if (!(mmF.swapStored === '' || mmF.swapStored === 'absent' || mmF.swapStored === 'no-swap-node')) console.log('PAGE ERROR: the cleared swap option must be empty/absent (got ' + JSON.stringify(mmF.swapStored) + ') (round MEM)');
     if (!mmF.read || (mmF.read.tmp !== '' && mmF.read.tmp !== null) || (mmF.read.swap !== '' && mmF.read.swap !== null)) console.log('PAGE ERROR: the cleared read must return unset (got ' + JSON.stringify(mmF.read) + ') (round MEM)');
 
-    // back on the system view; the 5s-p power section runs next (leaves it pristine too)    // back on the system view; the 5s-p power section runs next (leaves it pristine too)
+    // back on the system view; the 5s-p power section runs next (leaves it pristine too)    // ---- 5s-jrn: round JRN — the JOURNAL card's persistence toggle ----
+    // Runs on the system view in the authenticated LIGHT state (after 5s-mem).
+    // The toggle writes core journal.persistent (the mock stores the raw
+    // STRING the renderer sends; the app accepts boolean|string|number).
+    // Leaves the core conf pristine: the default state = the option ABSENT
+    // (volatile = the fresh-Core journal).
+    const jp0 = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rd = core.machine ? await core.machine.journalPersistentRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        return {
+            checked: (document.querySelector('#journalPersistentSwitch') || {}).checked,
+            stateText: (document.querySelector('#journalPersistentState') || {}).textContent,
+            label: (() => { const l = document.querySelector('label[for="journalPersistentSwitch"]') || document.querySelector('#journalPersistentSwitch').closest('.ucm-sys__holdrow').querySelector('.ucm-sys__holdlabel'); return l ? l.textContent.trim() : null; })(),
+            read: rd || null,
+            stored: doc.journal ? (doc.journal.persistent !== undefined ? doc.journal.persistent : 'absent') : 'no-journal-node',
+        };
+    });
+    if (jp0.checked !== false) console.log('PAGE ERROR: the journal toggle must default OFF (volatile; got ' + JSON.stringify(jp0.checked) + ') (round JRN)');
+    if (jp0.stateText !== 'Volatile') console.log('PAGE ERROR: the default state line must read "Volatile" (got ' + JSON.stringify(jp0.stateText) + ') (round JRN)');
+    if (jp0.label !== 'Persistent journal') console.log('PAGE ERROR: the toggle label must read "Persistent journal" (got ' + JSON.stringify(jp0.label) + ') (round JRN)');
+    if (jp0.read && jp0.read.persistent !== null) console.log('PAGE ERROR: a fresh core must have the journal option ABSENT (got ' + JSON.stringify(jp0.read) + ') (round JRN)');
+    if (jp0.stored !== 'no-journal-node') console.log('PAGE ERROR: a fresh core conf must carry NO journal option (got ' + JSON.stringify(jp0.stored) + ') (round JRN)');
+
+    // (a) FLIP ON -> the real write path ('true') -> the async change settles
+    //     + the switch checks + the state line + the re-read + the conf doc
+    //     all agree + the positive toast.
+    await page.click('#journalPersistentSwitch');
+    await new Promise((r) => setTimeout(r, 700)); // the async change settles (250ms) + the re-read
+    const jp1 = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rd = core.machine ? await core.machine.journalPersistentRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            checked: (document.querySelector('#journalPersistentSwitch') || {}).checked,
+            stateText: (document.querySelector('#journalPersistentState') || {}).textContent,
+            read: rd || null,
+            stored: doc.journal ? (doc.journal.persistent !== undefined ? doc.journal.persistent : 'absent') : 'no-journal-node',
+            toasts,
+            writes: m && m.journalWrites ? m.journalWrites.slice() : null,
+        };
+    });
+    if (jp1.checked !== true) console.log('PAGE ERROR: flipping ON must CHECK the switch (got ' + JSON.stringify(jp1.checked) + ') (round JRN)');
+    if (jp1.stateText !== 'Persistent on disk') console.log('PAGE ERROR: the ON state line must read "Persistent on disk" (got ' + JSON.stringify(jp1.stateText) + ') (round JRN)');
+    if (!jp1.read || !(jp1.read.persistent === true || jp1.read.persistent === 'true')) console.log('PAGE ERROR: the re-read must report persistent (got ' + JSON.stringify(jp1.read) + ') (round JRN)');
+    if (!(jp1.stored === true || jp1.stored === 'true')) console.log('PAGE ERROR: the ON write must land in the core conf doc (got ' + JSON.stringify(jp1.stored) + ') (round JRN)');
+    if (!jp1.toasts.includes('Journal is now persistent')) console.log('PAGE ERROR: flipping ON must toast (got ' + JSON.stringify(jp1.toasts) + ') (round JRN)');
+    if (!Array.isArray(jp1.writes) || JSON.stringify(jp1.writes) !== JSON.stringify(['true'])) console.log('PAGE ERROR: exactly one ON write (the string "true", like the CLI) must reach the backend (got ' + JSON.stringify(jp1.writes) + ') (round JRN)');
+
+    // (b) FLIP OFF -> the 'false' write (NEVER '' - the '' would be a snapd
+    //     no-op; the explicit false is what tears the dir down) -> unchecked
+    //     + "Volatile" + the re-read + the conf doc agree + the toast.
+    await page.click('#journalPersistentSwitch');
+    await new Promise((r) => setTimeout(r, 700));
+    const jp2 = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rd = core.machine ? await core.machine.journalPersistentRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            checked: (document.querySelector('#journalPersistentSwitch') || {}).checked,
+            stateText: (document.querySelector('#journalPersistentState') || {}).textContent,
+            read: rd || null,
+            stored: doc.journal ? (doc.journal.persistent !== undefined ? doc.journal.persistent : 'absent') : 'no-journal-node',
+            toasts,
+            writes: m && m.journalWrites ? m.journalWrites.slice() : null,
+        };
+    });
+    if (jp2.checked !== false) console.log('PAGE ERROR: flipping OFF must UNCHECK the switch (got ' + JSON.stringify(jp2.checked) + ') (round JRN)');
+    if (jp2.stateText !== 'Volatile') console.log('PAGE ERROR: the OFF state line must read "Volatile" (got ' + JSON.stringify(jp2.stateText) + ') (round JRN)');
+    if (!jp2.read || !(jp2.read.persistent === false || jp2.read.persistent === 'false')) console.log('PAGE ERROR: the re-read must report non-persistent (got ' + JSON.stringify(jp2.read) + ') (round JRN)');
+    if (!jp2.toasts.includes('Journal is now volatile')) console.log('PAGE ERROR: flipping OFF must toast (got ' + JSON.stringify(jp2.toasts) + ') (round JRN)');
+    if (!Array.isArray(jp2.writes) || JSON.stringify(jp2.writes) !== JSON.stringify(['true', 'false'])) console.log('PAGE ERROR: the OFF write must be the explicit "false" (never the no-op ""; got ' + JSON.stringify(jp2.writes) + ') (round JRN)');
+
+    // (c) PRISTINE end: clear the option (the mock's confSet null-delete, the
+    //     test escape - the app itself never writes null) so the rest of the
+    //     run sees a fresh-core journal state.
+    await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const chg = await core.snaps.confSet('core', { 'journal.persistent': null });
+        if (chg && chg.id != null) await new Promise((r) => setTimeout(r, 400)); // the stub change settles
+        const rd = core.machine ? await core.machine.journalPersistentRead() : null;
+        return rd;
+    });
+    // (the read after the delete: the hollow {journal:{}} ghost is tolerated by
+    // the shape-robust read -> null = the pristine state.)
+
+    // back on the system view; the 5s-p power section runs next (leaves it pristine too)
     // ---- 5s-t: round T — the TIME card (set-time gate + wall clock + timezone + topbar clock) ----
     // Runs on the system view in the authenticated LIGHT state. The NTP gate is
     // SHARED with the Network "Sync time from internet" toggle (the mock's

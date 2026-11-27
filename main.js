@@ -2334,6 +2334,45 @@ async function memoryWrite(field, value) {
     return setSnapConfig('core', { [field + '.size']: value });
 }
 
+/* ---- 2d. JOURNAL card (round JRN: the core journal.persistent option) ----
+   The System page's Journal card gets a "Persistent journal" p-switch. snapd
+   (configcore/journal.go @8d4d073, source-verified):
+     "true"  -> creates /var/log/journal (with a .snapd-created marker) and
+                signals journald (USR1) -> the journal is written to DISK and
+                survives reboots.
+     "false" -> removes /var/log/journal, but ONLY if snapd created it (the
+                marker is present); a foreign dir is left in place and the
+                change FAILS (the negative toast surfaces that).
+     "" (unset) -> the handler is a NO-OP (return nil) - it neither creates
+                nor removes the dir.
+   So the switch maps ON -> 'true', OFF -> 'false' (NEVER '': an ON->OFF that
+   sent '' would leave the dir in place and the switch would lie). The READ
+   normalizes the stored value ('true'|'false'|number 0/1|absent) to a boolean
+   (absent = false = the fresh-Core volatile default). confInferType mirrors
+   `snap set`, so 'true' lands as the BOOLEAN true (byte-identical to
+   `snap set core journal.persistent=true`); coreCfg renders it back as "true". */
+function journalFieldFromDoc(doc) {
+    // Shape-robust + type-robust: the LIVE core doc stores the dotted key
+    // NESTED ({journal:{persistent}}); a flat scalar ({journal:'true'}) or a
+    // literal dotted key ({'journal.persistent':true}) is tolerated. The value
+    // may be a BOOLEAN (what `snap set` / confInferType stores), the strings
+    // 'true'/'false', or a number - all resolve; absent = null.
+    if (!doc || typeof doc !== 'object') return null;
+    const isVal = (x) => x === true || x === false || typeof x === 'string' || typeof x === 'number';
+    if (isVal(doc['journal.persistent'])) return doc['journal.persistent'];
+    if (isVal(doc.journal)) return doc.journal;
+    if (doc.journal && typeof doc.journal === 'object' && isVal(doc.journal.persistent)) return doc.journal.persistent;
+    return null;
+}
+async function journalRead() {
+    const doc = await getSnapConfig('core');
+    return { persistent: journalFieldFromDoc(doc) };
+}
+async function journalWrite(value) {
+    if (value !== 'true' && value !== 'false') throw new Error('journal.persistent must be "true" or "false"');
+    return setSnapConfig('core', { 'journal.persistent': value });
+}
+
 /* ---- 2b. global refresh HOLD (round S: the 'Pause auto-refresh' toggle) ----
    This is the REST equivalent of `snap refresh --hold` / `--unhold` (no snap
    names = hold ALL snaps' auto-refresh). Source-verified against snapd
@@ -3013,6 +3052,7 @@ const api = {
     __setJournalBinary, __setJournalTimeouts,
     refreshTimerRead, refreshTimerWrite, validRefreshTimer, isRefreshTimerAccepted, refreshTimerFromDoc,
     memFieldFromDoc, memoryRead, memoryWrite, memSizeToMiB, memTmpValid, memSwapValid,
+    journalFieldFromDoc, journalRead, journalWrite,
     refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
@@ -3429,6 +3469,15 @@ function initElectron() {
                                         const mem = await core.machine.memoryRead();
                                         sy.memory = mem ? { tmp: mem.tmp, swap: mem.swap } : null;
                                     } catch (e) { sy.memory = { error: String(e.message || e) }; }
+                                    // round JRN: the REAL journal persistence READ (core
+                                    // journal.persistent via the conf doc) - READ-ONLY, the
+                                    // probe never flips the toggle (a write would create or
+                                    // remove /var/log/journal on the kiosk). absent = false
+                                    // (the fresh-Core volatile default).
+                                    try {
+                                        const jr = await core.machine.journalPersistentRead();
+                                        sy.journalPersistent = jr ? { persistent: jr.persistent === true || jr.persistent === 'true' || jr.persistent === 1 } : null;
+                                    } catch (e) { sy.journalPersistent = { error: String(e.message || e) }; }
                                     document.querySelector('.ucm-side a[data-view="system"]').click();
                                     await wait(1500);
                                     sy.viewActive = !document.querySelector('#view-system').classList.contains('ucm-hidden');
@@ -3451,6 +3500,15 @@ function initElectron() {
                                         tmp: { value: mtmp.value, opts: mtmp.options.length },
                                         swap: { value: mswp.value, opts: mswp.options.length },
                                         btns: !!document.querySelector('#memApplyBtn'),
+                                    } : { present: false };
+                                    // round JRN: the JOURNAL card's persistence p-switch -
+                                    // READ-ONLY: report present + checked + the state line
+                                    // (a fresh core is volatile: unchecked, "Volatile").
+                                    const jsw = document.querySelector('#journalPersistentSwitch');
+                                    sy.jrnCard = jsw ? {
+                                        present: true,
+                                        checked: jsw.checked,
+                                        state: (document.querySelector('#journalPersistentState') || {}).textContent || null,
                                     } : { present: false };
                                     // round P: the REAL process read (main.js readProcs over
                                     // /proc, exposed through the preload bridge the SAME way the
@@ -3716,6 +3774,17 @@ function initElectron() {
     ipcMain.handle('system:memory-write', guard(async (field, value) => {
         requireAuth();
         return memoryWrite(field, value);
+    }));
+    // Round JRN: the Journal card's persistence toggle (core
+    // journal.persistent; console-privileged like every system-page write -
+    // the change creates/removes /var/log/journal + signals journald).
+    ipcMain.handle('system:journal-persistent-read', guard(async () => {
+        requireAuth();
+        return journalRead();
+    }));
+    ipcMain.handle('system:journal-persistent-write', guard(async (value) => {
+        requireAuth();
+        return journalWrite(value);
     }));
     // Power / scheduled shutdown (login1 over D-Bus; the shutdown interface
     // is D-BUS ONLY - no shell-out to poweroff/systemctl).

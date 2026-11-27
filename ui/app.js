@@ -3991,6 +3991,15 @@ async function loadSystem() {
     try { rh = await core.machine.refreshHoldRead(); }
     catch (e) { /* snapd unreachable - leave the row at its HTML default */ }
     syncRefreshHold(rh && rh.active ? true : false, rh && rh.hold);
+    // Round JRN: the JOURNAL card's persistence toggle. One conf-doc read
+    // (journalPersistentRead) for the stored core journal.persistent
+    // (absent = false = the volatile default). The switch + state line are
+    // synced from that read - NOT a local var - so a change made outside the
+    // app (snap set core journal.persistent=...) is reflected on re-entry.
+    let jp = null;
+    try { jp = await core.machine.journalPersistentRead(); }
+    catch (e) { /* snapd unreachable - leave the row at its HTML default */ }
+    syncJournalPersistent(jp ? (jp.persistent === true || jp.persistent === 'true' || jp.persistent === 1) : false);
     // Power: the live scheduled shutdown from logind ("" + max usec = none).
     let psched = null;
     try { psched = await core.machine.powerScheduled(); }
@@ -4907,6 +4916,55 @@ function openProcessModal() {
     poll = setInterval(refresh, 2000);
 }
 
+/* round JRN: the JOURNAL card's persistence toggle (core journal.persistent).
+   The switch is a p-switch (the .ucm-sys__holdrow idiom of the refresh card's
+   Pause toggle). The state line reads "Volatile" (the fresh-Core default: the
+   journal lives in memory and is cleared on reboot) or "Persistent on disk"
+   (the journal is written to /var/log/journal and survives reboots). The write
+   is 'true'|'false' (NEVER '' - an ON->OFF that sent '' would be a no-op and
+   the switch would lie; snapd only removes the dir on an explicit false, and
+   only if it created the dir itself - otherwise the change fails and the
+   negative toast says so, the switch reverts to the re-read state). */
+function syncJournalPersistent(on) {
+    const sw = $('#journalPersistentSwitch'); const st = $('#journalPersistentState');
+    if (sw) sw.checked = !!on;
+    if (st) st.textContent = on ? 'Persistent on disk' : 'Volatile';
+}
+async function setJournalPersistent(on) {
+    const sw = $('#journalPersistentSwitch');
+    if (sw) sw.disabled = true;
+    let change = null;
+    try {
+        change = (await core.machine.journalPersistentWrite(on ? 'true' : 'false')) || null;
+    } catch (e) {
+        if (sw) sw.disabled = false;
+        toastErr(e);
+        // revert the switch to the stored state (the write failed pre-bridge)
+        const rr = await core.machine.journalPersistentRead().catch(() => null);
+        syncJournalPersistent(rr ? (rr.persistent === true || rr.persistent === 'true' || rr.persistent === 1) : !on);
+        return;
+    }
+    const done = (change && change.id != null) ? await waitChangeSettled(change) : null;
+    if (sw) sw.disabled = false;
+    if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') {
+        // the change ran but FAILED - the classic case: OFF was requested but
+        // snapd refuses to remove a /var/log/journal it did not create. The
+        // switch reverts to the (re-read) state; the negative toast states what
+        // happened (the round-52 rule), not the expected behaviour.
+        toast('negative', 'Journal persistence not changed', 'snapd could not apply the change; the previous state is still in effect.');
+        const rr = await core.machine.journalPersistentRead().catch(() => null);
+        syncJournalPersistent(rr ? (rr.persistent === true || rr.persistent === 'true' || rr.persistent === 1) : !on);
+        return;
+    }
+    // re-read so the switch + line reflect snapd - never a stale local value.
+    let rr = null;
+    try { rr = await core.machine.journalPersistentRead(); }
+    catch (e) { /* fall back to the intended state if the read-back is unreachable */ }
+    syncJournalPersistent(rr ? (rr.persistent === true || rr.persistent === 'true' || rr.persistent === 1) : on);
+    if (on) toast('positive', 'Journal is now persistent', 'The system journal is written to disk and will survive reboots.');
+    else toast('positive', 'Journal is now volatile', 'The system journal is kept in memory only and is cleared on reboot.');
+}
+
 function syncRefreshHold(active, hold) {
     const sw = $('#refreshHoldSwitch'); const st = $('#refreshHoldState');
     if (sw) sw.checked = !!active;
@@ -5227,6 +5285,10 @@ function wire() {
     if (modelInfo) modelInfo.addEventListener('click', () => openModelModal());
     const jOpen = $('#journalOpenBtn');
     if (jOpen) jOpen.addEventListener('click', () => openJournalModal());
+    // Round JRN: the Journal card's persistence toggle (null-guarded - the
+    // house wire rule).
+    const jPersist = $('#journalPersistentSwitch');
+    if (jPersist) jPersist.addEventListener('change', () => setJournalPersistent(jPersist.checked));
     const rApply = $('#refreshApplyBtn');
     if (rApply) rApply.addEventListener('click', () => applyRefreshSchedule());
     const rHold = $('#refreshHoldSwitch');

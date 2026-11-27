@@ -697,6 +697,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:refresh-now']);
             ok('memory-card handlers registered (round MEM: read + write, auth-gated)',
                 !!handlers['system:memory-read'] && !!handlers['system:memory-write']);
+            ok('journal-persistence handlers registered (round JRN: read + write, auth-gated)',
+                !!handlers['system:journal-persistent-read'] && !!handlers['system:journal-persistent-write']);
             ok('time-card handlers registered (round T: time read/set + timezone write, auth-gated)',
                 !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
             ok('process-modal handlers registered (round P: procs read open, proc-kill auth-gated, process-control plug)',
@@ -2011,6 +2013,44 @@ function ok(name, cond, extra = '') {
           await new Promise((res) => setTimeout(res, 400));
           const mr4 = await m.memoryRead();
           ok('memory e2e: clearing both returns the pristine unset state', mr4.tmp === '' && mr4.swap === '', JSON.stringify(mr4));
+        }
+
+        // ---- round JRN: the JOURNAL card (core journal.persistent) ----
+        // PURE unit tests of the shape-robust read (the LIVE core doc stores
+        // the dotted key NESTED {journal:{persistent}}; a flat scalar or a
+        // literal dotted-key shape is tolerated; the value may be a boolean
+        // (what `snap set` stores), the string 'true'/'false', or a number) +
+        // the e2e round-trip through the REAL client bridge.
+        { const jd = (d) => m.journalFieldFromDoc(d);
+          ok('journal read: the NESTED live shape (boolean, string, number all resolve)',
+              jd({ journal: { persistent: true } }) === true
+              && jd({ journal: { persistent: 'false' } }) === 'false'
+              && jd({ journal: { persistent: 1 } }) === 1);
+          ok('journal read: the flat scalar + literal-dotted shapes are tolerated',
+              jd({ journal: 'true' }) === 'true' && jd({ 'journal.persistent': true }) === true);
+          ok('journal read: absent/null/garbage = unset (null)',
+              jd({ system: { hostname: 'x' } }) === null && jd(null) === null && jd({}) === null && jd({ journal: {} }) === null);
+        }
+        { const putsBefore = state.confSets.length;
+          let badJrn = null;
+          try { await m.journalWrite('maybe'); } catch (e) { badJrn = e; }
+          ok('journal e2e: a non-boolean value is rejected BEFORE the bridge', !!badJrn && /must be "true" or "false"/.test(badJrn.message), badJrn && badJrn.message);
+          ok('journal e2e: the rejected write produced NO conf PUT', state.confSets.length === putsBefore, JSON.stringify(state.confSets.length) + ' vs ' + putsBefore);
+          const chgJ = await m.journalWrite('true');
+          ok('journal e2e: a valid write returns an async CHANGE id', typeof chgJ.id === 'string', JSON.stringify(chgJ));
+          await new Promise((res) => setTimeout(res, 400)); // the stub conf PUT settles (250ms)
+          const jr1 = await m.journalRead();
+          ok('journal e2e: journal.persistent=true ROUND-TRIPS (the nested core doc)', jr1.persistent === true, JSON.stringify(jr1));
+          // the wire format: the PUT body must carry the BOOLEAN (confInferType
+          // mirrors `snap set` - `snap set core journal.persistent=true` sends
+          // the boolean true, not the string).
+          const jput = state.confSets[state.confSets.length - 1];
+          ok('journal e2e: the PUT body is EXACTLY { "journal.persistent": true } (the boolean, like the CLI)',
+              jput.name === 'core' && JSON.stringify(jput.data) === JSON.stringify({ 'journal.persistent': true }), JSON.stringify(jput.data));
+          await m.journalWrite('false');
+          await new Promise((res) => setTimeout(res, 400));
+          const jr2 = await m.journalRead();
+          ok('journal e2e: false round-trips (the OFF->teardown value; never the no-op "")', jr2.persistent === false, JSON.stringify(jr2));
         }
         // ---- the kiosk content-size clamp (round-T-fix bug 3) ----
         // The VM symptom: an external re-layout left the web-contents view stuck
