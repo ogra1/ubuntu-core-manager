@@ -2244,6 +2244,96 @@ async function refreshTimerWrite(value) {
     return setSnapConfig('core', { 'refresh.timer': value });
 }
 
+/* ---- 2c. MEMORY card (round MEM: the System page's /tmp + swap sizes) ----
+   The core config options `tmp.size` + `swap.size` (snapd configcore/tmp.go +
+   swap.go @8d4d073, source-verified):
+     tmp.size  = "" (unset) or a quantity.ParseSize string -> writes the
+                 tmp.mount systemd override + remounts /tmp. UNSET = the
+                 tmpfs(5) default: 50% of RAM. The validator accepts a
+                 PARSEABLE size >= 16 MiB (0 = unlimited parses but is never
+                 offered by the UI - unbounded /tmp is not a kiosk setting).
+                 Grammar (gadget/quantity/size.go SplitUnit): INTEGER + unit
+                 B|M|G (bytes | MiB | GiB). NO decimals (the splitter takes a
+                 digit-only prefix), NO %, NO K/T.
+     swap.size = "" (unset) or a size string -> writes
+                 /etc/default/swapfile (FILE=/var/tmp/swapfile.swp
+                 SIZE=<MiB>) + restarts swapfile.service. UNSET or 0 = no swap
+                 file (fresh Core ships none). The validator: >= 0 and an
+                 INTEGER number of MEGABYTES (sz % 1MiB == 0) - a bare-bytes
+                 value only passes when it is an exact MiB multiple, so the UI
+                 offers M/G options + a custom field checked against the rule.
+   The write rides the existing conf bridge: confInferType mirrors `snap set`
+   (clientutil.ParseConfigValues default mode, JSON-parses the scalar), so
+   "0" lands as the NUMBER 0 and "512M" as the STRING "512M" - byte-identical
+   to `snap set core swap.size=0` / `snap set core tmp.size=512M`. Both render
+   back to the same string in coreCfg (var any + %v), so the read never
+   surprises. UNSET is written as '' (the refresh.timer idiom: snapd DROPS
+   empty-string scalars -> the key is removed -> the built-in default applies:
+   50% of RAM / no swap file).
+   The size GRAMMAR + per-option rules live here (pure, unit-tested in the
+   integration suite); the renderer mirrors them client-side so a bad value is
+   rejected BEFORE the IPC (same idiom as validRefreshTimer/validRefreshScheduleUi).
+   The READ is shape-robust like refreshTimerFromDoc: the LIVE core doc stores
+   dotted keys NESTED ({tmp:{size}, swap:{size}}); a flat dotted-key shape is
+   tolerated too. Values arrive string|number|null; absent/null = unset. */
+/* The accepted size GRAMMAR (gadget/quantity/size.go SplitUnit @8d4d073):
+   an INTEGER (digits only - no sign, no decimals, no spaces) + optional unit
+   B|M|G (bytes | MiB | GiB). '%' is NOT accepted (the tmp validator has a
+   TODO for it), nor K/T. memSizeToMiB -> MiB as a number (fractional for a
+   bare-bytes value), or -1 when the string is not parseable at all. */
+const MEM_SIZE_RE = /^([0-9]+)([BMG])?$/;
+function memSizeToMiB(v) {
+    const m = String(v).match(MEM_SIZE_RE);
+    if (!m) return -1;
+    const n = Number(m[1]);
+    if (!Number.isSafeInteger(n)) return -1;
+    const u = m[2] || 'B';
+    if (u === 'M') return n;
+    if (u === 'G') return n * 1024;
+    return n / 1048576;
+}
+/* The per-option rules (snapd configcore @8d4d073):
+   tmp.size  (tmp.go validTmpfsSize):  '' (unset = 50% RAM) OK; a parseable
+              size OK when it is 0 (unlimited) or >= 16 MiB.
+   swap.size (swap.go parseAndValidateSwapSize): '' (unset = no swap file) OK;
+              a parseable size OK when it is an INTEGER number of MiB (>= 0;
+              0 = no swap). */
+function memTmpValid(v) {
+    if (v === '') return true;
+    const mb = memSizeToMiB(v);
+    return mb >= 0 && (mb === 0 || mb >= 16);
+}
+function memSwapValid(v) {
+    if (v === '') return true;
+    const mb = memSizeToMiB(v);
+    return mb >= 0 && Number.isInteger(mb);
+}
+function memFieldFromDoc(doc, field) {
+    // Shape-robust like refreshTimerFromDoc: the LIVE core doc stores dotted
+    // keys NESTED ({tmp:{size}}); a flat scalar ({tmp:'1G'}) or a literal
+    // dotted key ({'tmp.size':'1G'}) shape is tolerated too.
+    if (!doc || typeof doc !== 'object') return null;
+    const dotted = field + '.size';
+    if (typeof doc[dotted] === 'string' || typeof doc[dotted] === 'number') return doc[dotted];
+    if (typeof doc[field] === 'string' || typeof doc[field] === 'number') return doc[field];
+    if (doc[field] && typeof doc[field] === 'object') {
+        const inner = doc[field].size;
+        if (typeof inner === 'string' || typeof inner === 'number') return inner;
+    }
+    return null;
+}
+async function memoryRead() {
+    const doc = await getSnapConfig('core');
+    return { tmp: memFieldFromDoc(doc, 'tmp'), swap: memFieldFromDoc(doc, 'swap') };
+}
+async function memoryWrite(field, value) {
+    if (field !== 'tmp' && field !== 'swap') throw new Error('invalid memory field: ' + JSON.stringify(field));
+    if (typeof value !== 'string') throw new Error('memory size must be a string');
+    const okv = field === 'tmp' ? memTmpValid(value) : memSwapValid(value);
+    if (!okv) throw new Error(field + '.size value not accepted by snapd: ' + JSON.stringify(value));
+    return setSnapConfig('core', { [field + '.size']: value });
+}
+
 /* ---- 2b. global refresh HOLD (round S: the 'Pause auto-refresh' toggle) ----
    This is the REST equivalent of `snap refresh --hold` / `--unhold` (no snap
    names = hold ALL snaps' auto-refresh). Source-verified against snapd
@@ -2922,6 +3012,7 @@ const api = {
     journalTail, journalArgs, journalFollow, journalFollowKill, JOURNAL_PRIORITIES,
     __setJournalBinary, __setJournalTimeouts,
     refreshTimerRead, refreshTimerWrite, validRefreshTimer, isRefreshTimerAccepted, refreshTimerFromDoc,
+    memFieldFromDoc, memoryRead, memoryWrite, memSizeToMiB, memTmpValid, memSwapValid,
     refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
@@ -3330,6 +3421,14 @@ function initElectron() {
                                         const ps = await core.machine.powerScheduled();
                                         sy.scheduled = ps ? { active: ps.active, action: ps.action, usec: ps.usec } : null;
                                     } catch (e) { sy.scheduled = { error: String(e.message || e) }; }
+                                    // round MEM: the REAL memory READ (core tmp.size + swap.size via
+                                    // the conf doc) - READ-ONLY, the probe never writes (a write would
+                                    // remount /tmp on the kiosk). Shape: each field is string|number|null
+                                    // (absent = the default state).
+                                    try {
+                                        const mem = await core.machine.memoryRead();
+                                        sy.memory = mem ? { tmp: mem.tmp, swap: mem.swap } : null;
+                                    } catch (e) { sy.memory = { error: String(e.message || e) }; }
                                     document.querySelector('.ucm-side a[data-view="system"]').click();
                                     await wait(1500);
                                     sy.viewActive = !document.querySelector('#view-system').classList.contains('ucm-hidden');
@@ -3341,6 +3440,18 @@ function initElectron() {
                                     const ksel = document.querySelector('#keymapSelect');
                                     const kbtn = document.querySelector('#keymapApplyBtn');
                                     sy.kmCard = ksel ? { present: true, opts: ksel.options.length, value: ksel.value, btnPresent: !!kbtn, btnDisabled: kbtn ? kbtn.disabled : null } : { present: false };
+                                    // round MEM: the MEMORY card (3rd of the System cards, between
+                                    // Snap refresh schedule and Time) - READ-ONLY: report the two
+                                    // pickers (Default / No swap preselected when the option is unset)
+                                    // + the Apply buttons. (this block is inside a template literal - keep it plain)
+                                    const mtmp = document.querySelector('#memTmpSelect');
+                                    const mswp = document.querySelector('#memSwapSelect');
+                                    sy.memCard = (mtmp && mswp) ? {
+                                        present: true,
+                                        tmp: { value: mtmp.value, opts: mtmp.options.length },
+                                        swap: { value: mswp.value, opts: mswp.options.length },
+                                        btns: !!document.querySelector('#memApplyBtn'),
+                                    } : { present: false };
                                     // round P: the REAL process read (main.js readProcs over
                                     // /proc, exposed through the preload bridge the SAME way the
                                     // app consumes it). READ-ONLY: the probe never kills anything
@@ -3594,6 +3705,17 @@ function initElectron() {
     ipcMain.handle('system:refresh-now', guard(async () => {
         requireAuth();
         return setGlobalRefreshNow();
+    }));
+    // Round MEM: the Memory card (core tmp.size + swap.size; console-
+    // privileged like every other system-page write - the changes remount
+    // /tmp and restart swapfile.service on the device).
+    ipcMain.handle('system:memory-read', guard(async () => {
+        requireAuth();
+        return memoryRead();
+    }));
+    ipcMain.handle('system:memory-write', guard(async (field, value) => {
+        requireAuth();
+        return memoryWrite(field, value);
     }));
     // Power / scheduled shutdown (login1 over D-Bus; the shutdown interface
     // is D-BUS ONLY - no shell-out to poweroff/systemctl).

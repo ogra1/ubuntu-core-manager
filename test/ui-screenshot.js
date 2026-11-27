@@ -1321,6 +1321,29 @@ function mockFactoryJs() {
                         return { cancelled: had };
                     },
                     async powerScheduled() { return JSON.parse(JSON.stringify(__m.scheduled)); },
+                    // round MEM: the MEMORY card (core tmp.size + swap.size).
+                    // The read models the REAL conf doc (nested tmp/swap objects;
+                    // absent = unset = the default state; a value may be a string
+                    // or the NUMBER 0, which is what snap set stores for '0').
+                    // The write routes through the REAL mock confSet (async
+                    // change + 250ms settle) EXACTLY like refreshWrite, so the
+                    // renderer's waitChangeSettled runs the real path. '' =
+                    // clear (real snapd drops the empty scalar; the mock keeps
+                    // '' in the doc and the read normalizes it to unset).
+                    async memoryRead() {
+                        const doc = __store['core'] || JSON.parse(JSON.stringify(CONF['core'] || {}));
+                        const pick = (f) => {
+                            if (typeof doc[f] === 'string' || typeof doc[f] === 'number') return doc[f];
+                            if (doc[f] && typeof doc[f] === 'object' && (typeof doc[f].size === 'string' || typeof doc[f].size === 'number')) return doc[f].size;
+                            return null;
+                        };
+                        return { tmp: pick('tmp'), swap: pick('swap') };
+                    },
+                    async memoryWrite(field, value) {
+                        __m.memWrites = __m.memWrites || [];
+                        __m.memWrites.push([field, value]);
+                        return await core.snaps.confSet('core', { [field + '.size']: value });
+                    },
                     // round P: procs returns the LIVE canned list (a deep copy -
                     // the real main reads /proc fresh every poll); kill records
                     // the call AND removes the pid (so the next re-poll no longer
@@ -7313,8 +7336,8 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the fixed nav order is wrong / System is not directly below Settings (got ' + JSON.stringify(gS.navLinks) + ') (round L)');
     if (gS.navLinks.indexOf('system') !== 5)
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
-    if (JSON.stringify(gS.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'Power']))
-        console.log('PAGE ERROR: the system page must show exactly the 5 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard)');
+    if (JSON.stringify(gS.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power']))
+        console.log('PAGE ERROR: the system page must show exactly the 6 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard; round MEM inserts Memory between the refresh schedule and Time)');
     // round T: the refresh card examples are a TABLE now (the old wall of text
     // is gone): pin the structure + the exact 5 Option/Result rows (each row
     // verified against snapd ParseSchedule V2, timeutil/schedule.go).
@@ -7341,20 +7364,24 @@ function mockFactoryJs() {
     if (gS.helps[1].indexOf('02:00-06:00') !== -1) console.log('PAGE ERROR: the refresh intro must not inline the examples any more (the table owns them; got ' + JSON.stringify(gS.helps[1]) + ') (round T)');
 
     // round R: the de-worded card help texts (exact, so the old verbose copy
-    // can't regress). round T: the Time card adds a 4th help text.
-    if (gS.helps && gS.helps.length === 5) {
+    // can't regress). round T: the Time card adds a 4th help text. round T-KM4
+    // adds the Keyboard 5th. round MEM adds the Memory 6th (the indices below
+    // are the CURRENT order: journal, refresh, Memory, Time, Keyboard, power).
+    if (gS.helps && gS.helps.length === 6) {
         if (gS.helps[0] !== 'The latest entries are shown; filter by unit or text and raise the minimum priority.')
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
         if (gS.helps[1] !== 'Schedule examples:')
             console.log('PAGE ERROR: the refresh card help must be exactly "Schedule examples:" (the wall of text is gone; the table owns the examples) (got ' + JSON.stringify(gS.helps[1]) + ') (round T)');
-        if (gS.helps[2] !== 'Set the time manually (if time sync is off on the Network page) and pick the device\'s time zone')
-            console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round T / T-fix11)');
-        if (gS.helps[4] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
-            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[4]) + ') (round R)');
-        if (gS.helps[3] !== 'Change the keyboard layout for this console.')
-            console.log('PAGE ERROR: the Keyboard card help must read the round T-KM4 subtitle (got ' + JSON.stringify(gS.helps[3]) + ') (round T-KM4)');
+        if (gS.helps[2] !== "The size of /tmp (a tmpfs mount — unset means half of the device's RAM) and the optional swap file")
+            console.log('PAGE ERROR: the Memory card help must read the round MEM subtitle (got ' + JSON.stringify(gS.helps[2]) + ') (round MEM)');
+        if (gS.helps[3] !== 'Set the time manually (if time sync is off on the Network page) and pick the device\'s time zone')
+            console.log('PAGE ERROR: the Time card help must read the round T-fix11 subtitle (got ' + JSON.stringify(gS.helps[3]) + ') (round T / T-fix11)');
+        if (gS.helps[4] !== 'Change the keyboard layout for this console.')
+            console.log('PAGE ERROR: the Keyboard card help must read the round T-KM4 subtitle (got ' + JSON.stringify(gS.helps[4]) + ') (round T-KM4)');
+        if (gS.helps[5] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
+            console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[5]) + ') (round R)');
     } else {
-        console.log('PAGE ERROR: the system page must show 5 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds Time; round T-KM4 adds Keyboard)');
+        console.log('PAGE ERROR: the system page must show 6 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds Time; round T-KM4 adds Keyboard; round MEM adds Memory)');
     }
     // round S+3: the refresh card rows must be ordered  Pause-toggle < separator <
     // Refresh-now  (the user asked to SWAP the toggle above the button and add a
@@ -7991,6 +8018,142 @@ function mockFactoryJs() {
     // keys are the only conf state here, and a refresh changes neither).
     if (rn1.doc !== rnPre) console.log('PAGE ERROR: a Refresh now must NOT mutate the core conf store (before ' + rnPre + ' after ' + rn1.doc + ') (round S+2)');
 
+    // ---- 5s-mem: round MEM — the MEMORY card (core tmp.size + swap.size) ----
+    // Runs on the system view in the authenticated LIGHT state (after 5s-rn;
+    // the card is static DOM so its position among the 5s sections is free).
+    // It leaves the core conf store pristine like every other section: the
+    // default state = both options UNSET (tmp = 50% of RAM, swap = no file),
+    // the mock host RAM is 8 GiB (fmtBytes(4 GiB) = '4.0 GiB').
+    const mm0 = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rd = core.machine ? await core.machine.memoryRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        return {
+            tmpNow: (document.querySelector('#memTmpNow') || {}).textContent,
+            swapNow: (document.querySelector('#memSwapNow') || {}).textContent,
+            tmpSel: (document.querySelector('#memTmpSelect') || {}).value,
+            swapSel: (document.querySelector('#memSwapSelect') || {}).value,
+            btn: !!document.querySelector('#memApplyBtn'),
+            read: rd || null,
+            tmpStored: doc.tmp ? (doc.tmp.size !== undefined ? doc.tmp.size : 'absent') : 'no-tmp-node',
+            swapStored: doc.swap ? (doc.swap.size !== undefined ? doc.swap.size : 'absent') : 'no-swap-node',
+        };
+    });
+    if (mm0.tmpNow !== 'Default (50% of RAM — 4.0 GiB)') console.log('PAGE ERROR: the unset tmp must show the 50%-of-RAM default with the mock 8 GiB hint (got ' + JSON.stringify(mm0.tmpNow) + ') (round MEM)');
+    if (mm0.swapNow !== 'No swap file') console.log('PAGE ERROR: the unset swap must show "No swap file" (got ' + JSON.stringify(mm0.swapNow) + ') (round MEM)');
+    if (mm0.tmpSel !== '' || mm0.swapSel !== '') console.log('PAGE ERROR: both pickers must sit on the default option when the options are unset (got ' + JSON.stringify([mm0.tmpSel, mm0.swapSel]) + ') (round MEM)');
+    if (!mm0.btn) console.log('PAGE ERROR: the Memory Apply button must be present (round MEM)');
+    if (mm0.tmpStored !== 'no-tmp-node' || mm0.swapStored !== 'no-swap-node') console.log('PAGE ERROR: a fresh core conf must carry NO tmp/swap options (got ' + JSON.stringify([mm0.tmpStored, mm0.swapStored]) + ') (round MEM)');
+
+    // (a) a NO-OP apply (selections == the stored values) must not write.
+    await page.click('#memApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const mmA = await page.evaluate(() => {
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return { toasts, writes: m && m.memWrites ? m.memWrites.length : null };
+    });
+    if ((mmA.writes || 0) !== 0) console.log('PAGE ERROR: a no-op Apply must NOT write (got ' + JSON.stringify(mmA.writes) + ') (round MEM)');
+    if (!mmA.toasts.includes('No memory changes to apply')) console.log('PAGE ERROR: a no-op Apply must toast (got ' + JSON.stringify(mmA.toasts) + ') (round MEM)');
+
+    // (b) an INVALID custom tmp (a decimal — the grammar is integers only) is
+    //     rejected BEFORE the IPC (the house rule: flag the input, no change).
+    await page.evaluate(() => { const s2 = document.querySelector('#memTmpSelect'); s2.value = 'custom'; s2.dispatchEvent(new Event('change')); document.querySelector('#memTmpCustom').value = '1.5G'; });
+    await page.click('#memApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const mmB = await page.evaluate(() => ({
+        err: document.querySelector('#memTmpCustom') ? document.querySelector('#memTmpCustom').classList.contains('is-error') : null,
+        msg: (document.querySelector('#memTmpMsg') || {}).textContent,
+    }));
+    if (mmB.err !== true || !/Invalid size/.test(mmB.msg || '')) console.log('PAGE ERROR: a decimal custom size (1.5G) must be flagged invalid (got ' + JSON.stringify(mmB) + ') (round MEM)');
+
+    // (c) a valid-shape custom tmp BELOW the 16 MiB floor (8M) is rejected by
+    //     snapd's tmp rule (validTmpfsSize).
+    await page.evaluate(() => { document.querySelector('#memTmpCustom').value = '8M'; });
+    await page.click('#memApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const mmC = await page.evaluate(() => ({
+        msg: (document.querySelector('#memTmpMsg') || {}).textContent,
+        err: document.querySelector('#memTmpCustom') ? document.querySelector('#memTmpCustom').classList.contains('is-error') : null,
+    }));
+    if (mmC.err !== true || !/at least 16 MB/.test(mmC.msg || '')) console.log('PAGE ERROR: 8M must be rejected by the tmp >= 16 MiB rule (got ' + JSON.stringify(mmC) + ') (round MEM)');
+
+    // (d) a valid-shape custom swap that is NOT a whole number of MB
+    //     (1000000 bytes = ~0.95 MiB) is rejected by the swap rule
+    //     (parseAndValidateSwapSize: sz % 1MiB == 0).
+    await page.evaluate(() => {
+        const tc = document.querySelector('#memTmpCustom'); tc.value = ''; tc.classList.remove('is-error');
+        const ts = document.querySelector('#memTmpSelect'); ts.value = ''; ts.dispatchEvent(new Event('change'));
+        const sw = document.querySelector('#memSwapSelect'); sw.value = 'custom'; sw.dispatchEvent(new Event('change'));
+        document.querySelector('#memSwapCustom').value = '1000000';
+    });
+    await page.click('#memApplyBtn');
+    await new Promise((r) => setTimeout(r, 300));
+    const mmD = await page.evaluate(() => ({
+        msg: (document.querySelector('#memSwapMsg') || {}).textContent,
+        err: document.querySelector('#memSwapCustom') ? document.querySelector('#memSwapCustom').classList.contains('is-error') : null,
+    }));
+    if (mmD.err !== true || !/whole number of MB/.test(mmD.msg || '')) console.log('PAGE ERROR: a bare-bytes swap (1000000) must be rejected by the integer-MB rule (got ' + JSON.stringify(mmD) + ') (round MEM)');
+
+    // (e) the real write: tmp 1G + swap 2G -> one conf PUT per changed field,
+    //     the async changes settle, the current-value lines + the re-read +
+    //     the conf doc all agree, both toasts fire.
+    await page.evaluate(() => {
+        const t = document.querySelector('#memTmpSelect'); t.value = '1G'; t.dispatchEvent(new Event('change'));
+        const sw = document.querySelector('#memSwapSelect'); sw.value = '2G'; sw.dispatchEvent(new Event('change'));
+        const sc = document.querySelector('#memSwapCustom'); sc.value = ''; sc.classList.remove('is-error');
+    });
+    await page.click('#memApplyBtn');
+    await new Promise((r) => setTimeout(r, 900)); // both async changes settle (250ms each)
+    const mmE = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rd = core.machine ? await core.machine.memoryRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            tmpNow: (document.querySelector('#memTmpNow') || {}).textContent,
+            swapNow: (document.querySelector('#memSwapNow') || {}).textContent,
+            read: rd || null,
+            tmpStored: doc.tmp ? (doc.tmp.size !== undefined ? doc.tmp.size : 'absent') : 'no-tmp-node',
+            swapStored: doc.swap ? (doc.swap.size !== undefined ? doc.swap.size : 'absent') : 'no-swap-node',
+            toasts,
+            writes: m.memWrites || null,
+            tmpSelAfter: (document.querySelector('#memTmpSelect') || {}).value,
+            swapSelAfter: (document.querySelector('#memSwapSelect') || {}).value,
+        };
+    });
+    if (mmE.tmpNow !== '1 GB') console.log('PAGE ERROR: the applied tmp size must show "1 GB" (got ' + JSON.stringify(mmE.tmpNow) + ') (round MEM)');
+    if (mmE.swapNow !== '2 GB') console.log('PAGE ERROR: the applied swap size must show "2 GB" (got ' + JSON.stringify(mmE.swapNow) + ') (round MEM)');
+    if (!mmE.read || mmE.read.tmp !== '1G' || mmE.read.swap !== '2G') console.log('PAGE ERROR: the re-read must return the stored sizes (got ' + JSON.stringify(mmE.read) + ') (round MEM)');
+    if (mmE.tmpStored !== '1G' || mmE.swapStored !== '2G') console.log('PAGE ERROR: the sizes must land in the core conf doc (got ' + JSON.stringify([mmE.tmpStored, mmE.swapStored]) + ') (round MEM)');
+    if (!mmE.toasts.includes('tmp size updated') || !mmE.toasts.includes('swap size updated')) console.log('PAGE ERROR: both applies must toast (got ' + JSON.stringify(mmE.toasts) + ') (round MEM)');
+    if (!Array.isArray(mmE.writes) || JSON.stringify(mmE.writes) !== JSON.stringify([['tmp', '1G'], ['swap', '2G']])) console.log('PAGE ERROR: exactly the two changed fields must be written, in order (got ' + JSON.stringify(mmE.writes) + ') (round MEM)');
+
+    // (f) CLEAR both back to the defaults (the '' = unset write) - pristine end.
+    await page.evaluate(() => {
+        const t = document.querySelector('#memTmpSelect'); t.value = ''; t.dispatchEvent(new Event('change'));
+        const sw = document.querySelector('#memSwapSelect'); sw.value = ''; sw.dispatchEvent(new Event('change'));
+    });
+    await page.click('#memApplyBtn');
+    await new Promise((r) => setTimeout(r, 900));
+    const mmF = await page.evaluate(async () => {
+        const core = window.__mockCore || window.ucmCore;
+        const rd = core.machine ? await core.machine.memoryRead() : null;
+        const doc = window.__mockCore ? (window.__mockCore.snaps.confStore('core') || {}) : {};
+        return {
+            tmpNow: (document.querySelector('#memTmpNow') || {}).textContent,
+            swapNow: (document.querySelector('#memSwapNow') || {}).textContent,
+            tmpStored: doc.tmp ? (doc.tmp.size !== undefined ? doc.tmp.size : 'absent') : 'no-tmp-node',
+            swapStored: doc.swap ? (doc.swap.size !== undefined ? doc.swap.size : 'absent') : 'no-swap-node',
+            read: rd || null,
+        };
+    });
+    if (mmF.tmpNow !== 'Default (50% of RAM — 4.0 GiB)' || mmF.swapNow !== 'No swap file') console.log('PAGE ERROR: clearing both must restore the default-state texts (got ' + JSON.stringify([mmF.tmpNow, mmF.swapNow]) + ') (round MEM)');
+    if (!(mmF.tmpStored === '' || mmF.tmpStored === 'absent' || mmF.tmpStored === 'no-tmp-node')) console.log('PAGE ERROR: the cleared tmp option must be empty/absent (got ' + JSON.stringify(mmF.tmpStored) + ') (round MEM)');
+    if (!(mmF.swapStored === '' || mmF.swapStored === 'absent' || mmF.swapStored === 'no-swap-node')) console.log('PAGE ERROR: the cleared swap option must be empty/absent (got ' + JSON.stringify(mmF.swapStored) + ') (round MEM)');
+    if (!mmF.read || (mmF.read.tmp !== '' && mmF.read.tmp !== null) || (mmF.read.swap !== '' && mmF.read.swap !== null)) console.log('PAGE ERROR: the cleared read must return unset (got ' + JSON.stringify(mmF.read) + ') (round MEM)');
+
     // back on the system view; the 5s-p power section runs next (leaves it pristine too)
     // ---- 5s-t: round T — the TIME card (set-time gate + wall clock + timezone + topbar clock) ----
     // Runs on the system view in the authenticated LIGHT state. The NTP gate is
@@ -8258,8 +8421,8 @@ function mockFactoryJs() {
         mock: window.__mockCore.keymaps.__km(),
       };
     });
-    if (JSON.stringify(k0.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'Power']))
-        console.log('PAGE ERROR: T-KM4 - the System card ORDER must be journal, refresh, Time, Keyboard, power (got ' + JSON.stringify(k0.cards) + ')');
+    if (JSON.stringify(k0.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power']))
+        console.log('PAGE ERROR: T-KM4 - the System card ORDER must be journal, refresh, Memory, Time, Keyboard, power (got ' + JSON.stringify(k0.cards) + ') (round MEM reorders)');
     if (k0.opts !== 5) console.log('PAGE ERROR: T-KM4 - the picker must be fed with the mock list (5 entries; got ' + k0.opts + ')');
     if (k0.value !== 'de') console.log('PAGE ERROR: T-KM4 - the picker must default to the applied layout (de; got ' + k0.value + ')');
     if (!k0.btnPresent || k0.btnDisabled !== false) console.log('PAGE ERROR: T-KM4 - the Apply button must be present + enabled once the picker settles (got ' + JSON.stringify(k0) + ')');

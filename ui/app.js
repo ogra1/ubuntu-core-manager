@@ -4006,6 +4006,17 @@ async function loadSystem() {
         when.value = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate())
             + 'T' + pad(t.getHours()) + ':' + pad(t.getMinutes());
     }
+    // Round MEM: the MEMORY card (the System page's tmp + swap sizes). One
+    // conf-doc read (memoryRead) for the stored core tmp.size + swap.size
+    // (unset -> the default-state text). The picker reflects the stored value
+    // (an exact preset, or Custom carrying the raw value). The RAM total for
+    // the "50% of RAM" hint comes from state.host (the dashboard host stats —
+    // no extra IPC).
+    let md = null;
+    try { md = await core.machine.memoryRead(); }
+    catch (e) { /* snapd unreachable - leave the card at its HTML defaults */ }
+    state.mem = md ? { tmp: md.tmp == null ? '' : String(md.tmp), swap: md.swap == null ? '' : String(md.swap) } : { tmp: '', swap: '' };
+    syncMemCard(md || {}, (state.host && state.host.mem) ? state.host.mem.total : null);
     // Round T: the TIME card. One IPC reads the LIVE wall clock + timezone +
     // the NTP flag + the bundled zone list (main.js timeRead). The manual
     // set-time rows are gated by the NTP flag (the Network page's "Sync time
@@ -4055,6 +4066,144 @@ async function loadSystem() {
     // layout, or English (US) on a fresh device). The "asked once" flag is
     // NOT consulted - this is the post-setup path, open to any layout.
     await loadSystemKeymap();
+}
+
+/* ----------------------------- round MEM: memory card ------------------------
+   The core tmp.size + swap.size options (snapd configcore, source-verified at
+   @8d4d073). Client-side validation MIRRORS snapd's rules so the user is
+   told BEFORE the IPC (the house rule; the daemon would 400 with a harder-to-
+   read message otherwise):
+     grammar (gadget/quantity/size.go SplitUnit): an INTEGER + optional B|M|G
+       (bytes | MiB | GiB). NO decimals (digit-only prefix), NO % (the tmp
+       validator has a TODO for it - not accepted), NO K/T.
+     tmp:  '' (unset -> 50% of RAM, the tmpfs default) or size >= 16 MiB
+       (0 parses = unlimited; the UI allows it in custom, does not preset it).
+     swap: '' (unset -> no swap file, the fresh-Core state) or an INTEGER
+       number of MEGABYTES (sz % 1MiB == 0; 0 = no swap).
+   Writes ride the conf bridge (async change + waitChangeSettled, exactly
+   like the refresh schedule); a field is written ONLY when it changed (the
+   keymap no-op idiom), so a one-size change is one snapd change. '' clears
+   the option (snapd drops empty-string scalars -> the default applies). */
+const MEM_SIZE_RE = /^([0-9]+)([BMG])?$/;   // mirrors quantity.SplitUnit (integer + B|M|G)
+function memToMiB(v) {
+    const m = String(v).match(MEM_SIZE_RE);
+    if (!m) return -1;
+    const n = Number(m[1]);
+    if (!Number.isSafeInteger(n)) return -1;
+    const u = m[2] || 'B';
+    if (u === 'M') return n;
+    if (u === 'G') return n * 1024;
+    return n / 1048576;                    // bytes -> (possibly fractional) MiB
+}
+function memTmpRuleOk(v) {
+    if (v === '') return true;             // default (50% of RAM)
+    const mb = memToMiB(v);
+    return mb >= 0 && (mb === 0 || mb >= 16);  // snapd: 0 ok, <16MiB rejected
+}
+function memSwapRuleOk(v) {
+    if (v === '') return true;             // default (no swap file)
+    const mb = memToMiB(v);
+    return mb >= 0 && Number.isInteger(mb); // snapd: integer MB (0 = no swap)
+}
+function memFmtBytes(v) {
+    const mb = memToMiB(v);
+    if (mb < 0) return String(v);
+    if (mb >= 1024) { const g = mb / 1024; return (g % 1 === 0 ? g : g.toFixed(1)) + ' GB'; }
+    return mb + ' MB';
+}
+function memSetRowErr(field, text) {
+    const tmp = field === 'tmp';
+    const c = $(tmp ? '#memTmpCustom' : '#memSwapCustom');
+    const msg = $(tmp ? '#memTmpMsg' : '#memSwapMsg');
+    sysSetFieldErr(c, msg, text);
+}
+function syncMemCard(rd, ramBytes) {
+    const tmpNow = $('#memTmpNow'); const swapNow = $('#memSwapNow');
+    const tmpSel = $('#memTmpSelect'); const swapSel = $('#memSwapSelect');
+    if (!tmpNow || !swapNow || !tmpSel || !swapSel) return;
+    const tmpVal = rd.tmp == null ? '' : String(rd.tmp);
+    const swapVal = rd.swap == null ? '' : String(rd.swap);
+    tmpNow.textContent = tmpVal === ''
+        ? 'Default (50% of RAM' + (ramBytes ? ' — ' + fmtBytes(Math.floor(ramBytes / 2)) : '') + ')'
+        : (tmpVal === '0' ? 'Unlimited' : memFmtBytes(tmpVal));
+    swapNow.textContent = (swapVal === '' || swapVal === '0') ? 'No swap file' : memFmtBytes(swapVal);
+    const pick = (sel, c, val) => {
+        const hit = Array.from(sel.options).some((o) => o.value === val);
+        if (hit) { sel.value = val; if (c) { c.value = ''; c.hidden = true; } }
+        else { sel.value = 'custom'; if (c) { c.value = val; c.hidden = false; } }
+        if (c) c.classList.remove('is-error');
+    };
+    pick(tmpSel, $('#memTmpCustom'), tmpVal);
+    pick(swapSel, $('#memSwapCustom'), swapVal);
+    memSetRowErr('tmp', '');
+    memSetRowErr('swap', '');
+}
+async function applyMemory() {
+    const tmpSel = $('#memTmpSelect'); const swapSel = $('#memSwapSelect');
+    if (!tmpSel || !swapSel) return;
+    const sizeOf = (sel, c) => {
+        if (sel.value !== 'custom') return { value: sel.value, error: null };
+        const v = (c && c.value ? c.value : '').trim();
+        if (!v) return { value: '', error: 'Enter a size, e.g. 512M or 2G' };
+        if (!MEM_SIZE_RE.test(v)) return { value: '', error: 'Invalid size — an integer with an optional B, M or G unit (e.g. 512M, 3G)' };
+        return { value: v, error: null };
+    };
+    const t = sizeOf(tmpSel, $('#memTmpCustom'));
+    const sw = sizeOf(swapSel, $('#memSwapCustom'));
+    let bad = false;
+    if (t.error) { memSetRowErr('tmp', t.error); bad = true; }
+    else if (!memTmpRuleOk(t.value)) { memSetRowErr('tmp', 'Must be at least 16 MB (0 means unlimited)'); bad = true; }
+    else memSetRowErr('tmp', '');
+    if (sw.error) { memSetRowErr('swap', sw.error); bad = true; }
+    else if (!memSwapRuleOk(sw.value)) { memSetRowErr('swap', 'Must be a whole number of MB (integer with M or G, or 0)'); bad = true; }
+    else memSetRowErr('swap', '');
+    if (bad) return;
+    const cur = state.mem || { tmp: '', swap: '' };
+    const tmpChanged = String(cur.tmp) !== t.value;
+    const swapChanged = String(cur.swap) !== sw.value;
+    if (!tmpChanged && !swapChanged) {
+        toast('info', 'No memory changes to apply', 'The current sizes match the selection.');
+        return;
+    }
+    const btn = $('#memApplyBtn');
+    if (btn) btn.disabled = true;
+    let failed = null;
+    try {
+        if (tmpChanged) {
+            const change = (await core.machine.memoryWrite('tmp', t.value)) || null;
+            if (change && change.id != null) {
+                const done = await waitChangeSettled(change);
+                if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') failed = 'tmp';
+            }
+        }
+        if (!failed && swapChanged) {
+            const change = (await core.machine.memoryWrite('swap', sw.value)) || null;
+            if (change && change.id != null) {
+                const done = await waitChangeSettled(change);
+                if (done && isChangeTerminal(done.status) && String(done.status).toLowerCase() !== 'done') failed = 'swap';
+            }
+        }
+        if (failed) {
+            toast('negative', 'Memory size not applied', (failed === 'tmp' ? 'The /tmp size' : 'The swap file size') + ' is unchanged — the previous value is still in effect.');
+            const rd = await core.machine.memoryRead().catch(() => null);
+            if (rd) syncMemCard(rd, (state.host && state.host.mem) ? state.host.mem.total : null);
+        } else {
+            if (tmpChanged) toast('positive', 'tmp size updated', t.value === '' ? '/tmp is back to the default (half of RAM).' : (t.value === '0' ? '/tmp is now unlimited.' : '/tmp is now limited to ' + memFmtBytes(t.value) + '.'));
+            if (swapChanged) toast('positive', 'swap size updated', (sw.value === '' || sw.value === '0') ? 'No swap file (the option is unset).' : 'A ' + memFmtBytes(sw.value) + ' swap file is now active.');
+            state.mem = {
+                tmp: tmpChanged ? t.value : String(cur.tmp),
+                swap: swapChanged ? sw.value : String(cur.swap),
+            };
+            // reflect the LIVE persisted state on the card (the "current" lines
+            // + the pickers): a success re-reads so the display is the truth
+            // snapd actually stored (a write that settled Done == persisted).
+            const rd2 = await core.machine.memoryRead().catch(() => null);
+            syncMemCard(rd2 || state.mem, (state.host && state.host.mem) ? state.host.mem.total : null);
+        }
+    } catch (e) { toastErr(e); }
+    finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 async function doSetTime() {
@@ -5093,6 +5242,15 @@ function wire() {
         sysSetFieldErr(inp, msg, '');
         applyRefreshSchedule();
     });
+    // Round MEM: the Memory card (null-guarded — the house wire rule).
+    const memApplyBtn = $('#memApplyBtn');
+    if (memApplyBtn) memApplyBtn.addEventListener('click', () => applyMemory());
+    for (const pair of [['#memTmpSelect', '#memTmpCustom'], ['#memSwapSelect', '#memSwapCustom']]) {
+        const sel = $(pair[0]); const c = $(pair[1]);
+        if (sel) sel.addEventListener('change', () => {
+            if (c) { c.hidden = sel.value !== 'custom'; if (sel.value !== 'custom') c.value = ''; }
+        });
+    }
     const rebootBtn = $('#rebootNowBtn');
     if (rebootBtn) rebootBtn.addEventListener('click', () => {
         confirmPower('reboot');

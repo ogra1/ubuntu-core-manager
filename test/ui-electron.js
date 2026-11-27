@@ -170,10 +170,24 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     // ---- round L: the SYSTEM page (the REAL journal + the REAL login1
     // read). READ-ONLY: the probe never triggers a power action.
     const sy = p.sys || {};
-    ok('the system page shows its 5 cards in the real app (nav + loaders wired)',
+    ok('the system page shows its 6 cards in the real app (nav + loaders wired)',
         sy.ok === true && sy.sy && sy.sy.viewActive === true
-        && JSON.stringify(sy.sy.cards) === JSON.stringify(['Journal', 'Snap refresh schedule', 'Time', 'Keyboard layout', 'Power']),
-        JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.error));
+        && JSON.stringify(sy.sy.cards) === JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power']),
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.sy.error));
+    // round MEM: the REAL memory READ (core tmp.size + swap.size through real
+    // main.js + the real stub socket; a fresh stub core doc carries neither ->
+    // both null = the default state: 50% of RAM / no swap file) + the real
+    // Memory card DOM (both pickers on the default option, Apply present).
+    ok('the REAL memory read returns the unset default state (fresh core doc)',
+        sy.ok === true && sy.sy && sy.sy.memory && !sy.sy.memory.error
+        && (sy.sy.memory.tmp === null || sy.sy.memory.tmp === '')
+        && (sy.sy.memory.swap === null || sy.sy.memory.swap === ''),
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.memory) : sy.sy.error));
+    ok('the system page shows the MEMORY card (pickers on default, Apply present)',
+        sy.ok === true && sy.sy && sy.sy.memCard && sy.sy.memCard.present === true
+        && sy.sy.memCard.tmp.value === '' && sy.sy.memCard.swap.value === ''
+        && sy.sy.memCard.btns === true,
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.memCard) : sy.sy.error));
     // round T-KM4: the Keyboard card is present, fed by the real 98-entry list,
     // and the Apply button ships (enabled once the picker settles).
     ok('the system page shows the KEYBOARD card (picker fed, Apply button present)',

@@ -222,6 +222,13 @@ const api = Object.freeze({
         // Round S+2: the 'Refresh now' button (== `snap refresh` all snaps). An
         // async snapd change (settle it like every other write).
         refreshNow: invoke('system:refresh-now'),             // () -> async snapd change (refresh all snaps)
+        // Round MEM: the Memory card (core tmp.size + swap.size). The read is
+        // the stored conf doc ({ tmp, swap }, each string|number|null — null =
+        // unset = the default state: 50% of RAM / no swap file); the write is
+        // an async snapd change (field 'tmp'|'swap', value a size string,
+        // '' = unset -> the built-in default applies again).
+        memoryRead: invoke('system:memory-read'),             // -> { tmp, swap }
+        memoryWrite: invoke('system:memory-write'),           // (field, value) -> async snapd change
         // Round T: the Time card. timeRead = the LIVE wall clock +
         // timezone + NTP flag + the bundled zone list; timeSet is the
         // gated manual set (time-control plug, SetTime xbb); timeZoneWrite

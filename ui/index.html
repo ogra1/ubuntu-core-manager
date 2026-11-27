@@ -582,6 +582,83 @@
                             </div>
                         </div>
                     </div>
+                    <!-- round MEM: the MEMORY card (between the refresh
+                         schedule and the Time card). Sets the core
+                         tmp.size + swap.size options (snapd configcore):
+                         tmp = the /tmp tmpfs size (unset = 50% of RAM, the
+                         tmpfs default; a set value is >= 16M), swap = the
+                         snapd-managed swap file (unset or 0 = no swap file,
+                         the fresh-Core state; a set value is an integer
+                         number of MiB). The pickers offer M/G steps (the
+                         accepted grammar is INTEGER + B|M|G); 'Custom'
+                         reveals a text input (the house is-error + message
+                         idiom). One Apply writes BOTH (a single conf PUT with
+                         the two keys — snapd runs both handlers as ONE change,
+                         so there is one settle to wait for). The current-
+                         value lines read back from the conf doc on load. -->
+                    <div class="p-card ucm-sys">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Memory</p></div>
+                        <div class="ucm-sys__body">
+                            <p class="ucm-lp__help">
+                                The size of /tmp (a tmpfs mount — unset means half of the device's RAM) and the optional swap file
+                            </p>
+                            <div class="ucm-sys__kvrow">
+                                <dt>tmp size</dt>
+                                <dd>
+                                    <span id="memTmpNow" class="ucm-sys__now">Default (50% of RAM)</span>
+                                </dd>
+                            </div>
+                            <div class="ucm-sys__kvrow">
+                                <dt>swap size</dt>
+                                <dd>
+                                    <span id="memSwapNow" class="ucm-sys__now">No swap file</span>
+                                </dd>
+                            </div>
+                            <div class="ucm-sys__sep" role="separator"></div>
+                            <div class="ucm-sys__row ucm-sys__formrow">
+                                <label class="p-form__label" for="memTmpSelect">tmp size</label>
+                                <div class="ucm-sys__pickrow">
+                                    <select id="memTmpSelect" class="ucm-kv--select"
+                                            title="The maximum size of the /tmp tmpfs mount. Default = half of the device's RAM (the tmpfs default).">
+                                        <option value="">Default (50% of RAM)</option>
+                                        <option value="512M">512 MB</option>
+                                        <option value="1G">1 GB</option>
+                                        <option value="2G">2 GB</option>
+                                        <option value="4G">4 GB</option>
+                                        <option value="8G">8 GB</option>
+                                        <option value="16G">16 GB</option>
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                    <input class="p-form-validation__input ucm-sys__inp ucm-sys__custom" type="text" id="memTmpCustom"
+                                           placeholder="e.g. 3G (integer, B/M/G)" spellcheck="false" autocomplete="off" hidden>
+                                </div>
+                                <p class="p-form-validation__message" id="memTmpMsg"></p>
+                            </div>
+                            <div class="ucm-sys__row ucm-sys__formrow">
+                                <label class="p-form__label" for="memSwapSelect">swap size</label>
+                                <div class="ucm-sys__pickrow">
+                                    <select id="memSwapSelect" class="ucm-kv--select"
+                                            title="The snapd-managed swap file. No swap = the option is unset (a fresh device ships no swap file).">
+                                        <option value="">No swap file</option>
+                                        <option value="512M">512 MB</option>
+                                        <option value="1G">1 GB</option>
+                                        <option value="2G">2 GB</option>
+                                        <option value="4G">4 GB</option>
+                                        <option value="8G">8 GB</option>
+                                        <option value="16G">16 GB</option>
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                    <input class="p-form-validation__input ucm-sys__inp ucm-sys__custom" type="text" id="memSwapCustom"
+                                           placeholder="e.g. 3G (integer MB)" spellcheck="false" autocomplete="off" hidden>
+                                </div>
+                                <p class="p-form-validation__message" id="memSwapMsg"></p>
+                            </div>
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="memApplyBtn">Apply memory sizes</button>
+                                <span id="memApplyHint" class="ucm-sys__now"></span>
+                            </div>
+                        </div>
+                    </div>
                     <!-- round T: the TIME card (between the refresh schedule
                          and the power card). Set the time manually (gated by
                          the Network page's "Sync time from internet" toggle —

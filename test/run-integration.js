@@ -695,6 +695,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:refresh-hold-read'] && !!handlers['system:refresh-hold']);
             ok('system-page refresh-now handler registered (round S+2: the Refresh now button, auth-gated)',
                 !!handlers['system:refresh-now']);
+            ok('memory-card handlers registered (round MEM: read + write, auth-gated)',
+                !!handlers['system:memory-read'] && !!handlers['system:memory-write']);
             ok('time-card handlers registered (round T: time read/set + timezone write, auth-gated)',
                 !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
             ok('process-modal handlers registered (round P: procs read open, proc-kill auth-gated, process-control plug)',
@@ -1953,6 +1955,62 @@ function ok(name, cond, extra = '') {
           ok('refresh timer e2e: writing refresh.timer ROUND-TRIPS (the target is refresh.timer, not the legacy refresh.schedule)', rb === 'mon-fri,09:00-17:00', JSON.stringify(rb));
           // clear it again so the rest of the section (hold/refresh-now) sees a clean doc
           await m.refreshTimerWrite('');
+        }
+
+        // ---- round MEM: the MEMORY card (core tmp.size + swap.size) ----
+        // PURE unit tests of the size grammar (mirrors snapd gadget/quantity
+        // SplitUnit @8d4d073: INTEGER + B|M|G, no decimals/%%/K/T) + the
+        // per-option rules (tmp.go validTmpfsSize: 0 or >= 16MiB; swap.go
+        // parseAndValidateSwapSize: integer number of MiB).
+        { const g = (v) => m.memSizeToMiB(v);
+          ok('memory grammar: M/G/bytes parse (512M=512MiB, 1G=1024MiB, 512 bytes = fractional MiB, 0 = 0)',
+              g('512M') === 512 && g('1G') === 1024 && g('512') === 512 / 1048576 && g('0') === 0 && g('16M') === 16);
+          ok('memory grammar: decimals, K, %, spaces, signs, and empty are NOT parseable',
+              g('1.5G') === -1 && g('512K') === -1 && g('50%') === -1 && g(' 512M') === -1 && g('-5M') === -1 && g('') === -1);
+          ok('memory rules: tmp = unset OK, 0 (unlimited) OK, 15M rejected, 16M OK, 1G OK, 1.5G rejected',
+              m.memTmpValid('') === true && m.memTmpValid('0') === true && m.memTmpValid('15M') === false
+              && m.memTmpValid('16M') === true && m.memTmpValid('1G') === true && m.memTmpValid('1.5G') === false);
+          ok('memory rules: swap = unset OK, 0 OK, 512M OK, 1G OK, non-integer-MB bytes rejected, exact-MB bytes OK',
+              m.memSwapValid('') === true && m.memSwapValid('0') === true && m.memSwapValid('512M') === true
+              && m.memSwapValid('1G') === true && m.memSwapValid('1000000') === false && m.memSwapValid('1048576') === true);
+          const md = (d) => m.memFieldFromDoc(d, 'tmp');
+          ok('memory read: the NESTED live shape (snapd stores dotted keys nested)', md({ tmp: { size: '1G' } }) === '1G' && md({ swap: { size: 0 } }) === null);
+          ok('memory read: the flat scalar + literal-dotted shapes are tolerated', md({ tmp: '1G' }) === '1G' && md({ 'tmp.size': '1G' }) === '1G');
+          ok('memory read: absent/null/garbage = unset (null)', md({ system: { hostname: 'x' } }) === null && md(null) === null && md({}) === null && md({ tmp: {} }) === null);
+        }
+        // e2e round-trip through the REAL client bridge (getSnapConfig core +
+        // setSnapConfig -> stub conf PUT 202 + settle): writes land in the
+        // nested core doc, the read resolves them, '' clears, and INVALID
+        // values are rejected BEFORE the bridge (no change, no conf PUT).
+        { const putsBefore = state.confSets.length;
+          let badWrite = null;
+          try { await m.memoryWrite('tmp', '8M'); } catch (e) { badWrite = e; }
+          ok('memory e2e: a sub-16MiB tmp value is rejected BEFORE the bridge (the tmp >= 16M rule)', !!badWrite && /not accepted by snapd/.test(badWrite.message), badWrite && badWrite.message);
+          let badSwap = null;
+          try { await m.memoryWrite('swap', '1.5G'); } catch (e) { badSwap = e; }
+          ok('memory e2e: a decimal swap value is rejected BEFORE the bridge (the integer-MB rule)', !!badSwap && /not accepted by snapd/.test(badSwap.message), badSwap && badSwap.message);
+          let badField = null;
+          try { await m.memoryWrite('bogus', '1G'); } catch (e) { badField = e; }
+          ok('memory e2e: an unknown field is rejected', !!badField && /invalid memory field/.test(badField.message), badField && badField.message);
+          ok('memory e2e: the rejected writes produced NO conf PUT', state.confSets.length === putsBefore, JSON.stringify(state.confSets.length) + ' vs ' + putsBefore);
+          const chgM1 = await m.memoryWrite('tmp', '1G');
+          ok('memory e2e: a valid write returns an async CHANGE id', typeof chgM1.id === 'string', JSON.stringify(chgM1));
+          await new Promise((res) => setTimeout(res, 400)); // the stub conf PUT settles (250ms)
+          const mr1 = await m.memoryRead();
+          ok('memory e2e: tmp.size ROUND-TRIPS (the nested core doc; swap still unset)', mr1.tmp === '1G' && mr1.swap === null, JSON.stringify(mr1));
+          await m.memoryWrite('swap', '2G');
+          await new Promise((res) => setTimeout(res, 400));
+          const mr2 = await m.memoryRead();
+          ok('memory e2e: swap.size round-trips too', mr2.tmp === '1G' && mr2.swap === '2G', JSON.stringify(mr2));
+          await m.memoryWrite('tmp', '');
+          await new Promise((res) => setTimeout(res, 400));
+          const mr3 = await m.memoryRead();
+          ok('memory e2e: the empty string CLEARS the option (read = unset; swap untouched)', mr3.tmp === '' && mr3.swap === '2G', JSON.stringify(mr3));
+          // leave the core doc pristine for the rest of the section
+          await m.memoryWrite('swap', '');
+          await new Promise((res) => setTimeout(res, 400));
+          const mr4 = await m.memoryRead();
+          ok('memory e2e: clearing both returns the pristine unset state', mr4.tmp === '' && mr4.swap === '', JSON.stringify(mr4));
         }
         // ---- the kiosk content-size clamp (round-T-fix bug 3) ----
         // The VM symptom: an external re-layout left the web-contents view stuck
