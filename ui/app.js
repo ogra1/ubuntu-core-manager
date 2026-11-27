@@ -4016,7 +4016,7 @@ async function loadSystem() {
     try { md = await core.machine.memoryRead(); }
     catch (e) { /* snapd unreachable - leave the card at its HTML defaults */ }
     state.mem = md ? { tmp: md.tmp == null ? '' : String(md.tmp), swap: md.swap == null ? '' : String(md.swap) } : { tmp: '', swap: '' };
-    syncMemCard(md || {}, (state.host && state.host.mem) ? state.host.mem.total : null);
+    syncMemCard(md || {});
     // Round T: the TIME card. One IPC reads the LIVE wall clock + timezone +
     // the NTP flag + the bundled zone list (main.js timeRead). The manual
     // set-time rows are gated by the NTP flag (the Network page's "Sync time
@@ -4117,16 +4117,14 @@ function memSetRowErr(field, text) {
     const msg = $(tmp ? '#memTmpMsg' : '#memSwapMsg');
     sysSetFieldErr(c, msg, text);
 }
-function syncMemCard(rd, ramBytes) {
-    const tmpNow = $('#memTmpNow'); const swapNow = $('#memSwapNow');
+function syncMemCard(rd) {
+    // round MEM2: the "current value" display rows are gone (the pickers show
+    // the chosen value), so this only syncs the two pickers + custom inputs
+    // from the read (preset hit -> that option; else Custom carrying the value).
     const tmpSel = $('#memTmpSelect'); const swapSel = $('#memSwapSelect');
-    if (!tmpNow || !swapNow || !tmpSel || !swapSel) return;
+    if (!tmpSel || !swapSel) return;
     const tmpVal = rd.tmp == null ? '' : String(rd.tmp);
     const swapVal = rd.swap == null ? '' : String(rd.swap);
-    tmpNow.textContent = tmpVal === ''
-        ? 'Default (50% of RAM' + (ramBytes ? ' — ' + fmtBytes(Math.floor(ramBytes / 2)) : '') + ')'
-        : (tmpVal === '0' ? 'Unlimited' : memFmtBytes(tmpVal));
-    swapNow.textContent = (swapVal === '' || swapVal === '0') ? 'No swap file' : memFmtBytes(swapVal);
     const pick = (sel, c, val) => {
         const hit = Array.from(sel.options).some((o) => o.value === val);
         if (hit) { sel.value = val; if (c) { c.value = ''; c.hidden = true; } }
@@ -4186,7 +4184,7 @@ async function applyMemory() {
         if (failed) {
             toast('negative', 'Memory size not applied', (failed === 'tmp' ? 'The /tmp size' : 'The swap file size') + ' is unchanged — the previous value is still in effect.');
             const rd = await core.machine.memoryRead().catch(() => null);
-            if (rd) syncMemCard(rd, (state.host && state.host.mem) ? state.host.mem.total : null);
+            if (rd) syncMemCard(rd);
         } else {
             if (tmpChanged) toast('positive', 'tmp size updated', t.value === '' ? '/tmp is back to the default (half of RAM).' : (t.value === '0' ? '/tmp is now unlimited.' : '/tmp is now limited to ' + memFmtBytes(t.value) + '.'));
             if (swapChanged) toast('positive', 'swap size updated', (sw.value === '' || sw.value === '0') ? 'No swap file (the option is unset).' : 'A ' + memFmtBytes(sw.value) + ' swap file is now active.');
@@ -4198,7 +4196,7 @@ async function applyMemory() {
             // + the pickers): a success re-reads so the display is the truth
             // snapd actually stored (a write that settled Done == persisted).
             const rd2 = await core.machine.memoryRead().catch(() => null);
-            syncMemCard(rd2 || state.mem, (state.host && state.host.mem) ? state.host.mem.total : null);
+            syncMemCard(rd2 || state.mem);
         }
     } catch (e) { toastErr(e); }
     finally {

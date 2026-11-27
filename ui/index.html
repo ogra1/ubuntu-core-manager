@@ -599,24 +599,15 @@
                     <div class="p-card ucm-sys">
                         <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Memory</p></div>
                         <div class="ucm-sys__body">
+                            <!-- round MEM2: the two "current value" display rows
+                                 (tmp size / swap size) + their separator were
+                                 removed — the pickers permanently show the
+                                 chosen value, so the rows only restated it. -->
                             <p class="ucm-lp__help">
-                                The size of /tmp (a tmpfs mount — unset means half of the device's RAM) and the optional swap file
+                                Adjust the size of the temporary ram-disk used for /tmp and define swap memory
                             </p>
-                            <div class="ucm-sys__kvrow">
-                                <dt>tmp size</dt>
-                                <dd>
-                                    <span id="memTmpNow" class="ucm-sys__now">Default (50% of RAM)</span>
-                                </dd>
-                            </div>
-                            <div class="ucm-sys__kvrow">
-                                <dt>swap size</dt>
-                                <dd>
-                                    <span id="memSwapNow" class="ucm-sys__now">No swap file</span>
-                                </dd>
-                            </div>
-                            <div class="ucm-sys__sep" role="separator"></div>
                             <div class="ucm-sys__row ucm-sys__formrow">
-                                <label class="p-form__label" for="memTmpSelect">tmp size</label>
+                                <label class="p-form__label" for="memTmpSelect">Temporary storage (/tmp)</label>
                                 <div class="ucm-sys__pickrow">
                                     <select id="memTmpSelect" class="ucm-kv--select"
                                             title="The maximum size of the /tmp tmpfs mount. Default = half of the device's RAM (the tmpfs default).">
@@ -635,7 +626,7 @@
                                 <p class="p-form-validation__message" id="memTmpMsg"></p>
                             </div>
                             <div class="ucm-sys__row ucm-sys__formrow">
-                                <label class="p-form__label" for="memSwapSelect">swap size</label>
+                                <label class="p-form__label" for="memSwapSelect">Swap memory</label>
                                 <div class="ucm-sys__pickrow">
                                     <select id="memSwapSelect" class="ucm-kv--select"
                                             title="The snapd-managed swap file. No swap = the option is unset (a fresh device ships no swap file).">
