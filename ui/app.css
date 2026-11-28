@@ -921,6 +921,24 @@ html, body {
 .ucm-modal__body { padding: 1.4rem 1.6rem 1.6rem; max-height: calc(100vh - 9rem); overflow-y: auto; }
 .ucm-modal__body .p-form__group { margin-bottom: 1rem; }
 .ucm-modal__body .p-button--brand { min-width: 8rem; }
+/* round RCV-UI: the FACTORY-RESET modal was visually unbalanced (the 52rem
+card default leaves a wide empty right half with the two radios stacked on
+the left). Narrow the card so the text wraps, put the YES/NO radios in a
+ROW (a balanced 2-column grid), and restyle the action row in CSS (moved
+from inline). Everything is scoped to .ucm-modal--factoryreset — no other
+modal changes. (The disabled Confirm stays the vanilla-framework negative
+grey: .p-button--negative:disabled out-specifies the modal-scoped tint.) */
+.ucm-modal--factoryreset .ucm-modal__card { max-width: 34rem; }
+.ucm-factoryreset__radios {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: .35rem 1.4rem; margin: .35rem 0 0;
+}
+.ucm-factoryreset__actions {
+    display: flex; align-items: center; justify-content: flex-start;
+    gap: .75rem; margin-top: 1.25rem;
+}
+.ucm-factoryreset__actions .p-button { min-width: 9rem; }
+.ucm-factoryreset__actions .p-button--negative:not(:disabled) { background: #c7162b; }
 
 /* Session-countdown pill icon: the SURU clock (actions category) shipped from
    build/images/suru-clock.svg (see that file's header for provenance/license).

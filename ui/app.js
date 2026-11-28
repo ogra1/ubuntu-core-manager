@@ -4437,7 +4437,9 @@ function openFactoryResetModal() {
         el('span', { class: 'p-radio__label', text: label }));
     radioRow.append(mkRadio('no', 'No — keep the system as it is', true), mkRadio('yes', 'Yes — factory reset the device'));
     body.append(radioRow);
-    const actions = el('div', { class: 'ucm-factoryreset__actions', style: 'display:flex; gap:.75rem; margin-top:1.25rem;' });
+    // the action row is styled in app.css (.ucm-factoryreset__actions, round
+    // RCV-UI: 34rem card + radios in a row + left-aligned confirm/cancel).
+    const actions = el('div', { class: 'ucm-factoryreset__actions' });
     const cancelBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
     cancelBtn.onclick = () => closeModal();
     const confirmBtn = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Factory reset', disabled: true });

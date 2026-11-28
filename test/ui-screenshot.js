@@ -8850,6 +8850,10 @@ function mockFactoryJs() {
             yesChecked: yes ? yes.checked : null,
             confirmDisabled: confirm ? confirm.disabled : null,
             confirmText: confirm ? confirm.textContent : null,
+            cardW: modal && modal.querySelector('.ucm-modal__card') ? Math.round(modal.querySelector('.ucm-modal__card').getBoundingClientRect().width) : null,
+            radioTop: (() => { const n = document.querySelector('#factoryResetNo'); const y = document.querySelector('#factoryResetYes'); return n && y ? Math.abs(n.getBoundingClientRect().top - y.getBoundingClientRect().top) < 3 : null; })(),
+            radioCols: (() => { const n = document.querySelector('#factoryResetNo'); const y = document.querySelector('#factoryResetYes'); return n && y ? y.getBoundingClientRect().left > n.getBoundingClientRect().right : null; })(),
+            actionsRow: (() => { const a = modal ? Array.from(modal.querySelectorAll('.ucm-factoryreset__actions .p-button')) : []; return a.length === 2 ? Math.abs(a[0].getBoundingClientRect().top - a[1].getBoundingClientRect().top) < 3 : null; })(),
         };
     });
     if (!rcB.modal) console.log('PAGE ERROR: Factory reset must open a modal (round RCV)');
@@ -8857,6 +8861,14 @@ function mockFactoryJs() {
     if (rcB.noChecked !== true || rcB.yesChecked !== false) console.log('PAGE ERROR: "No" must be the default radio selection (got no=' + JSON.stringify(rcB.noChecked) + ' yes=' + JSON.stringify(rcB.yesChecked) + ') (round RCV)');
     if (rcB.confirmDisabled !== true) console.log('PAGE ERROR: the Confirm button must be DISABLED until "Yes" is selected (got ' + JSON.stringify(rcB.confirmDisabled) + ') (round RCV)');
     if (rcB.confirmText !== 'Factory reset') console.log('PAGE ERROR: the confirm button text is wrong (got ' + JSON.stringify(rcB.confirmText) + ') (round RCV)');
+    // round RCV-UI: the modal is BALANCED — a 34rem card (not the 52rem
+    // default: at 16px root 34rem=544px < 576px), the YES/NO radios share
+    // ONE row (No left, Yes right), and the two action buttons share a row.
+    if (!(rcB.cardW != null && rcB.cardW <= 576 && rcB.cardW > 0)) console.log('PAGE ERROR: the factory-reset card must be the narrow 34rem width (got ' + JSON.stringify(rcB.cardW) + 'px) (round RCV-UI)');
+    if (rcB.radioTop !== true) console.log('PAGE ERROR: the factory-reset radios must sit in a ROW (No and Yes on the same line) (round RCV-UI)');
+    if (rcB.radioCols !== true) console.log('PAGE ERROR: Yes must be the right column (No left, Yes right) (round RCV-UI)');
+    if (rcB.actionsRow !== true) console.log('PAGE ERROR: the factory-reset action buttons must share a row (round RCV-UI)');
+    await page.screenshot({ path: path.join(SHOTS, '3r-factoryreset-modal.png'), fullPage: true });
     // a stray CONFIRM click with "No" selected must do NOTHING (no write, no
     // overlay) — the radios are the gate.
     await page.evaluate(() => {
