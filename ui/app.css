@@ -926,9 +926,14 @@ card default leaves a wide empty right half with the two radios stacked on
 the left). Narrow the card so the text wraps, put the YES/NO radios in a
 ROW (a balanced 2-column grid), and restyle the action row in CSS (moved
 from inline). Everything is scoped to .ucm-modal--factoryreset — no other
-modal changes. (The disabled Confirm stays the vanilla-framework negative
+modal changes. WIDTH is measured, not guessed: at the app font (Ubuntu
+16px) the longer radio label 'Yes — factory reset the device' needs 250px
+single-line + the 16px input + gap + the 22.4px column gap + 51.2px body
+padding -> the SMALLEST card where BOTH labels fit one line is 573px
+(35.8rem); 37rem (592px) is the next clean rem step with ~9px slack.
+34rem (544px) wraps the last word of each label. (The disabled Confirm stays the vanilla-framework negative
 grey: .p-button--negative:disabled out-specifies the modal-scoped tint.) */
-.ucm-modal--factoryreset .ucm-modal__card { max-width: 34rem; }
+.ucm-modal--factoryreset .ucm-modal__card { max-width: 37rem; }
 .ucm-factoryreset__radios {
     display: grid; grid-template-columns: 1fr 1fr;
     gap: .35rem 1.4rem; margin: .35rem 0 0;
