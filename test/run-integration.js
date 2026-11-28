@@ -2065,7 +2065,9 @@ function ok(name, cond, extra = '') {
           try { await m.recoveryBoot('run'); } catch (e) { badMode = e; }
           ok('recovery: an unoffered mode is rejected BEFORE the request', !!badMode && /invalid recovery mode/.test(badMode.message), badMode && badMode.message);
         }
-        // e2e through the REAL client (snapdRequest POST /v2/systems/) + the
+        // e2e through the REAL client (snapdRequest POST /v2/systems, NO trailing
+        // slash -- the daemon 404s the slashed form; the CLI's raw() path.Join
+        // cleans its own) + the
         // stub: the EXACT wire format the snap CLI sends ({action:'reboot',
         // mode}) for each mode, the { started } result, and the pristine end.
         { const before = (state.systemsPosts || []).length;
@@ -2080,6 +2082,17 @@ function ok(name, cond, extra = '') {
               fpost && fpost.action === 'reboot' && fpost.mode === 'factory-reset', JSON.stringify(fpost));
           ok('recovery e2e: exactly the two requested reboots were sent (no extras)',
               (state.systemsPosts || []).length === before + 2, JSON.stringify((state.systemsPosts || []).length));
+          // round RCVfix: the trailing-slash path form is REJECTED by the stub the
+          // way the real daemon rejects it (generic 404 'not found' -> SnapdError
+          // -> rethrown, never swallowed as 'started'). Guards the live-bug fix.
+          let slash404 = null;
+          try {
+              await m.snapdRequest('POST', '/v2/systems/', { body: { action: 'reboot', mode: 'bogus' }, auth: m.A(), timeout: 3000 });
+          } catch (e) { slash404 = e; }
+          ok('recovery e2e guard: POST /v2/systems/ (trailing slash) 404s as a SnapdError (the device behavior)',
+              !!slash404 && slash404.name === 'SnapdError' && /not found/.test(slash404.message), slash404 && (slash404.name + ': ' + slash404.message));
+          ok('recovery e2e guard: the rejected slashed request was NOT recorded as a reboot',
+              (state.systemsPosts || []).length === before + 2);
         }
         // ---- the kiosk content-size clamp (round-T-fix bug 3) ----
         // The VM symptom: an external re-layout left the web-contents view stuck

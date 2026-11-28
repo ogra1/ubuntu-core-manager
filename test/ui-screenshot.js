@@ -1369,7 +1369,8 @@ function mockFactoryJs() {
                     // round RCV: the Recovery card (the snap-reboot
                     // frontend). MODELS the real path: the app calls
                     // core.machine.recovery(mode) -> main.js recoveryBoot ->
-                    // POST /v2/systems/ {action:'reboot', mode}. The mock
+                    // POST /v2/systems {action:'reboot', mode} (no trailing slash -
+                    // the daemon 404s the slashed form). The mock
                     // records the mode (so the suite can assert the EXACT
                     // requested mode + that the destructive one only fires
                     // after an explicit "Yes") and resolves { started: true }

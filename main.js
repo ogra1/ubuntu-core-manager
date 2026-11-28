@@ -2376,7 +2376,7 @@ async function journalWrite(value) {
 /* ---- 2e. RECOVERY card (round RCV: the `snap reboot` frontend) ----
    snapd (cmd/snapd/cli/cmd_reboot.go + client/systems.go @8d4d073,
    source-verified): `snap reboot [--recover|--factory-reset]` calls
-   RebootToSystem(systemLabel='', mode) -> POST /v2/systems/ with the JSON
+   RebootToSystem(systemLabel='', mode) -> POST /v2/systems (no trailing
    body { action:'reboot', mode } (Content-Type application/json). The daemon
    (daemon/api_systems.go postSystemActionReboot) routes action 'reboot' to
    DeviceManager.Reboot(label, mode): an empty label selects the DEFAULT
@@ -2403,7 +2403,13 @@ const RECOVERY_MODES = ['recover', 'factory-reset'];
 async function recoveryBoot(mode) {
     if (!RECOVERY_MODES.includes(mode)) throw new Error('invalid recovery mode: ' + JSON.stringify(mode));
     try {
-        await snapdRequest('POST', '/v2/systems/', { body: { action: 'reboot', mode }, auth: A(), timeout: SOCKET_TIMEOUT_MS });
+        // WIRE PATH: '/v2/systems' with NO trailing slash. The CLI builds
+        // '/v2/systems/'+label (label=='' -> '/v2/systems/') but its raw() path.Join
+        // CLEANS the trailing slash, so the CLI's actual on-the-wire path is
+        // '/v2/systems' -- and the daemon's router (gorilla/mux, no StrictSlash)
+        // 404s the trailing-slash form. Sending it verbatim was the live 'not
+        // found' bug (measured: mux repro + device 404; both CLI actions work).
+        await snapdRequest('POST', '/v2/systems', { body: { action: 'reboot', mode }, auth: A(), timeout: SOCKET_TIMEOUT_MS });
         return true;
     } catch (e) {
         // A snapd ERROR RESPONSE (SnapdError: bad mode, degraded, ...) or a
@@ -3099,6 +3105,9 @@ const api = {
     memFieldFromDoc, memoryRead, memoryWrite, memSizeToMiB, memTmpValid, memSwapValid,
     journalFieldFromDoc, journalRead, journalWrite,
     RECOVERY_MODES, recoveryBoot,
+    // round RCVfix: exported so the integration e2e can drive the RAW wire
+    // path (a trailing-slash POST /v2/systems/ must 404 like the daemon).
+    snapdRequest, A,
     refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,

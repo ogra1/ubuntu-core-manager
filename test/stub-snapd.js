@@ -480,14 +480,23 @@ function makeServer(socketPath, state) {
             }
 
             // ---- snap conf (system config incl. netplan) ----------------------
-            // round RCV: the `snap reboot` frontend (POST /v2/systems[/]).
+            // round RCV: the `snap reboot` frontend (POST /v2/systems).
             // LIVE contract (round RCV probe of the real daemon): action
             // 'reboot' is a SYNC 200 (SyncResponse, no change id) — the device
             // reboots almost immediately after. The stub records the
             // {action, mode} body so the integration suite can assert the
             // EXACT wire format, then answers 200 {} (no settle: the daemon
             // has already scheduled the restart when it answers).
-            if (p === '/v2/systems' || p === '/v2/systems/') {
+            // PATH HONESTY (device-verified): the daemon's router (gorilla/mux,
+            // no StrictSlash) serves the base route '/v2/systems' and 404s the
+            // trailing-slash form '/v2/systems/' (the live app bug: the CLI is
+            // unaffected because its raw() path.Join cleans the slash). A request
+            // for the slashed form therefore gets the daemon's generic 404
+            // 'not found' envelope BEFORE any action parsing.
+            if (p === '/v2/systems/') {
+                return json(res, 404, { kind: 'not-found', message: 'not found' });
+            }
+            if (p === '/v2/systems') {
                 if (req.method !== 'POST') {
                     return json(res, 405, { kind: 'method-undefined', message: `unsupported method ${req.method}` });
                 }
