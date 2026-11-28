@@ -170,10 +170,10 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     // ---- round L: the SYSTEM page (the REAL journal + the REAL login1
     // read). READ-ONLY: the probe never triggers a power action.
     const sy = p.sys || {};
-    ok('the system page shows its 6 cards in the real app (nav + loaders wired)',
+    ok('the system page shows its 7 cards in the real app (nav + loaders wired)',
         sy.ok === true && sy.sy && sy.sy.viewActive === true
-        && JSON.stringify(sy.sy.cards) === JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power']),
-        JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.sy.error));
+        && JSON.stringify(sy.sy.cards) === JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power', 'Recovery']),
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.cards) : sy.error));
     // round MEM: the REAL memory READ (core tmp.size + swap.size through real
     // main.js + the real stub socket; a fresh stub core doc carries neither ->
     // both null = the default state: 50% of RAM / no swap file) + the real
@@ -195,7 +195,7 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'ucm-e2e-'));
     ok('the REAL journal persistence read returns the volatile default (fresh core doc)',
         sy.ok === true && sy.sy && sy.sy.journalPersistent && !sy.sy.journalPersistent.error
         && sy.sy.journalPersistent.persistent === false,
-        JSON.stringify(sy.ok ? (sy.sy && sy.sy.journalPersistent) : sy.sy.error));
+        JSON.stringify(sy.ok ? (sy.sy && sy.sy.journalPersistent) : sy.error));
     ok('the Journal card shows the persistence toggle (unchecked, "Volatile" on a fresh core)',
         sy.ok === true && sy.sy && sy.sy.jrnCard && sy.sy.jrnCard.present === true
         && sy.sy.jrnCard.checked === false && sy.sy.jrnCard.state === 'Volatile',

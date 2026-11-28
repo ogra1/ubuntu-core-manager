@@ -762,6 +762,28 @@
                             </div>
                         </div>
                     </div>
+                    <!-- round RCV: the RECOVERY card (the `snap reboot`
+                         frontend, the last System card). 'Boot into recovery'
+                         = snap reboot --recover (the house page-level confirm,
+                         like the power actions); 'Factory reset…' =
+                         snap reboot --factory-reset (DESTRUCTIVE: the
+                         yes/no-radio modal, the Confirm stays disabled until
+                         "Yes" is selected). -->
+                    <div class="p-card ucm-sys">
+                        <div class="p-card__header"><p class="p-heading--5" style="margin:0;">Recovery</p></div>
+                        <div class="ucm-sys__body">
+                            <p class="ucm-lp__help">
+                                Reboot into recovery mode to repair or inspect the system, or factory reset to restore it to a pristine state
+                            </p>
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button ucm-sys__btn" type="button" id="recoveryBootBtn">Boot into recovery</button>
+                            </div>
+                            <div class="ucm-sys__sep" role="separator"></div>
+                            <div class="ucm-sys__row ucm-sys__actions">
+                                <button class="p-button--negative ucm-sys__btn" type="button" id="factoryResetBtn">Factory reset…</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -779,6 +801,18 @@
         <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>
         <p class="p-heading--5">Applying keyboard layout&#8230;</p>
         <p class="ucm-keymap-restart__note">The console is restarting &#8212; it will reopen automatically.</p>
+    </div>
+</div>
+
+<!-- round RCV: the RECOVERY/FACTORY-RESET overlay. Full-screen,
+     NON-interactive, like the keymap-restart overlay: the user is told what is
+     happening and the device reboots moments later (the app dies a moment
+     after; for a factory reset it returns as a fresh device). -->
+<div id="recoveryRestart" class="ucm-keymap-restart ucm-hidden" role="alert" aria-live="assertive">
+    <div class="ucm-keymap-restart__card">
+        <i class="p-icon--spinner u-animation--spin" aria-hidden="true"></i>
+        <p class="p-heading--5" id="recoveryRestartTitle">Rebooting into recovery mode…</p>
+        <p class="ucm-keymap-restart__note" id="recoveryRestartNote">The system is restarting — it will come back into recovery mode in a moment.</p>
     </div>
 </div>
 

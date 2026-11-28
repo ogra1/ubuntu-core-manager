@@ -236,6 +236,10 @@ const api = Object.freeze({
         // ON->OFF actually tears the dir down).
         journalPersistentRead: invoke('system:journal-persistent-read'), // -> { persistent }
         journalPersistentWrite: invoke('system:journal-persistent-write'), // (value) -> async snapd change
+        // Round RCV: the Recovery card (the `snap reboot` frontend).
+        // (mode 'recover'|'factory-reset') -> { started } — the device reboots
+        // almost immediately after the call is accepted.
+        recovery: invoke('system:recovery'),
         // Round T: the Time card. timeRead = the LIVE wall clock +
         // timezone + NTP flag + the bundled zone list; timeSet is the
         // gated manual set (time-control plug, SetTime xbb); timeZoneWrite

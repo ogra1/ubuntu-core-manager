@@ -1366,6 +1366,20 @@ function mockFactoryJs() {
                         __m.journalWrites.push(value);
                         return await core.snaps.confSet('core', { 'journal.persistent': value });
                     },
+                    // round RCV: the Recovery card (the snap-reboot
+                    // frontend). MODELS the real path: the app calls
+                    // core.machine.recovery(mode) -> main.js recoveryBoot ->
+                    // POST /v2/systems/ {action:'reboot', mode}. The mock
+                    // records the mode (so the suite can assert the EXACT
+                    // requested mode + that the destructive one only fires
+                    // after an explicit "Yes") and resolves { started: true }
+                    // (the sync-200 / device-going-down semantics — a real
+                    // reboot is of course never simulated).
+                    async recovery(mode) {
+                        __m.recoveryCalls = __m.recoveryCalls || [];
+                        __m.recoveryCalls.push(mode);
+                        return { started: true };
+                    },
                     // round P: procs returns the LIVE canned list (a deep copy -
                     // the real main reads /proc fresh every poll); kill records
                     // the call AND removes the pid (so the next re-poll no longer
@@ -7358,8 +7372,8 @@ function mockFactoryJs() {
         console.log('PAGE ERROR: the fixed nav order is wrong / System is not directly below Settings (got ' + JSON.stringify(gS.navLinks) + ') (round L)');
     if (gS.navLinks.indexOf('system') !== 5)
         console.log('PAGE ERROR: System must be the 6th (last fixed) nav item (got ' + gS.navLinks.indexOf('system') + ') (round L)');
-    if (JSON.stringify(gS.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power']))
-        console.log('PAGE ERROR: the system page must show exactly the 6 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard; round MEM inserts Memory between the refresh schedule and Time)');
+    if (JSON.stringify(gS.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power', 'Recovery']))
+        console.log('PAGE ERROR: the system page must show exactly the 7 cards in order (got ' + JSON.stringify(gS.cards) + ') (round L; round T inserts Time; round T-KM4 inserts Keyboard; round MEM inserts Memory between the refresh schedule and Time; round RCV appends Recovery)');
     // round T: the refresh card examples are a TABLE now (the old wall of text
     // is gone): pin the structure + the exact 5 Option/Result rows (each row
     // verified against snapd ParseSchedule V2, timeutil/schedule.go).
@@ -7389,7 +7403,7 @@ function mockFactoryJs() {
     // can't regress). round T: the Time card adds a 4th help text. round T-KM4
     // adds the Keyboard 5th. round MEM adds the Memory 6th (the indices below
     // are the CURRENT order: journal, refresh, Memory, Time, Keyboard, power).
-    if (gS.helps && gS.helps.length === 6) {
+    if (gS.helps && gS.helps.length === 7) {
         if (gS.helps[0] !== 'The latest entries are shown; filter by unit or text and raise the minimum priority.')
             console.log('PAGE ERROR: the journal card help must drop the journalctl/log-observe sentence (got ' + JSON.stringify(gS.helps[0]) + ') (round R)');
         if (gS.helps[1] !== 'Schedule examples:')
@@ -7402,8 +7416,10 @@ function mockFactoryJs() {
             console.log('PAGE ERROR: the Keyboard card help must read the round T-KM4 subtitle (got ' + JSON.stringify(gS.helps[4]) + ') (round T-KM4)');
         if (gS.helps[5] !== 'Reboot or shut the system down now, or schedule it for later (logins are blocked from 5 minutes before).')
             console.log('PAGE ERROR: the power card help must drop the logind/survives-app-restart clause (got ' + JSON.stringify(gS.helps[5]) + ') (round R)');
+        if (gS.helps[6] !== 'Reboot into recovery mode to repair or inspect the system, or factory reset to restore it to a pristine state')
+            console.log('PAGE ERROR: the Recovery card help must read the round RCV subtitle (got ' + JSON.stringify(gS.helps[6]) + ') (round RCV)');
     } else {
-        console.log('PAGE ERROR: the system page must show 6 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds Time; round T-KM4 adds Keyboard; round MEM adds Memory)');
+        console.log('PAGE ERROR: the system page must show 7 card help texts (got ' + (gS.helps ? gS.helps.length : 'none') + ') (round R; round T adds Time; round T-KM4 adds Keyboard; round MEM adds Memory; round RCV adds Recovery)');
     }
     // round S+3: the refresh card rows must be ordered  Pause-toggle < separator <
     // Refresh-now  (the user asked to SWAP the toggle above the button and add a
@@ -8536,8 +8552,8 @@ function mockFactoryJs() {
         mock: window.__mockCore.keymaps.__km(),
       };
     });
-    if (JSON.stringify(k0.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power']))
-        console.log('PAGE ERROR: T-KM4 - the System card ORDER must be journal, refresh, Memory, Time, Keyboard, power (got ' + JSON.stringify(k0.cards) + ') (round MEM reorders)');
+    if (JSON.stringify(k0.cards) !== JSON.stringify(['Journal', 'Snap refresh schedule', 'Memory', 'Time', 'Keyboard layout', 'Power', 'Recovery']))
+        console.log('PAGE ERROR: T-KM4 - the System card ORDER must be journal, refresh, Memory, Time, Keyboard, power, Recovery (got ' + JSON.stringify(k0.cards) + ') (round MEM reorders; round RCV appends Recovery)');
     if (k0.opts !== 5) console.log('PAGE ERROR: T-KM4 - the picker must be fed with the mock list (5 entries; got ' + k0.opts + ')');
     if (k0.value !== 'de') console.log('PAGE ERROR: T-KM4 - the picker must default to the applied layout (de; got ' + k0.value + ')');
     if (!k0.btnPresent || k0.btnDisabled !== false) console.log('PAGE ERROR: T-KM4 - the Apply button must be present + enabled once the picker settles (got ' + JSON.stringify(k0) + ')');
@@ -8752,6 +8768,147 @@ function mockFactoryJs() {
     if (p4.visible !== false) console.log('PAGE ERROR: cancelling must hide the scheduled row (round L)');
     const schedCall = p4.calls ? p4.calls.filter((c) => String(c).startsWith('schedule:')) : [];
     if (schedCall.length !== 1 || schedCall[0] !== 'schedule:poweroff') console.log('PAGE ERROR: the schedule must send the chosen action (got ' + JSON.stringify(p4.calls) + ') (round L)');
+
+    // ---- 5s-rcv: round RCV — the RECOVERY card (the `snap reboot` frontend) ----
+    // Runs on the system view in the authenticated LIGHT state (after 5s-p).
+    // Leaves state pristine: the two actions are confirm-gated, and the test
+    // fires each ONCE through the real write path (the mock records the mode;
+    // no real reboot is ever simulated). The full-screen overlay must show
+    // after each fired action and be cleared before leaving the view.
+    const rc0 = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll('#view-system .p-card .p-heading--5')).map((h) => h.textContent.trim());
+        const help = Array.from(document.querySelectorAll('#view-system .ucm-lp__help')).map((x) => x.textContent.replace(/\s+/g, ' ').trim());
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        return {
+            cards,
+            recoveryLast: cards[cards.length - 1] === 'Recovery',
+            help: help[help.length - 1],
+            bootBtn: (document.querySelector('#recoveryBootBtn') || {}).textContent || null,
+            factoryBtn: (document.querySelector('#factoryResetBtn') || {}).textContent || null,
+            calls: m && m.recoveryCalls ? m.recoveryCalls.slice() : [],
+        };
+    });
+    if (rc0.cards.length !== 7 || rc0.recoveryLast !== true) console.log('PAGE ERROR: the Recovery card must be the 7th (last) System card (got ' + JSON.stringify(rc0.cards) + ') (round RCV)');
+    if (rc0.help !== 'Reboot into recovery mode to repair or inspect the system, or factory reset to restore it to a pristine state') console.log('PAGE ERROR: the Recovery subtitle is wrong (got ' + JSON.stringify(rc0.help) + ') (round RCV)');
+    if (rc0.bootBtn !== 'Boot into recovery' || rc0.factoryBtn !== 'Factory reset…') console.log('PAGE ERROR: the Recovery card buttons are wrong (got ' + JSON.stringify([rc0.bootBtn, rc0.factoryBtn]) + ') (round RCV)');
+    if (rc0.calls.length !== 0) console.log('PAGE ERROR: no recovery action must have fired yet (got ' + JSON.stringify(rc0.calls) + ') (round RCV)');
+
+    // (a) 'Boot into recovery' -> the house PAGE confirm (NOT a modal) with the
+    //     recovery verb + Cancel. Confirming fires the recover mode.
+    await page.click('#recoveryBootBtn');
+    await new Promise((r) => setTimeout(r, 200));
+    const rcA = await page.evaluate(() => {
+        const box = document.querySelector('#view-system .col-12 .ucm-confirm');
+        const btns = box ? Array.from(box.querySelectorAll('button')).map((b) => b.textContent) : null;
+        const msg = box ? (box.querySelector('.ucm-confirm__msg') || {}).textContent : null;
+        return { present: !!box, btns, msg };
+    });
+    if (!rcA.present) console.log('PAGE ERROR: Boot into recovery must open a page confirm (round RCV)');
+    if (JSON.stringify(rcA.btns) !== JSON.stringify(['Reboot to recovery?', 'Cancel'])) console.log('PAGE ERROR: the recovery confirm buttons must be the static verbs (got ' + JSON.stringify(rcA.btns) + ') (round RCV)');
+    if (rcA.msg !== 'Reboot the system into recovery mode now?') console.log('PAGE ERROR: the recovery confirm message is wrong (got ' + JSON.stringify(rcA.msg) + ') (round RCV)');
+    // CONFIRM it.
+    await page.evaluate(() => {
+        const box = document.querySelector('#view-system .col-12 .ucm-confirm');
+        box.querySelector('.p-button--negative').click();
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const rcA2 = await page.evaluate(() => {
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        const overlay = document.querySelector('#recoveryRestart');
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        return {
+            calls: m && m.recoveryCalls ? m.recoveryCalls.slice() : [],
+            overlayShown: overlay ? !overlay.classList.contains('ucm-hidden') : null,
+            overlayTitle: (document.querySelector('#recoveryRestartTitle') || {}).textContent || null,
+            confirmGone: !document.querySelector('#view-system .col-12 .ucm-confirm'),
+            toasts,
+        };
+    });
+    if (JSON.stringify(rcA2.calls) !== JSON.stringify(['recover'])) console.log('PAGE ERROR: confirming must fire the recover mode exactly once (got ' + JSON.stringify(rcA2.calls) + ') (round RCV)');
+    if (rcA2.overlayShown !== true) console.log('PAGE ERROR: the recovery overlay must show after a started reboot (round RCV)');
+    if (rcA2.overlayTitle !== 'Rebooting into recovery mode…') console.log('PAGE ERROR: the recovery overlay title is wrong (got ' + JSON.stringify(rcA2.overlayTitle) + ') (round RCV)');
+    if (!rcA2.toasts.includes('Reboot to recovery started')) console.log('PAGE ERROR: the recovery confirm must toast (got ' + JSON.stringify(rcA2.toasts) + ') (round RCV)');
+    if (!rcA2.confirmGone) console.log('PAGE ERROR: the recovery confirm must close after the action (round RCV)');
+    // hide the overlay again (the test continues; a real device would reboot).
+    await page.evaluate(() => { document.querySelector('#recoveryRestart').classList.add('ucm-hidden'); });
+
+    // (b) 'Factory reset…' -> the YES/NO-RADIO MODAL. "No" is the default +
+    //     the Confirm button is DISABLED until "Yes" is explicitly selected
+    //     (the user's explicit-confirmation requirement).
+    await page.click('#factoryResetBtn');
+    await new Promise((r) => setTimeout(r, 200));
+    const rcB = await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal--factoryreset');
+        const no = document.querySelector('#factoryResetNo');
+        const yes = document.querySelector('#factoryResetYes');
+        const confirm = modal ? modal.querySelector('.p-button--negative') : null;
+        return {
+            modal: !!modal,
+            title: modal ? ((modal.querySelector('.ucm-modal__head .p-heading--5') || {}).textContent || '').trim() : null,
+            noChecked: no ? no.checked : null,
+            yesChecked: yes ? yes.checked : null,
+            confirmDisabled: confirm ? confirm.disabled : null,
+            confirmText: confirm ? confirm.textContent : null,
+        };
+    });
+    if (!rcB.modal) console.log('PAGE ERROR: Factory reset must open a modal (round RCV)');
+    if (rcB.title !== 'Factory reset') console.log('PAGE ERROR: the factory-reset modal title is wrong (got ' + JSON.stringify(rcB.title) + ') (round RCV)');
+    if (rcB.noChecked !== true || rcB.yesChecked !== false) console.log('PAGE ERROR: "No" must be the default radio selection (got no=' + JSON.stringify(rcB.noChecked) + ' yes=' + JSON.stringify(rcB.yesChecked) + ') (round RCV)');
+    if (rcB.confirmDisabled !== true) console.log('PAGE ERROR: the Confirm button must be DISABLED until "Yes" is selected (got ' + JSON.stringify(rcB.confirmDisabled) + ') (round RCV)');
+    if (rcB.confirmText !== 'Factory reset') console.log('PAGE ERROR: the confirm button text is wrong (got ' + JSON.stringify(rcB.confirmText) + ') (round RCV)');
+    // a stray CONFIRM click with "No" selected must do NOTHING (no write, no
+    // overlay) — the radios are the gate.
+    await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal--factoryreset');
+        modal.querySelector('.p-button--negative').click();
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const rcB1 = await page.evaluate(() => {
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        const overlay = document.querySelector('#recoveryRestart');
+        return { calls: m && m.recoveryCalls ? m.recoveryCalls.slice() : [], overlayShown: overlay ? !overlay.classList.contains('ucm-hidden') : null, modalStill: !!document.querySelector('.ucm-modal--factoryreset') };
+    });
+    if (JSON.stringify(rcB1.calls) !== JSON.stringify(['recover'])) console.log('PAGE ERROR: a Confirm with "No" selected must NOT fire (got ' + JSON.stringify(rcB1.calls) + ') (round RCV)');
+    if (rcB1.overlayShown !== false) console.log('PAGE ERROR: a "No" confirm must NOT show the overlay (round RCV)');
+    if (rcB1.modalStill !== true) console.log('PAGE ERROR: a "No" confirm must leave the modal open (got ' + JSON.stringify(rcB1.modalStill) + ') (round RCV)');
+    // SELECT "Yes" -> the Confirm ENABLES.
+    await page.evaluate(() => {
+        const yes = document.querySelector('#factoryResetYes');
+        yes.checked = true;
+        yes.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    const rcB2 = await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal--factoryreset');
+        const confirm = modal ? modal.querySelector('.p-button--negative') : null;
+        return { confirmDisabled: confirm ? confirm.disabled : null };
+    });
+    if (rcB2.confirmDisabled !== false) console.log('PAGE ERROR: selecting "Yes" must ENABLE the Confirm button (got ' + JSON.stringify(rcB2.confirmDisabled) + ') (round RCV)');
+    // CONFIRM with "Yes" -> the factory-reset mode fires + the factory overlay.
+    await page.evaluate(() => {
+        const modal = document.querySelector('.ucm-modal--factoryreset');
+        modal.querySelector('.p-button--negative').click();
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const rcB3 = await page.evaluate(() => {
+        const m = window.__mockCore && window.__mockCore.machine && window.__mockCore.machine.__machine ? window.__mockCore.machine.__machine() : null;
+        const overlay = document.querySelector('#recoveryRestart');
+        const toasts = Array.from(document.querySelectorAll('.ucm-toasts .p-notification')).map((t) => ((t.querySelector('.p-notification__title') || {}).textContent || ''));
+        return {
+            calls: m && m.recoveryCalls ? m.recoveryCalls.slice() : [],
+            overlayShown: overlay ? !overlay.classList.contains('ucm-hidden') : null,
+            overlayTitle: (document.querySelector('#recoveryRestartTitle') || {}).textContent || null,
+            modalGone: !document.querySelector('.ucm-modal--factoryreset'),
+            toasts,
+        };
+    });
+    if (JSON.stringify(rcB3.calls) !== JSON.stringify(['recover', 'factory-reset'])) console.log('PAGE ERROR: confirming "Yes" must fire the factory-reset mode (got ' + JSON.stringify(rcB3.calls) + ') (round RCV)');
+    if (rcB3.overlayShown !== true) console.log('PAGE ERROR: the factory-reset overlay must show after a started reset (round RCV)');
+    if (rcB3.overlayTitle !== 'Factory reset in progress…') console.log('PAGE ERROR: the factory overlay title is wrong (got ' + JSON.stringify(rcB3.overlayTitle) + ') (round RCV)');
+    if (!rcB3.toasts.includes('Factory reset started')) console.log('PAGE ERROR: the factory reset must toast (got ' + JSON.stringify(rcB3.toasts) + ') (round RCV)');
+    if (!rcB3.modalGone) console.log('PAGE ERROR: the factory modal must close after the action (round RCV)');
+    // hide the overlay (pristine for the dark sections).
+    await page.evaluate(() => { document.querySelector('#recoveryRestart').classList.add('ucm-hidden'); });
 
     // back to the dashboard (leaves the run state pristine for the dark sections)
     await page.click('.ucm-side a[data-view="dashboard"]');

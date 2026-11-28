@@ -480,6 +480,23 @@ function makeServer(socketPath, state) {
             }
 
             // ---- snap conf (system config incl. netplan) ----------------------
+            // round RCV: the `snap reboot` frontend (POST /v2/systems[/]).
+            // LIVE contract (round RCV probe of the real daemon): action
+            // 'reboot' is a SYNC 200 (SyncResponse, no change id) — the device
+            // reboots almost immediately after. The stub records the
+            // {action, mode} body so the integration suite can assert the
+            // EXACT wire format, then answers 200 {} (no settle: the daemon
+            // has already scheduled the restart when it answers).
+            if (p === '/v2/systems' || p === '/v2/systems/') {
+                if (req.method !== 'POST') {
+                    return json(res, 405, { kind: 'method-undefined', message: `unsupported method ${req.method}` });
+                }
+                const data = JSON.parse(await body());
+                state.systemsPosts = state.systemsPosts || [];
+                state.systemsPosts.push({ action: data.action, mode: data.mode || '' });
+                return json(res, 200, {});
+            }
+
             // Per-snap config documents: GET /v2/snaps/{name}/conf[?keys=k]
             // -> { k: value } | { k: null }; PUT /v2/snaps/{name}/conf with a
             // {key: scalar|null} map. `core` additionally carries the netplan

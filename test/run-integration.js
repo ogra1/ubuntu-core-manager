@@ -699,6 +699,8 @@ function ok(name, cond, extra = '') {
                 !!handlers['system:memory-read'] && !!handlers['system:memory-write']);
             ok('journal-persistence handlers registered (round JRN: read + write, auth-gated)',
                 !!handlers['system:journal-persistent-read'] && !!handlers['system:journal-persistent-write']);
+            ok('recovery handler registered (round RCV: system:recovery, auth-gated)',
+                !!handlers['system:recovery']);
             ok('time-card handlers registered (round T: time read/set + timezone write, auth-gated)',
                 !!handlers['system:time-read'] && !!handlers['system:time-set'] && !!handlers['system:timezone-write']);
             ok('process-modal handlers registered (round P: procs read open, proc-kill auth-gated, process-control plug)',
@@ -2051,6 +2053,33 @@ function ok(name, cond, extra = '') {
           await new Promise((res) => setTimeout(res, 400));
           const jr2 = await m.journalRead();
           ok('journal e2e: false round-trips (the OFF->teardown value; never the no-op "")', jr2.persistent === false, JSON.stringify(jr2));
+        }
+
+        // ---- round RCV: the RECOVERY card (the `snap reboot` frontend) ----
+        // PURE unit: the offered modes are EXACTLY the two the CLI exposes
+        // (--recover / --factory-reset; 'run' is current-system-only and
+        // 'install' is the install-mode path — neither is offered).
+        { ok('recovery modes: the CLI offers recover + factory-reset (exactly)',
+              JSON.stringify(m.RECOVERY_MODES) === JSON.stringify(['recover', 'factory-reset']), JSON.stringify(m.RECOVERY_MODES));
+          let badMode = null;
+          try { await m.recoveryBoot('run'); } catch (e) { badMode = e; }
+          ok('recovery: an unoffered mode is rejected BEFORE the request', !!badMode && /invalid recovery mode/.test(badMode.message), badMode && badMode.message);
+        }
+        // e2e through the REAL client (snapdRequest POST /v2/systems/) + the
+        // stub: the EXACT wire format the snap CLI sends ({action:'reboot',
+        // mode}) for each mode, the { started } result, and the pristine end.
+        { const before = (state.systemsPosts || []).length;
+          const rc1 = await m.recoveryBoot('recover');
+          ok('recovery e2e: recover resolves { started: true } (a sync 200)', rc1 === true, JSON.stringify(rc1));
+          const rpost = (state.systemsPosts || [])[before];
+          ok('recovery e2e: the wire body is EXACTLY { action: reboot, mode: recover } (the snap CLI format)',
+              rpost && rpost.action === 'reboot' && rpost.mode === 'recover', JSON.stringify(rpost));
+          await m.recoveryBoot('factory-reset');
+          const fpost = (state.systemsPosts || [])[before + 1];
+          ok('recovery e2e: the factory-reset wire body is { action: reboot, mode: factory-reset }',
+              fpost && fpost.action === 'reboot' && fpost.mode === 'factory-reset', JSON.stringify(fpost));
+          ok('recovery e2e: exactly the two requested reboots were sent (no extras)',
+              (state.systemsPosts || []).length === before + 2, JSON.stringify((state.systemsPosts || []).length));
         }
         // ---- the kiosk content-size clamp (round-T-fix bug 3) ----
         // The VM symptom: an external re-layout left the web-contents view stuck

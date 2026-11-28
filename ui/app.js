@@ -4350,6 +4350,129 @@ async function doPower(action) {
 // .ucm-modal in the CSS). STATIC verb button (round 48i): the message names
 // the action, the button never repeats it. Esc cancels (the 48k document
 // listener removes the topmost .ucm-confirm).
+/* round RCV: the RECOVERY card (the `snap reboot` frontend, the last System
+   card). 'Boot into recovery' (snap reboot --recover) uses the house
+   PAGE-LEVEL confirm idiom (like confirmPower: the single integrated row;
+   Esc cancels via the 48k document listener). 'Factory reset' (snap reboot
+   --factory-reset) is DESTRUCTIVE, so it gets a real popup with a Yes/No
+   RADIO selection (the user's explicit requirement): "No" is checked by
+   default and the Confirm button stays DISABLED until "Yes" is selected —
+   a stray Enter/click can never trigger the reset.
+   The call is synchronous and the device reboots almost immediately after
+   snapd accepts it, so on success (or a socket failure AFTER the request was
+   sent — main.js recoveryBoot reports both as started) the full-screen
+   NON-interactive overlay appears (the keymap-restart idiom): the user is
+   told what is happening, and the app dies a moment later. A real snapd
+   error (unsupported mode, degraded mode, dead socket) re-opens to a
+   negative toast + no overlay. */
+function showRecoveryOverlay(mode) {
+    const o = $('#recoveryRestart');
+    if (!o) return;
+    const t = $('#recoveryRestartTitle');
+    const n = $('#recoveryRestartNote');
+    if (mode === 'factory-reset') {
+        if (t) t.textContent = 'Factory reset in progress…';
+        if (n) n.textContent = 'The system is wiping the data partition and will reboot as a fresh device in a moment.';
+    } else {
+        if (t) t.textContent = 'Rebooting into recovery mode…';
+        if (n) n.textContent = 'The system is restarting — it will come back into recovery mode in a moment.';
+    }
+    o.classList.remove('ucm-hidden');
+}
+function confirmRecoveryBoot() {
+    const host = document.querySelector('#view-system .col-12');
+    if (!host) return;
+    if (host.querySelector('.ucm-confirm')) return;
+    const box = el('div', {
+        class: 'ucm-confirm ucm-confirm--negative',
+        style: 'margin-top:1rem; display:flex; align-items:center; gap:.7rem;',
+    });
+    const icon = el('i', { class: 'p-icon--question ucm-confirm__ic' });
+    const msg = el('p', { class: 'p-notification__message ucm-confirm__msg', text: 'Reboot the system into recovery mode now?' });
+    const b = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Reboot to recovery?' });
+    b.onclick = async () => {
+        b.classList.add('is-disabled');
+        try {
+            const r = (await core.machine.recovery('recover')) || {};
+            if (r.started) {
+                showRecoveryOverlay('recover');
+                toast('positive', 'Reboot to recovery started', 'The system is restarting into recovery mode.');
+            }
+        } catch (e) {
+            toastErr(e);
+        } finally {
+            box.remove();
+        }
+    };
+    const cancel = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancel.onclick = () => box.remove();
+    box.append(icon, msg, b, cancel);
+    host.appendChild(box);
+    b.focus();
+}
+function openFactoryResetModal() {
+    if (document.querySelector('.ucm-modal')) return; // one modal at a time
+    const box = el('div', { class: 'ucm-modal ucm-modal--factoryreset' });
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    const closeModal = () => {
+        document.removeEventListener('keydown', onKey);
+        box.remove();
+    };
+    const backdrop = el('div', { class: 'ucm-modal__backdrop', onclick: () => closeModal() });
+    document.addEventListener('keydown', onKey);
+    const inner = el('div', { class: 'ucm-modal__card' });
+    const close = el('button', { class: 'p-button--base p-button', type: 'button', 'aria-label': 'Close', onclick: () => closeModal() },
+        el('i', { class: 'p-icon--close ucm-info__close' }));
+    inner.append(el('div', { class: 'ucm-modal__head' },
+        el('p', { class: 'p-heading--5', text: 'Factory reset', style: 'margin:0;' }),
+        close));
+    const body = el('div', { class: 'ucm-modal__body' });
+    body.append(
+        el('p', { class: 'p-form-validation__message is-error', style: 'margin-bottom:1rem;', text: 'This erases ALL data, snaps, and settings on the device and reboots it as a fresh, pristine system. This cannot be undone.' }),
+        el('p', { text: 'Proceed with the factory reset?', style: 'font-weight:600;' }),
+    );
+    const radioRow = el('div', { class: 'ucm-factoryreset__radios' });
+    const mkRadio = (val, label, checked) => el('label', { class: 'p-radio' },
+        el('input', { class: 'p-radio__input', type: 'radio', name: 'factoryResetChoice', value: val, id: val === 'yes' ? 'factoryResetYes' : 'factoryResetNo', checked: checked === true ? true : false }),
+        el('span', { class: 'p-radio__label', text: label }));
+    radioRow.append(mkRadio('no', 'No — keep the system as it is', true), mkRadio('yes', 'Yes — factory reset the device'));
+    body.append(radioRow);
+    const actions = el('div', { class: 'ucm-factoryreset__actions', style: 'display:flex; gap:.75rem; margin-top:1.25rem;' });
+    const cancelBtn = el('button', { class: 'p-button--base p-button', type: 'button', text: 'Cancel' });
+    cancelBtn.onclick = () => closeModal();
+    const confirmBtn = el('button', { class: 'p-button--negative p-button', type: 'button', text: 'Factory reset', disabled: true });
+    confirmBtn.onclick = async () => {
+        const yes = document.querySelector('input[name="factoryResetChoice"][value="yes"]');
+        if (!yes || !yes.checked) return; // the radios are the gate
+        confirmBtn.disabled = true;
+        try {
+            const r = (await core.machine.recovery('factory-reset')) || {};
+            if (r.started) {
+                box.remove();
+                document.removeEventListener('keydown', onKey);
+                showRecoveryOverlay('factory-reset');
+                toast('positive', 'Factory reset started', 'The device is wiping and rebooting as a fresh system.');
+            }
+        } catch (e) {
+            confirmBtn.disabled = false;
+            toastErr(e);
+        }
+    };
+    // the radios ENABLE the confirm only on an explicit "Yes" (the user's
+    // explicit-confirmation requirement: No is the default and inert).
+    radioRow.querySelectorAll('input[type=radio]').forEach((r) => {
+        r.addEventListener('change', () => {
+            confirmBtn.disabled = r.value !== 'yes' || !r.checked;
+        });
+    });
+    actions.append(confirmBtn, cancelBtn);
+    body.append(actions);
+    inner.append(body);
+    box.append(backdrop, inner);
+    document.body.appendChild(box);
+    close.focus();
+}
+
 function confirmPower(action) {
     const host = document.querySelector('#view-system .col-12');
     if (!host) return;
@@ -5323,6 +5446,11 @@ function wire() {
     if (schedBtn) schedBtn.addEventListener('click', () => schedulePower());
     const cancelBtn = $('#scheduledCancelBtn');
     if (cancelBtn) cancelBtn.addEventListener('click', () => cancelScheduled());
+    // Round RCV: the Recovery card (null-guarded — the house wire rule).
+    const rcvBoot = $('#recoveryBootBtn');
+    if (rcvBoot) rcvBoot.addEventListener('click', () => confirmRecoveryBoot());
+    const factoryBtn = $('#factoryResetBtn');
+    if (factoryBtn) factoryBtn.addEventListener('click', () => openFactoryResetModal());
     // round T-KM4: the System-page KEYBOARD card (post-setup layout change).
     const kmBtn = $('#keymapApplyBtn');
     if (kmBtn) kmBtn.addEventListener('click', () => doApplySystemKeymap());

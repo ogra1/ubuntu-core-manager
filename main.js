@@ -2373,6 +2373,51 @@ async function journalWrite(value) {
     return setSnapConfig('core', { 'journal.persistent': value });
 }
 
+/* ---- 2e. RECOVERY card (round RCV: the `snap reboot` frontend) ----
+   snapd (cmd/snapd/cli/cmd_reboot.go + client/systems.go @8d4d073,
+   source-verified): `snap reboot [--recover|--factory-reset]` calls
+   RebootToSystem(systemLabel='', mode) -> POST /v2/systems/ with the JSON
+   body { action:'reboot', mode } (Content-Type application/json). The daemon
+   (daemon/api_systems.go postSystemActionReboot) routes action 'reboot' to
+   DeviceManager.Reboot(label, mode): an empty label selects the DEFAULT
+   recovery system for the 'recover' / 'factory-reset' modes, then requests
+   restart.RestartSystemNow — the device reboots almost immediately.
+   Semantics:
+     mode 'recover'        = boot the default recovery system's recovery mode
+                             (the standard recovery UI: maintenance, logs,
+                             reinstall, reset entry point).
+     mode 'factory-reset'  = boot the factory-reset mode (wipes the data
+                             partition / resets the device — the destructive
+                             path, confirm-gated in the renderer).
+   Auth: rootAccess{} (root/polkit; the app's kiosk socket peer is root, the
+   same path every other privileged write rides — A() carries the store
+   macaroon when present, null otherwise).
+   IMPORTANT timing: the daemon answers 200 (SyncResponse) and the device goes
+   down a moment later, so the socket request can fail at the transport level
+   (ECONNRESET/EPIPE) AFTER the reboot was accepted. recoveryBoot() treats a
+   transport-level failure as "reboot started" (returns true) and only throws
+   on a REAL snapd error response (4xx/5xx: unsupported mode, degraded,
+   invalid body) — the renderer distinguishes the two (toast + overlay vs
+   negative toast). */
+const RECOVERY_MODES = ['recover', 'factory-reset'];
+async function recoveryBoot(mode) {
+    if (!RECOVERY_MODES.includes(mode)) throw new Error('invalid recovery mode: ' + JSON.stringify(mode));
+    try {
+        await snapdRequest('POST', '/v2/systems/', { body: { action: 'reboot', mode }, auth: A(), timeout: SOCKET_TIMEOUT_MS });
+        return true;
+    } catch (e) {
+        // A snapd ERROR RESPONSE (SnapdError: bad mode, degraded, ...) or a
+        // dead socket (ENOENT/ECONNREFUSED = snapd not listening -> the
+        // request was never accepted) -> surface the error.
+        if (e && (e.name === 'SnapdError' || e.code === 'ENOENT' || e.code === 'ECONNREFUSED')) throw e;
+        // Otherwise the request was SENT and the socket went away or the
+        // response was cut: the daemon accepted the reboot and the device is
+        // going down (ECONNRESET/EPIPE/EPROTO on the UDS, or the 15s wait
+        // expires while it restarts) -> report "started".
+        return true;
+    }
+}
+
 /* ---- 2b. global refresh HOLD (round S: the 'Pause auto-refresh' toggle) ----
    This is the REST equivalent of `snap refresh --hold` / `--unhold` (no snap
    names = hold ALL snaps' auto-refresh). Source-verified against snapd
@@ -3053,6 +3098,7 @@ const api = {
     refreshTimerRead, refreshTimerWrite, validRefreshTimer, isRefreshTimerAccepted, refreshTimerFromDoc,
     memFieldFromDoc, memoryRead, memoryWrite, memSizeToMiB, memTmpValid, memSwapValid,
     journalFieldFromDoc, journalRead, journalWrite,
+    RECOVERY_MODES, recoveryBoot,
     refreshHoldRead, setGlobalRefreshHold, refreshHoldActive, setGlobalRefreshNow, __setSystemInfoFn,
     powerAction, powerSchedule, powerCancelScheduled, powerScheduledRead,
     powerScheduledParse, shutdownWhenUsec, POWER_ACTIONS, __setLogin1Transport,
@@ -3785,6 +3831,14 @@ function initElectron() {
     ipcMain.handle('system:journal-persistent-write', guard(async (value) => {
         requireAuth();
         return journalWrite(value);
+    }));
+    // Round RCV: the Recovery card (the `snap reboot --recover` /
+    // --factory-reset frontend; console-privileged like the power actions —
+    // the change reboots the device).
+    ipcMain.handle('system:recovery', guard(async (mode) => {
+        requireAuth();
+        const started = await recoveryBoot(mode);
+        return { started };
     }));
     // Power / scheduled shutdown (login1 over D-Bus; the shutdown interface
     // is D-BUS ONLY - no shell-out to poweroff/systemctl).
